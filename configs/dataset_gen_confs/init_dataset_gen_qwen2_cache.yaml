@@ -1,0 +1,15 @@
+defaults:
+  - dataset_generator: caching_dataset_generation_process
+  - image_dataset: tbd
+  - _self_
+
+# output_root_dir: "./debug_outputs_single_imgs/"
+
+dataset_generator:
+  intermediateLogger:
+    forceRegen: true
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

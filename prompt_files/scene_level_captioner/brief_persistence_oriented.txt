@@ -1,0 +1,11 @@
+Describe the scene, with a focus on attributes that impact movement of objects. Consider the following:
+
+1) Environment
+- Place type (e.g. home kitchen, office, grocery store, street, parking lot, warehouse, restaurant, other).
+- Indoor or outdoor.
+- Overall organization (e.g. very ordered, moderately ordered, cluttered, very cluttered).
+
+2) Temporal and activity context
+- Approximate time of day (night, morning, midday, afternoon, evening, unknown).
+- Lighting (bright artificial, dim artificial, daylight, mixed, low light).
+- Human traffic level (none, low, medium, high, very high), based on visible people or typical usage of this place.

@@ -1,0 +1,19 @@
+defaults:
+  - dataset_generator: caching_dataset_generation_process
+  - image_dataset: tbd
+  - _self_
+
+# output_root_dir: "./debug_outputs_single_imgs/"
+
+
+dataset_generator:
+  llmPersistenceQuerier:
+    llmQuerier:
+      model_name: Qwen/Qwen3-Next-80B-A3B-Instruct
+      max_new_tokens: 16384
+      name: qwen3_80b_instruct
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

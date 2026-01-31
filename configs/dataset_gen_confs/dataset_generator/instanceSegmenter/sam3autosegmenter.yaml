@@ -1,0 +1,2 @@
+_target_: instance_segmentation.sam3_auto_segmenter.SAM3InstanceSegmenter
+name: sam3_auto

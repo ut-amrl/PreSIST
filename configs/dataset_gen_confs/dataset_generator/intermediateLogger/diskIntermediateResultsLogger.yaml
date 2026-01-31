@@ -1,0 +1,2 @@
+_target_: dataset_generation.intermediate_results_logger.disk_intermediate_results_logger.DiskIntermediateResultsLogger
+logDirectory: ./debug_outputs

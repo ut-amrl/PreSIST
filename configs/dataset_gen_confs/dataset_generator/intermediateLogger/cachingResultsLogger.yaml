@@ -1,0 +1,3 @@
+_target_: dataset_generation.intermediate_results_logger.caching_results_logger.CachingResultsLogger
+# baseLogDirectory: ./debug_outputs_single_imgs/
+baseLogDirectory: /workspace/data/output/

@@ -1,0 +1,111 @@
+# ---------- Base (CUDA 12.8 + cuDNN + build tools) ----------
+FROM docker.io/nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/opt/hf \
+    HUGGINGFACE_HUB_CACHE=/opt/hf/hub \
+    TRANSFORMERS_CACHE=/opt/hf/transformers \
+    HF_TOKEN=""
+
+# ---------- System deps ----------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip python3-dev python3-venv \
+    git git-lfs \
+    ffmpeg \
+    libgl1 libglib2.0-0 \
+    build-essential pkg-config \
+    ninja-build \
+    libopenblas-dev \
+    libjpeg-dev \
+    libpng-dev \
+    curl ca-certificates wget \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# ---------- Python base ----------
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# # ---------- PyTorch (CUDA 12.8 wheels) ----------
+# # NOTE: Using the cu128 wheel index to match the CUDA 12.8 base image.
+# RUN pip install --index-url https://download.pytorch.org/whl/cu128 \
+#     torch torchvision torchaudio
+
+# ---------- PyTorch (pin to a more compatible set) ----------
+RUN pip install --index-url https://download.pytorch.org/whl/cu121 \
+    torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2
+
+
+# ---------- Common runtime deps (pin numpy<2 to avoid ABI break) ----------
+RUN pip install \
+    hydra-core omegaconf \
+    "numpy<2" scipy matplotlib \
+    pillow \
+    opencv-python-headless \
+    tqdm \
+    pycocotools \
+    timm einops \
+    transformers accelerate sentencepiece
+
+RUN python -c "import numpy as np; print('NUMPY after common deps:', np.__version__)"
+
+
+
+# Optional perf libs (safe to remove if you want a smaller image)
+# xformers wheels depend on torch version; if this fails on your platform, comment it out.
+# RUN pip install --index-url https://download.pytorch.org/whl/cu128 xformers || true
+
+# ---------- Workdir & caches ----------
+WORKDIR /workspace
+RUN mkdir -p /workspace /opt/hf /workspace/checkpoints
+
+# ---------- OpenMMLab stack (Semantic-SAM deps) ----------
+# Using openmim to resolve mmcv build/compat.
+RUN pip install -U openmim && \
+    mim install "mmcv==2.1.0" && \
+    mim install "mmdet==3.3.0"
+
+RUN python -c "import numpy as np; print('NUMPY after mmcv/mmdet:', np.__version__)"
+
+RUN pip install --no-cache-dir "numpy<2" --force-reinstall
+
+
+# ---------- Detectron2 (Semantic-SAM uses it) ----------
+RUN pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git'
+
+RUN python -c "import numpy as np; print('NUMPY after detectron2:', np.__version__)"
+
+
+# ---------- Clone & install Semantic-SAM ----------
+RUN git clone https://github.com/UX-Decoder/Semantic-SAM.git /workspace/semantic-sam && \
+    pip install -e /workspace/semantic-sam --no-deps
+
+RUN python -c "import numpy as np; print('NUMPY after semantic-sam:', np.__version__)"
+
+
+# Make sure any submodules are present (harmless if none)
+RUN cd /workspace/semantic-sam && git submodule update --init --recursive || true
+
+# # Build Semantic-SAM's MultiScaleDeformableAttention CUDA op
+# ENV TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0"
+# RUN set -eux; \
+#     ls -la /workspace/semantic-sam/semantic_sam/body/encoder/ops; \
+#     cd /workspace/semantic-sam/semantic_sam/body/encoder/ops; \
+#     sh make.sh; \
+#     python -c "import MultiScaleDeformableAttention as MSDA; print('built', MSDA)"
+
+# ---------- (Optional) Download Semantic-SAM checkpoint into /workspace/checkpoints ----------
+# Recommended: mount checkpoints as a volume instead (see run command below).
+# RUN wget -O /workspace/checkpoints/swinl_only_sam_many2many.pth \
+    # https://github.com/UX-Decoder/Semantic-SAM/releases/download/checkpoint/swinl_only_sam_many2many.pth
+
+
+# Helpful defaults
+ENV PYTHONPATH=/workspace \
+    HYDRA_FULL_ERROR=1
+
+# Expose common demo ports (optional)
+EXPOSE 7860 8000
+
+CMD ["/bin/bash"]

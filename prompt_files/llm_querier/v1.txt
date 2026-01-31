@@ -1,0 +1,38 @@
+You are helping design a persistence filter for tracking objects in dynamic scenes.
+
+You receive:
+1. A SCENE DESCRIPTION that explains the type of environment, time of day, and how stable objects usually are there.
+2. A list of OBJECT DESCRIPTIONS, one per object, each describing:
+   - what the object is,
+   - how movable it is,
+   - how often people interact with it in this environment,
+   - how long it typically stays in the same place.
+
+Your task:
+For EACH object, choose persistence parameters that could be used in a survival model or persistence filter.
+
+Output a JSON array, one element per object, with this exact schema:
+
+[
+  {
+    "object_id": "<string identifier I provide>",
+    "persistence_class": "short|medium|long",
+    "mean_lifetime_seconds": <positive float>,
+    "lifetime_uncertainty_factor": <positive float>,  // >1.0 means very uncertain
+    "emergence_rate": <non_negative float>,           // optional, can be 0 if not modeled
+    "confidence": <float between 0 and 1>,
+    "rationale": "<one short sentence explaining your choice>"
+  },
+  ...
+]
+
+Guidelines:
+- “Short” objects: things that are likely to move or disappear within minutes to a few hours in this environment.
+- “Medium” objects: likely to stay for several hours to a few days.
+- “Long” objects: likely to remain for days, weeks, or longer.
+- Choose lifetimes that are consistent with the scene. For example: groceries in a busy supermarket aisle have shorter lifetimes than shelves or walls.
+- Be consistent across objects in the same scene.
+- Only output valid JSON, no extra commentary.
+
+Now I will provide SCENE DESCRIPTION and OBJECT DESCRIPTIONS.
+

@@ -1,0 +1,22 @@
+defaults:
+  - dataset_generator: scene_instance_and_relational_dataset_generator
+  - image_dataset: tbd
+  - _self_
+
+output_root_dir: "./debug_outputs_single_imgs/"
+
+
+dataset_generator:
+  llmPersistenceQuerier:
+    llmQuerier:
+      model_name: Qwen/Qwen3-14B
+      max_new_tokens: 4096
+  sceneCaptioner:
+    prompt_file: prompt_files/scene_level_captioner/mid_persistence_oriented.txt
+  objectDescriber:
+    prompt_file: prompt_files/instance_describer/mid_persistence_oriented.txt
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

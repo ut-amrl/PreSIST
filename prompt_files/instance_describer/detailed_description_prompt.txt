@@ -1,0 +1,1 @@
+<image>\nDescribe the masked region in detail.

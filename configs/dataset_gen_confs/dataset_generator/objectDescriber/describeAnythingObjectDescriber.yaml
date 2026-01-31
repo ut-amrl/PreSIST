@@ -1,0 +1,8 @@
+_target_: dataset_generation.instance_descriptions.describe_anything_object_describer.DescribeAnythingObjectDescriber
+model_path: "nvidia/DAM-3B"
+prompt_file: "prompt_files/instance_describer/detailed_description_prompt.txt"
+conv_mode: "v1"
+prompt_mode: "focal_prompt"
+temperature: 0.2
+max_new_tokens: 512
+name: dam_3b

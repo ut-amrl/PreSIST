@@ -1,0 +1,9 @@
+_target_: dataset_generation.llm_persistence_querying.llm_querying.qwen_llm_querier.QwenLLMQuerier
+torch_dtype: torch.bfloat16
+model_name: "Qwen/Qwen2.5-7B-Instruct"
+device_map: "auto"
+max_new_tokens: 2048
+temperature: 0.2
+top_p: 0.9
+repetition_penalty: 1.05
+name: qwen2p5_7b_default

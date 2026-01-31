@@ -1,0 +1,18 @@
+defaults:
+  - dataset_generator: scene_instance_and_relational_dataset_generator
+  - image_dataset: tbd
+  - _self_
+
+output_root_dir: "./debug_outputs_single_imgs/"
+
+
+dataset_generator:
+  llmPersistenceQuerier:
+    llmQuerier:
+      model_name: Qwen/Qwen3-30B-A3B-Thinking-2507
+      max_new_tokens: 8192
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

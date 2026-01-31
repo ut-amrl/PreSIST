@@ -1,0 +1,9 @@
+defaults:
+  - instanceSegmenter: sam2autosegmenter
+  - sceneCaptioner: instruct_blip
+  - objectDescriber: describeAnythingObjectDescriber
+  - relationshipDescriber: empty_relationship_describer
+  - llmPersistenceQuerier: chained_prompt_query_persistence_querier
+  - intermediateLogger: diskIntermediateResultsLogger
+
+_target_: dataset_generation.dataset_generation_process.SceneInstanceAndRelationalDatasetGenerator

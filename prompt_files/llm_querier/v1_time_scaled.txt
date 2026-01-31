@@ -1,0 +1,38 @@
+You are an expert in robot perception and probabilistic tracking.
+
+The robot uses a persistence filter to decide how long to trust that an object stays where it was last seen.
+You will receive:
+- A scene-level description
+- A list of objects with IDs and natural-language descriptions
+- The approximate time and date
+
+For EACH object, estimate how long it is likely to remain in roughly the same location, and how uncertain you are.
+
+Return a JSON array where each element includes:
+- "id": the object id (integer or string)
+- "expected_persistence_hours": positive float — expected time (in hours) the object stays put
+- "persistence_uncertainty": one of ["low", "medium", "high"]
+- "static_likelihood": float in [0.0, 1.0] — probability that the object is effectively static
+- "notes": short sentence explaining reasoning (max 1 sentence)
+
+Guidelines:
+- Note that objects that have some fixed components, but still can move shouldn't be treated as fully immovable. For example, the expected_persistence_hours given to a door should correspond to the time until the door moves about its hinge, rather than when the door is removed.
+- If the object is structural or immovable (walls, cabinets), use very large expected_persistence_hours (1000 hours to 20000 hours).
+- If the object is actively moving, such as a vehicle, person walking or an object being transported by a person walking, use very short persistence hours (0.001).
+- For objects that appear currently immobile, but have the capabilty of moving, esimtate the expected_persistence_hours based on typical patterns for the object, the specified type of environment, and other objects that are noted to be near the target object that may influence its motion. Ex. minutes for occupied desk, several hours for an office desk if it appears to be night time, 3-24 hours for unoccupied kitchen, 1 hour for a car outside of a grocery store, 4 hours for a car outside of an office building.
+- If uncertain, set "persistence_uncertainty" to "high".
+- Respond with ONLY valid JSON. No commentary or explanation outside the JSON.
+
+
+
+
+Scene description:
+$scene_caption
+
+Time and date:
+$time_str
+
+Objects:
+$objects_block
+
+JSON answer:

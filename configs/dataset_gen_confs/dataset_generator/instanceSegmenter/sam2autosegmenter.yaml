@@ -1,0 +1,4 @@
+_target_: instance_segmentation.sam2_auto_segmenter.SAM2InstanceSegmenter
+checkpoint: /workspace/sam2/checkpoints/sam2.1_hiera_base_plus.pt
+model_cfg: configs/sam2.1/sam2.1_hiera_b+.yaml
+name: sam2auto_bplus
