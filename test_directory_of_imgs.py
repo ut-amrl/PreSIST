@@ -23,7 +23,8 @@ def processSingleImage(
     datasetGenerator.processImage(
         image=img_tensor,
         timeAndDate=None,
-        inputBatchInfo={'filename':image_path},
+        # inputBatchInfo={'filename':image_path},
+        inputBatchInfo={'path': image_path},
     )
 
 def processImageDir(

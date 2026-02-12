@@ -1,5 +1,5 @@
 _target_: dataset_generation.scene_level_captioning.instructblip_scene_level_captioner.InstructBLIPSceneLevelCaptioner
-model_name: "Salesforce/instructblip-flan-t5-xl"
+model_name: "Salesforce/instructblip-flan-t5-xxl"
 prompt_file: "prompt_files/scene_level_captioner/detailed_scene_prompt.txt"
 max_new_tokens: 256
 num_beams: 5

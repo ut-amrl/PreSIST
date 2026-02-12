@@ -1,0 +1,26 @@
+defaults:
+  - dataset_generator: caching_dataset_generation_process
+  - registry_info: registry_default
+  - dataloader: dataloader_default
+  - override dataset_generator/instanceSegmenter: semanticsamautosegmenter_cache
+  - _self_
+
+# output_root_dir: "./debug_outputs_single_imgs/"
+
+
+dataset_generator:
+  llmPersistenceQuerier:
+    llmQuerier:
+      model_name: Qwen/Qwen3-30B-A3B-Thinking-2507
+      max_new_tokens: 16384
+      name: qwen3_30b_thinking
+    promptHandler:
+      prompt_template_file: "prompt_files/llm_querier/v2_time_scaled.txt"
+      name: v2_time_scaled
+
+
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

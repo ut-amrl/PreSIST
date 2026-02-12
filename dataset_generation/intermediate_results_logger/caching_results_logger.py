@@ -22,12 +22,13 @@ class CachingResultsLogger:
         self,
         baseLogDirectory,
         saveDebugImages=False,
-        forceRegen=False,
+        forceRegen=True,
         imageDirRoot="/workspace/data/input/"
     ):
         self.baseLogDirectory = baseLogDirectory
         self.saveDebugImages = saveDebugImages
         self.imageDirRoot = imageDirRoot
+        self.forceRegen = forceRegen
 
         self.configFileName = None
         self.imgBaseName = None

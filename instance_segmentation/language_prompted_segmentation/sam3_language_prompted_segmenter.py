@@ -1,6 +1,6 @@
+
 from instance_segmentation.language_prompted_segmentation.abs_language_prompted_segmenter import AbsLanguagePromptedSegmenter, LanguagePromptedSegmentationResults
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Optional

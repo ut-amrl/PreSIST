@@ -1,0 +1,30 @@
+defaults:
+  - dataset_generator: caching_dataset_generation_process
+  - registry_info: registry_default
+  - dataloader: dataloader_default
+  # - image_dataset: tbd
+  - override dataset_generator/instanceSegmenter: semanticsamautosegmenter
+  - override dataset_generator/sceneCaptioner: dummy
+  - override dataset_generator/objectDescriber: dummyObjectDescriber
+  - override dataset_generator/llmPersistenceQuerier: dummy_persistence_querier
+  - _self_
+
+# output_root_dir: "./debug_outputs_single_imgs/"
+
+
+# dataset_generator:
+#   llmPersistenceQuerier:
+#     llmQuerier:
+#       model_name: Qwen/Qwen3-Next-80B-A3B-Thinking
+#       max_new_tokens: 16384
+#       name: qwen3_80b_thinking
+
+dataset_generator:
+  instanceSegmenter:
+    min_area_perc: 0.001
+    granularity: "medium"
+    name: semanticsam_granularityMed_minArea0p001
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

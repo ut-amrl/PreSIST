@@ -41,7 +41,7 @@ if [[ "$(podman images -q $TAG 2> /dev/null)" == "" || "$FORCE_FROM_SCRATCH" -eq
 fi
 
 # Check if the container already exists
-if [ ! "$(podman ps -a -q -f name=spf_container)" ]; then
+if [ ! "$(podman ps -a -q -f name=^spf_container$)" ]; then
     # The container does not exist --> create and start it
     if ! podman run -d --gpus all \
         --shm-size=12g \
@@ -66,7 +66,7 @@ if [ ! "$(podman ps -a -q -f name=spf_container)" ]; then
 
 else
     # Check if the container is stopped
-    if [ ! "$(podman ps -q -f name=spf_container)" ]; then
+    if [ ! "$(podman ps -q -f name=^spf_container$)" ]; then
         echo "Starting existing semantic-persistence-filter container..."
         if ! podman start spf_container; then
             echo "Error: Failed to start container."

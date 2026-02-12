@@ -1,0 +1,12 @@
+_target_: instance_segmentation.language_grounded_segmenter.LanguageGroundedSegmenter
+object_discoverer:
+  _target_: instance_segmentation.object_discovery.instructblip_object_discoverer.InstructBLIPObjectDiscoverer
+  name: "instructblip_disc_xl"
+  model_name: "Salesforce/instructblip-flan-t5-xl"
+  max_objects: 30
+  max_new_tokens: 256
+  num_beams: 5
+language_segmenter:
+  _target_: instance_segmentation.language_prompted_segmentation.sam3_language_prompted_segmenter.SAM3LanguagePromptedSegmenter
+  name: sam3
+

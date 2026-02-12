@@ -30,6 +30,7 @@ class SegmentationResults:
     # Add utility methods to save this to file
     def saveToFile(self, filePath: str, imagePath: Optional[str] = None):
         """Saves segmentation results to a .npz file."""
+
         np.savez_compressed(
             filePath,
             ids=self.ids.cpu().numpy(),
@@ -43,18 +44,23 @@ class SegmentationResults:
     @staticmethod
     def loadFromFile(filePath: str) -> SegmentationResults:
         """Loads segmentation results from a .npz file."""
-        data = np.load(filePath, allow_pickle=True)
-        ids = torch.from_numpy(data['ids'])
-        masks = torch.from_numpy(data['masks'])
-        boxes = torch.from_numpy(data['boxes'])
-        scores = torch.from_numpy(data['scores']) if data['scores'] is not None else None
-        imagePath = data['imagePath'].item() if 'imagePath' in data else None
-        return SegmentationResults(
-            ids=ids,
-            masks=masks,
-            boxes=boxes,
-            scores=scores
-        ), imagePath
+        # data = np.load(filePath, allow_pickle=True)
+        with np.load(filePath, allow_pickle=True) as data:
+            ids = torch.from_numpy(data['ids'])
+            masks = torch.from_numpy(data['masks'])
+            boxes = torch.from_numpy(data['boxes'])
+            scores = torch.from_numpy(data['scores']) if data['scores'] is not None else None
+            imagePath = data['imagePath'].item() if 'imagePath' in data else None
+
+
+            segmentationResults = SegmentationResults(
+                ids=ids,
+                masks=masks,
+                boxes=boxes,
+                scores=scores
+            )
+
+            return segmentationResults, imagePath
 
 
 class AbsInstanceSegmenter:

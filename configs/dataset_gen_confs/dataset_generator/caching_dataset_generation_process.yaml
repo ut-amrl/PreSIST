@@ -4,6 +4,8 @@ defaults:
   - objectDescriber: describeAnythingObjectDescriber
   - relationshipDescriber: empty_relationship_describer
   - llmPersistenceQuerier: chained_prompt_query_persistence_querier
-  - intermediateLogger: cachingResultsLogger
+  # - intermediateLogger: cachingResultsLogger
+  - intermediateLogger: cachingResultsLogger2
 
-_target_: dataset_generation.caching_dataset_generation_process.CachingSceneInstanceAndRelationalDatasetGenerator
+# _target_: dataset_generation.caching_dataset_generation_process.CachingSceneInstanceAndRelationalDatasetGenerator
+_target_: dataset_generation.caching_dataset_generation_process_dataloader.CachingSceneInstanceAndRelationalDatasetGenerator

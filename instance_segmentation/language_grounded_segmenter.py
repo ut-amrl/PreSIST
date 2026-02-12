@@ -8,7 +8,7 @@ from instance_segmentation.object_discovery.abs_object_discoverer import AbsObje
 from instance_segmentation.language_prompted_segmentation.abs_language_prompted_segmenter import AbsLanguagePromptedSegmenter
 
 
-class ObjectIdThenLanguageSegmentationPipeline(AbsInstanceSegmenter):
+class LanguageGroundedSegmenter(AbsInstanceSegmenter):
     """
     AbsInstanceSegmenter implementation that composes:
       - AbsObjectDiscoverer
@@ -40,6 +40,7 @@ class ObjectIdThenLanguageSegmentationPipeline(AbsInstanceSegmenter):
         C, H, W = image.shape
 
         obj_descriptions = self.object_discoverer.identify(image)
+        # print("Object descriptions:", obj_descriptions)
 
         seg = self.language_segmenter.segment_from_prompts(image, obj_descriptions)
 

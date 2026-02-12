@@ -49,6 +49,12 @@ def argument_parser():
         action="store_true",
         help="Whether to overwrite existing debug images.",
     )
+    # Add an argument to optionally exclude files that contain an underscore in their base name
+    parser.add_argument(
+        "--excludeUnderscoreFiles",
+        action="store_true",
+        help="Whether to exclude files that contain an underscore in their base name.",
+    )
     return parser
 
 if __name__ == "__main__":
@@ -59,14 +65,23 @@ if __name__ == "__main__":
     root_dir = args.root_dir
     segmentation_results_filename = args.segmentation_results_filename
     overwriteExisting = args.overwriteExisting
+    excludeUnderscoreFiles = args.excludeUnderscoreFiles
+    print("Exclude files with underscore in base name: ", excludeUnderscoreFiles)
 
     # Walk the directory tree starting from root_dir
     for dirpath, dirnames, filenames in os.walk(root_dir):
         if segmentation_results_filename in filenames:
+            # Get the name of the directory that contains the segmentation results file
+            dirName = os.path.basename(dirpath)
+            if (excludeUnderscoreFiles and "_" in dirName):
+                continue
             segmentation_results_path = os.path.join(dirpath, segmentation_results_filename)
             print(f"Processing segmentation results in: {segmentation_results_path}")
 
             segmentationResults, imgFileName = SegmentationResults.loadFromFile(segmentation_results_path)
+            print("Loaded segmentation results with {} instances.".format(len(segmentationResults)))
+            print("Image file name from segmentation results: ", imgFileName)
+
 
             if (imgFileName is None) or (not os.path.isabs(imgFileName)):
                 print(f"  Warning: imagePath not found or not absolute in segmentation results file. Skipping debug image generation for this file.")
@@ -85,3 +100,9 @@ if __name__ == "__main__":
                 outputDir=dirpath,
                 overwriteExisting=overwriteExisting
             )
+
+
+"""
+Example usage:
+python generate_segmentation_debug_images.py --root_dir /workspace/data/output/ --excludeUnderscoreFiles
+"""

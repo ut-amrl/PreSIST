@@ -1,0 +1,127 @@
+# ---------- Base (CUDA + build tools) ----------
+FROM docker.io/nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/opt/hf \
+    HUGGINGFACE_HUB_CACHE=/opt/hf/hub \
+    TRANSFORMERS_CACHE=/opt/hf/transformers \
+    HF_TOKEN=""
+
+# -------------------------------------------------------------------
+# System deps (base + GUI runtime deps for PyQt6)
+# -------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip python3-venv python3-dev \
+    git git-lfs \
+    ffmpeg \
+    libgl1 libglib2.0-0 \
+    build-essential pkg-config \
+    curl ca-certificates wget \
+    \
+    # ---- PyQt6 / Qt runtime deps ----
+    libxkbcommon0 \
+    libxkbcommon-x11-0 \
+    libdbus-1-3 \
+    libfontconfig1 \
+    libfreetype6 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcb1 \
+    libxcb-cursor0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render0 \
+    libxcb-render-util0 \
+    libxcb-shape0 \
+    libxcb-shm0 \
+    libxcb-sync1 \
+    libxcb-xfixes0 \
+    libxcb-xinerama0 \
+    libxcb-xinput0 \
+    libsm6 \
+    libice6 \
+    libegl1 \
+    \
+    # Optional: useful for GUI debugging
+    xauth \
+    && rm -rf /var/lib/apt/lists/*
+
+# Optional: headless GUI use (disabled by default)
+# RUN apt-get update && apt-get install -y --no-install-recommends xvfb && rm -rf /var/lib/apt/lists/*
+
+# ---------- Python & PyTorch ----------
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# ---- Reverted back to your original CUDA 12.1 PyTorch wheels ----
+RUN pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
+    torch torchvision torchaudio
+
+# Core packages often required by SAM/BLIP projects + GUI python deps
+RUN pip install \
+    numpy scipy matplotlib \
+    timm \
+    opencv-python-headless \
+    pillow \
+    pycocotools \
+    onnx onnxruntime-gpu \
+    sentencepiece \
+    accelerate \
+    transformers>=4.44 \
+    bitsandbytes \
+    gradio uvicorn fastapi \
+    einops \
+    \
+    # ---- PyQt6 (required for your labeling GUI) ----
+    PyQt6 PyQt6-sip \
+    \
+    # xformers matching your original torch/cu121
+    xformers -f https://download.pytorch.org/whl/cu121
+
+# ---------- Workdir & caches ----------
+WORKDIR /workspace
+RUN mkdir -p /workspace /opt/hf
+
+# ---------- Describe Anything (DAM) ----------
+RUN git clone https://github.com/NVlabs/describe-anything.git /workspace/describe-anything && \
+    pip install -e "/workspace/describe-anything[sam,sam2,eval]"
+
+# ---------- Clone & install SAM 2 ----------
+RUN git clone https://github.com/facebookresearch/segment-anything-2.git sam2 && \
+    pip install -e ./sam2
+
+RUN bash -c "cd /workspace/sam2/checkpoints && ./download_ckpts.sh"
+
+# ---------- Clone & install SAM 3 ----------
+RUN git clone https://github.com/facebookresearch/sam3.git /workspace/sam3 && \
+    pip install -e /workspace/sam3 && \
+    pip install -e "/workspace/sam3[notebooks]" && \
+    pip install -e "/workspace/sam3[train,dev]"
+
+# # ---------- OpenMMLab stack (required for Semantic-SAM) ----------
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     ninja-build \
+#     libopenblas-dev \
+#     libjpeg-dev \
+#     libpng-dev \
+#     && rm -rf /var/lib/apt/lists/*
+
+# RUN pip install -U openmim && \
+#     mim install "mmcv==2.1.0" && \
+#     mim install "mmdet==3.3.0"
+
+# # ---------- Detectron2 ----------
+# RUN pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git'
+
+# # ---------- Clone & install Semantic-SAM (code only, no deps) ----------
+# RUN git clone https://github.com/UX-Decoder/Semantic-SAM.git /workspace/semantic-sam && \
+#     pip install -e /workspace/semantic-sam --no-deps
+
+RUN mkdir -p /workspace/examples
+
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+EXPOSE 7860 8000
+CMD ["/bin/bash"]

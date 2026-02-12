@@ -256,6 +256,7 @@ class SemanticSAMInstanceSegmenter(AbsInstanceSegmenter):
         device: Optional[str] = None,
         granularity: GranularitySpec = "all",
         resize_short_edge: int = 640,
+        min_area_perc: float = 0.0,
         name: Optional[str] = None,
         generator_kwargs: Optional[dict] = None,
     ):
@@ -274,6 +275,8 @@ class SemanticSAMInstanceSegmenter(AbsInstanceSegmenter):
             self._model = self._model.to(self._device)
         if hasattr(self._model, "eval"):
             self._model.eval()
+
+        self.min_area_perc = float(min_area_perc)
 
         self._mask_generator = SemanticSamAutomaticMaskGenerator(
             self._model,
@@ -330,12 +333,25 @@ class SemanticSAMInstanceSegmenter(AbsInstanceSegmenter):
             if not isinstance(o, dict) or "segmentation" not in o:
                 continue
 
+
             seg_np = np.asarray(o["segmentation"])
+
             if seg_np.dtype != np.bool_:
                 seg_np = seg_np.astype(np.bool_)
 
             if seg_np.shape != (Hr, Wr):
                 raise ValueError(f"Mask shape {seg_np.shape} != expected {(Hr, Wr)} in resized space.")
+
+            # Exclude masks that are too small (after resizing back to original size)
+            seg_area = seg_np.sum()
+            # print("Checking mask with area", seg_area, "in resized space, which corresponds to original area", seg_area * sx * sy)
+            if seg_area == 0:
+                continue
+            orig_area = seg_area * sx * sy
+            minarea = self.min_area_perc * (H0 * W0)
+            if orig_area < minarea:
+                # print("Skipping mask with original area", orig_area, "which is below the threshold of", minarea)
+                continue
 
             masks_resized.append(torch.from_numpy(seg_np))
 

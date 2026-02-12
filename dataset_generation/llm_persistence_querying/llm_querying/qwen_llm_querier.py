@@ -60,12 +60,37 @@ class QwenLLMQuerier(AbsLLMQuerier):
             resolved_dtype = torch_dtype
 
         # Load model
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=resolved_dtype,
-            device_map=device_map,
-            trust_remote_code=True
-        )
+        # self.model = AutoModelForCausalLM.from_pretrained(
+        #     model_name,
+        #     torch_dtype=resolved_dtype,
+        #     device_map=device_map,
+        #     trust_remote_code=True,
+        #     attn_implementation="sdpa" # Consider removing
+        # )
+        # Load model (try flash-attn, fallback to sdpa)
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.bfloat16,
+                device_map=device_map,
+                trust_remote_code=True,
+                attn_implementation="flash_attention_2",
+            )
+            print("Using FlashAttention 2")
+        except Exception as e:
+            print(f"FlashAttention 2 unavailable ({e}); falling back to SDPA")
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.bfloat16,
+                device_map=device_map,
+                trust_remote_code=True,
+                attn_implementation="sdpa",
+            )
+
+        self.model.eval()
+        self.model.config.use_cache = True
+
+
 
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
@@ -78,6 +103,17 @@ class QwenLLMQuerier(AbsLLMQuerier):
             "top_p": top_p,
             "repetition_penalty": repetition_penalty,
         }
+
+        # self.generation_kwargs = {
+        #     "max_new_tokens": max_new_tokens,
+        #     "do_sample": True if temperature > 0 else False,
+        #     "temperature": temperature,
+        #     "top_p": top_p,
+        #     "repetition_penalty": repetition_penalty,
+        #     "eos_token_id": self.tokenizer.eos_token_id,
+        #     "pad_token_id": self.tokenizer.eos_token_id,
+        # }
+
 
     def queryLLM(self, prompt: str) -> str:
         """
@@ -107,11 +143,16 @@ class QwenLLMQuerier(AbsLLMQuerier):
             return_tensors="pt",
         ).to(self.model.device)
 
-        with torch.no_grad():
+        print("Sending prompt to Qwen model...")
+        # print(self.model.hf_device_map)
+
+        with torch.inference_mode():
             output_ids = self.model.generate(
                 **model_inputs,
                 **self.generation_kwargs,
             )
+
+        print("Raw output generated.")
 
         # Strip the prompt tokens from the output to get *only* the reply
         generated_ids = output_ids[:, model_inputs["input_ids"].shape[1]:]

@@ -1,0 +1,68 @@
+You are an expert in robot perception, probabilistic tracking, and temporal scene dynamics.
+The robot uses a persistence filter to decide how long to trust that an object remains near its last observed position.
+
+You will receive:
+- A scene-level description
+- A list of objects with IDs and natural-language descriptions
+
+Your task is to estimate realistic persistence behavior for each object.
+
+Object persistence is typically right-skewed:
+- Some objects move quickly.
+- Many move within a typical time window.
+- Some persist much longer.
+Avoid collapsing all values tightly around the median.
+
+For EACH object, reason internally using this structure (do NOT output this reasoning):
+1. Hazard reflection
+- Decide whether the probability of movement:
+- Increases over time (temporary placement),
+- Decreases over time (objects that survive early disturbance tend to remain),
+- Or is roughly constant.
+2. Survival cohort framing
+- Imagine 100 identical objects placed at time 0 in this exact context.
+- Mentally estimate how many would remain unmoved after:
+- A short interval (minutes scale)
+- A medium interval (hours scale)
+- A long interval (day scale)
+Ensure survival decreases smoothly across multiplicative time scales and reflects realistic right-skew.
+3. Extract quantiles
+From your internal survival curve, determine:
+- p25 (75% remain)
+- median (50% remain)
+- p75 (25% remain)
+
+Ensure:
+- p25 < median < p75
+- Spread is realistic (avoid unrealistically tight clustering)
+- Context strongly influences the values
+- Structural objects have very large persistence
+- Actively moving objects have extremely small persistence
+
+Now return a JSON array where each element includes:
+- "id": the object id (integer or string)
+- "p25_persistence_hours": positive float — time (hours) by which 25% of identical objects would have moved (75% remain)
+- "median_persistence_hours": positive float — time (hours) by which 50% would have moved
+- "p75_persistence_hours": positive float — time (hours) by which 75% would have moved (25% remain)
+- "persistence_uncertainty": one of ["low", "medium", "high"]
+- "persistence_conf": float in (0.0, 1.0) — confidence reflecting predictability in this context (never exactly 0 or 1)
+- "notes": one short sentence explaining reasoning (max 1 sentence)
+
+Guidelines:
+- Structural objects (walls, floors, built-in counters) should have very large persistence (1000–20000 hours).
+- Hinged or movable structural elements (doors, drawers) should reflect time until next movement, not their existence.
+- Actively moving objects (walking people, moving vehicles, carried items) should have extremely small persistence (~0.001 hours).
+- Context strongly matters (occupied vs unoccupied, public vs private, time-of-day cues, etc.).
+- If uncertain, set persistence_uncertainty to "high".
+- Ensure monotonic ordering: p25 < median < p75.
+- Avoid unrealistically narrow spreads unless the object is truly fixed.
+
+Respond with ONLY valid JSON. No commentary or explanation outside the JSON.
+
+Scene description:
+$scene_caption
+
+Objects:
+$objects_block
+
+JSON answer:

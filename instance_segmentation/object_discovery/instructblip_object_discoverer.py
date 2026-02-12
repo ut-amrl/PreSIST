@@ -89,11 +89,37 @@ class InstructBLIPObjectDiscoverer(AbsObjectDiscoverer):
         if (prompt is not None) and (prompt_file is not None):
             raise ValueError("Only one of prompt or prompt_file should be provided.")
 
+        # default_prompt = (
+        #     "List the most notable objects in the image as short noun phrases. "
+        #     f"Return up to {self.max_objects} items, separated by commas. "
+        #     "No extra words."
+        # )
+
+        # default_prompt = (
+        #     "Identify the objects in the image as short noun phrases. "
+        #     f"Return up to {self.max_objects} items, separated by commas. "
+        #     "No extra words."
+        # )
+
         default_prompt = (
-            "List the most notable objects in the image as short noun phrases. "
-            f"Return up to {self.max_objects} items, separated by commas. "
-            "No extra words."
+            "List all the distinct visible objects in the image."
+            "Return the list as short noun phrases, separated by commas, no extra text"
         )
+
+
+#         default_prompt = (
+#             "List all distinct visible objects in the image.
+# Output ONLY a comma separated list of strings.
+# Each string must be a short noun phrase (1–4 words), lowercase.
+# No extra keys, no explanations, no markdown.
+# Prefer specific phrases helpful for segmentation (e.g., “red car” not “car” if multiple cars).
+# Exclude “background”, “scene”, “sky”, “lighting”, and any uncertain objects."
+#             "Identify the objects in the image as short noun phrases. "
+#             f"Return up to {self.max_objects} items, separated by commas. "
+#             "No extra words."
+#         )
+
+
 
         if prompt is None and prompt_file is None:
             self.prompt = default_prompt
@@ -142,4 +168,5 @@ class InstructBLIPObjectDiscoverer(AbsObjectDiscoverer):
         )
 
         text = self.processor.batch_decode(out_ids, skip_special_tokens=True)[0].strip()
+        # print("InstructBLIPObjectDiscoverer identified text:", text)
         return _parse_listish_text(text, max_items=self.max_objects)

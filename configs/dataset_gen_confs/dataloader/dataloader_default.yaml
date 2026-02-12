@@ -1,0 +1,4 @@
+batch_size: 1
+num_workers: 4
+shuffle: False
+pin_memory: True

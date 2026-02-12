@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 
 from persistence_parameter_networks.img_encoders.abs_img_encoder import AbsImgEncoder
 from utils.image_utils import apply_mask, crop_and_resize
+from persistence_parameter_networks.models.abs_raw_predictor import AbsRawPredictor
 
 import torch
 import torch.nn as nn
@@ -193,7 +194,7 @@ class InstancePreprocessConfig:
     mask_fill: float = 0.0  # background fill for mode="mask" or "crop_mask"
 
 
-class DualEncoderModel(nn.Module):
+class DualEncoderModel(AbsRawPredictor):
     """
     Dual-encoder model with vector-only encoder outputs.
 
@@ -212,7 +213,7 @@ class DualEncoderModel(nn.Module):
         self,
         context_encoder: AbsImgEncoder,
         instance_encoder: AbsImgEncoder,
-        outputDim: int,
+        outputLength: int,
         combiner: FeatureCombiner | None = None,
         downstream_dim: int = 512,
         preprocess_cfg: Optional[InstancePreprocessConfig] = None,
@@ -220,7 +221,7 @@ class DualEncoderModel(nn.Module):
         head_hidden: int = 256,
         head_dropout: float = 0.0,
     ):
-        super().__init__()
+        super().__init__(outputLength=outputLength)
         self.context_encoder = context_encoder
         self.instance_encoder = instance_encoder
         self.preprocess_cfg = preprocess_cfg if preprocess_cfg is not None else InstancePreprocessConfig()
@@ -253,7 +254,7 @@ class DualEncoderModel(nn.Module):
                 nn.Linear(downstream_dim, head_hidden),
                 nn.GELU(),
                 nn.Dropout(head_dropout),
-                nn.Linear(head_hidden, outputDim),
+                nn.Linear(head_hidden, outputLength),
             )
         else:
             self.head = head

@@ -1,0 +1,32 @@
+You are an expert in robot perception and probabilistic tracking.
+
+The robot uses a persistence filter to decide how long to trust that an object stays where it was last seen.
+You will receive:
+- A scene-level description
+- A list of objects with IDs and natural-language descriptions
+
+For EACH object, estimate how long it is likely to remain in roughly the same location, and how uncertain you are.
+Return a JSON array where each element includes:
+- "id": the object id (integer or string)
+- "median_persistence_hours": positive float — median time (in hours) the object stays stationary
+- "p90_persistence_hours": positive float — 90th percentile time (in hours) the object stays stationary. Ensure this is greater than the median persistence hours.
+- "persistence_uncertainty": one of ["low", "medium", "high"]
+- "persistence_conf": float in [0.0, 1.0] — confidence in the answer, reflecting how predictable the behavior is (either in the object or in the familiarity of the object in this context). Should never be exactly 1 or 0 to avoid overconfidence.
+- "static_likelihood": float in [0.0, 1.0] — probability that the object is effectively static
+- "notes": short sentence explaining reasoning (max 1 sentence)
+
+Guidelines:
+- Objects that have some fixed components but can still move should not be treated as fully immovable; for example, the persistence estimate for a door concerns how long until it moves on its hinge.
+- Structural or immovable objects such as walls or countertops should have very large persistence values (1000 to 20000 hours).
+- Actively moving objects such as vehicles, walking people, or objects being carried by people should have very short persistence (0.001 hours).
+- For objects that appear currently stationary but are capable of moving, estimate persistence based on typical patterns for the object, given the environment context. For example, minutes for a chair at an occupied desk, several hours for a chair at an office desk at night, minutes for utensils at an occupied kitchen counter, 3–24 hours for an unoccupied kitchen, 1 hour for a car at a grocery store, 4 hours for a car at an office building).
+- If uncertain, set persistence_uncertainty to "high".
+- Respond with ONLY valid JSON. No commentary or explanation outside the JSON.
+
+Scene description:
+$scene_caption
+
+Objects:
+$objects_block
+
+JSON answer:
