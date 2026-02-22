@@ -23,9 +23,11 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
         *,
         object_discoverer: AbsObjectDiscoverer,
         language_segmenter: AbsLanguagePromptedSegmenter,
+        min_area_perc: float = 0,          # optional: drop tiny masks
     ):
         super().__init__(name="langGround_p_" + object_discoverer.getName() + "_s_" + language_segmenter.getName())
         self.object_discoverer = object_discoverer
+        self.min_area_perc = float(min_area_perc)
         self.language_segmenter = language_segmenter
 
     @torch.no_grad()
@@ -42,6 +44,9 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
         obj_descriptions = self.object_discoverer.identify(image)
         # print("Object descriptions:", obj_descriptions)
 
+        # Dedupe object descriptions if needed (some discoverers may return duplicates or near-duplicates)
+        obj_descriptions = list(set(obj_descriptions))
+
         seg = self.language_segmenter.segment_from_prompts(image, obj_descriptions)
 
         # Convert to your SegmentationResults.
@@ -54,9 +59,34 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
                 scores=torch.zeros((0,), dtype=torch.float32),
             )
 
+        min_area_pixels = int(self.min_area_perc * H * W)
+
+        # Filter out small masks if min_area_perc > 0
+        keep_indices = []
+        for i in range(seg.masks.shape[0]):
+            m = seg.masks[i]
+
+            area = int(m.sum().item())
+            if min_area_pixels > 0 and area < min_area_pixels:
+                continue
+            keep_indices.append(i)
+
+        if len(keep_indices) == 0:
+            return SegmentationResults(
+                ids=torch.zeros((0,), dtype=torch.int64),
+                masks=torch.zeros((0, H, W), dtype=torch.bool),
+                boxes=torch.zeros((0, 4), dtype=torch.float32),
+                scores=torch.zeros((0,), dtype=torch.float32),
+            )
+
+        filtererd_ids = seg.prompt_ids[keep_indices]
+        filtererd_masks = seg.masks[keep_indices]
+        filtererd_boxes = seg.boxes[keep_indices]
+        filtererd_scores = seg.scores[keep_indices] if seg.scores is not None else None
+
         return SegmentationResults(
-            ids=seg.prompt_ids.to(torch.int64),
-            masks=seg.masks.to(torch.bool),
-            boxes=seg.boxes.to(torch.float32),
-            scores=seg.scores.to(torch.float32),
+            ids=filtererd_ids.to(torch.int64),
+            masks=filtererd_masks.to(torch.bool),
+            boxes=filtererd_boxes.to(torch.float32),
+            scores=filtererd_scores.to(torch.float32),
         )

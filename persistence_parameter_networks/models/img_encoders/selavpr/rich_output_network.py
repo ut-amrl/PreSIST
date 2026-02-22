@@ -6,6 +6,39 @@ from torch.nn.parameter import Parameter
 
 from .backbone.vision_transformer import vit_large  # your DinoVisionTransformer ctor
 
+class GeM(nn.Module):
+    def __init__(self, p=3, eps=1e-6, work_with_tokens=False):
+        super().__init__()
+        self.p = Parameter(torch.ones(1) * p)
+        self.eps = eps
+        self.work_with_tokens = work_with_tokens
+
+    def forward(self, x):
+        return gem(x, p=self.p, eps=self.eps, work_with_tokens=self.work_with_tokens)
+
+
+def gem(x, p=3, eps=1e-6, work_with_tokens=False):
+    if work_with_tokens:
+        x = x.permute(0, 2, 1)
+        return F.avg_pool1d(x.clamp(min=eps).pow(p), (x.size(-1))).pow(1.0 / p).unsqueeze(3)
+    else:
+        return F.avg_pool2d(x.clamp(min=eps).pow(p), (x.size(-2), x.size(-1))).pow(1.0 / p)
+
+
+class Flatten(nn.Module):
+    def forward(self, x):
+        assert x.shape[2] == x.shape[3] == 1
+        return x[:, :, 0, 0]
+
+
+class L2Norm(nn.Module):
+    def __init__(self, dim=1):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, x):
+        return F.normalize(x, p=2, dim=self.dim)
+
 
 class LocalAdapt(nn.Module):
     def __init__(self):
@@ -112,10 +145,11 @@ class GeoLocalizationNet(nn.Module):
       - local_hw:         (Hl, Wl)
     """
 
-    def __init__(self, args, use_local: bool = True):
+    def __init__(self, args, use_local: bool = True, return_global_only: bool = False):
         super().__init__()
         self.backbone = get_backbone(args)
         self.LocalAdapt = LocalAdapt() if use_local else None
+        self.features_dim = int(getattr(args, "features_dim", 1024))
 
         # These help infer grid shape when N isn't square
         self.patch_size = getattr(self.backbone, "patch_size", None)
@@ -135,6 +169,16 @@ class GeoLocalizationNet(nn.Module):
             else:
                 self.img_hw = None
 
+        self.return_global_only = return_global_only
+
+        if self.return_global_only:
+            self.aggregation = nn.Sequential(
+                L2Norm(),
+                GeM(work_with_tokens=None),
+                Flatten(),
+            )
+
+
     def forward(self, x: torch.Tensor):
         backbone_out = self.backbone(x)
 
@@ -147,6 +191,12 @@ class GeoLocalizationNet(nn.Module):
         patch_tokens_hw = patch_tokens.view(B, H, W, C)         # (B, H, W, C)
         patch_token_map = patch_tokens_hw.permute(0, 3, 1, 2)   # (B, C, H, W)
 
+        # Return global feature only
+        if self.return_global_only:
+            x1 = self.aggregation(patch_token_map)       # (B, C)
+            global_feature = F.normalize(x1, p=2, dim=-1) # (B, C)
+            return global_feature
+
         result = {
             "patch_tokens": patch_tokens,          # (B, N, C) -> K/V
             "patch_tokens_hw": patch_tokens_hw,    # (B, H, W, C) -> mask alignment
@@ -154,6 +204,8 @@ class GeoLocalizationNet(nn.Module):
             "cls_token": cls_token,                # (B, C) or None
             "grid_hw": (H, W),
         }
+
+
 
         # Optional: local high-res map (useful later for ring/support pooling etc.)
         if self.LocalAdapt is not None:

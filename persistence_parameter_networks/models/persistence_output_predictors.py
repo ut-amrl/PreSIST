@@ -1,12 +1,15 @@
 import torch
 import torch.nn as nn
-from typing import Tuple
+from typing import Tuple, Optional, Union
 
 from abc import ABC, abstractmethod
 from persistence_parameter_networks.models.abs_raw_predictor import AbsRawPredictor
-from persistence_parameter_networks.models.attention_based_predictor import MultiMaskObjectConditionedCrossAttnPredictor
+from persistence_parameter_networks.models.attention_based_predictor import MultiMaskObjectConditionedCrossAttnPredictor, build_pooler, PoolerConfig
 from persistence_parameter_networks.models.detr_ish_based_predictor import DETRLikeMaskConditionedPersistencePredictor
-from persistence_parameter_networks.models.dual_encoder_framework import DualEncoderModel, FeatureCombiner, InstancePreprocessConfig
+from persistence_parameter_networks.models.dual_encoder_framework import DualEncoderModel, InstancePreprocessConfig, GenericCombinerFactory
+from persistence_parameter_networks.models.img_encoders.selavpr.rich_img_encoder import RichOutputSelaEncoder, RichOutputSelaEncoderArgs
+
+
 
 # import optional
 from typing import Optional
@@ -23,7 +26,6 @@ class PersistenceOutputPredictor(nn.Module, ABC):
         self.confidence_from_logits = confidenceFromLogits
 
 
-    @abstractmethod
     def forward(self, image: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         # Abstract method to predict raw parameters from image and mask
         # Should be implemented by subclasses
@@ -39,28 +41,35 @@ class PersistenceOutputPredictor(nn.Module, ABC):
         return y50_hat, yr_hat, yc_hat
 
 
-
 class PersistenceObjConditionedCrossAttn(PersistenceOutputPredictor):
-
     def __init__(
         self,
-        backbone: nn.Module, # TODO replace with geoloc backbone parameters
-        pooler: nn.Module,
+        backbone_cfg: RichOutputSelaEncoderArgs,
+        pooler_cfg: PoolerConfig,
         attn_dim: int | None = None,
         num_heads: int = 8,
         ff_hidden: int = 512,
         confidenceFromLogits: bool = False,
     ):
+
+        # Build backbone from config
+        backbone = RichOutputSelaEncoder(backbone_cfg)
+
+        # Build pooler
+        if pooler_cfg is not None:
+            pooler = build_pooler(pooler_cfg)
+
         super().__init__(
             baseModel=MultiMaskObjectConditionedCrossAttnPredictor(
-                backbone=backbone, # TODO
+                backbone=backbone,
                 outputLength=3,
                 pooler=pooler,
                 attn_dim=attn_dim,
                 num_heads=num_heads,
                 ff_hidden=ff_hidden,
             ),
-            confidenceFromLogits=confidenceFromLogits)
+            confidenceFromLogits=confidenceFromLogits,
+        )
 
 
 class PersistenceOutDetrLikePredictor(PersistenceOutputPredictor):
@@ -70,13 +79,13 @@ class PersistenceOutDetrLikePredictor(PersistenceOutputPredictor):
     """
     def __init__(
         self,
-        backbone: nn.Module, # TODO replace with geoloc backbone parameters
+        backbone_cfg: RichOutputSelaEncoderArgs,
         d_model: int | None = None,
         nhead: int = 8,
         num_layers: int = 3,
         dim_ff: int = 1024,
         dropout: float = 0.0,
-        interact_queries: bool = True,       # <-- constructor argument you asked for
+        interact_queries: bool = True,
         mask_resize_mode: str = "bilinear",
         init_from_mask_pool: bool = True,
         learned_query_fallback: bool = True,
@@ -84,9 +93,12 @@ class PersistenceOutDetrLikePredictor(PersistenceOutputPredictor):
         eps: float = 1e-6,
         confidenceFromLogits: bool = False,
     ):
+        # Build backbone from config (same class as other predictor)
+        backbone = RichOutputSelaEncoder(backbone_cfg)
+
         super().__init__(
             baseModel=DETRLikeMaskConditionedPersistencePredictor(
-                backbone=backbone, # TODO
+                backbone=backbone,
                 outputLength=3,
                 d_model=d_model,
                 nhead=nhead,
@@ -100,7 +112,7 @@ class PersistenceOutDetrLikePredictor(PersistenceOutputPredictor):
                 max_queries=max_queries,
                 eps=eps,
             ),
-            confidenceFromLogits=confidenceFromLogits
+            confidenceFromLogits=confidenceFromLogits,
         )
 
 
@@ -109,28 +121,48 @@ class PersistenceOutDualEncoderModel(PersistenceOutputPredictor):
 
     def __init__(
         self,
-        context_encoder: nn.Module, # TODO replace with geoloc backbone parameters
-        instance_encoder: nn.Module,# TODO replace with geoloc backbone parameters
-        combiner: FeatureCombiner | None = None,
+        context_encoder_args: RichOutputSelaEncoderArgs,
+        instance_encoder_args: RichOutputSelaEncoderArgs,
+        combiner_factory: GenericCombinerFactory,
+        use_unified_encoder: bool = False,
         downstream_dim: int = 512,
         preprocess_cfg: Optional[InstancePreprocessConfig] = None,
-        head: Optional[nn.Module] = None,
-        head_hidden: int = 256,
-        head_dropout: float = 0.0,
         confidenceFromLogits: bool = False,
     ):
+        context_encoder, instance_encoder = self.buildEncoders(context_encoder_args, instance_encoder_args, use_unified_encoder)
         super().__init__(
             baseModel=DualEncoderModel(
-                context_encoder=context_encoder, # TODO
-                instance_encoder=instance_encoder, # TODO
+                context_encoder=context_encoder,
+                instance_encoder=instance_encoder,
+                use_unified_encoder=use_unified_encoder,
                 outputLength=3,
-                combiner=combiner,
+                combiner_factory=combiner_factory,
                 downstream_dim=downstream_dim,
                 preprocess_cfg=preprocess_cfg,
-                head=head,
-                head_hidden=head_hidden,
-                head_dropout=head_dropout,
             ),
             confidenceFromLogits=confidenceFromLogits
         )
+
+    @staticmethod
+    def buildEncoders(
+        context_encoder_args: RichOutputSelaEncoderArgs,
+        instance_encoder_args: RichOutputSelaEncoderArgs,
+        use_unified_encoder: bool = False,
+    ) -> Tuple[RichOutputSelaEncoder, RichOutputSelaEncoder]:
+        if (not context_encoder_args.return_global_only):
+            # Override to ensure return_global_only is True for encoders used in this predictor, since the predictor relies on global features. This is a bit hacky but allows us to reuse the same encoder class with a simple flag.
+            print("Warning: Overriding context_encoder_args.return_global_only to True for use in PersistenceOutDualEncoderModel since the predictor relies on global features. Original value was:", context_encoder_args.return_global_only)
+            context_encoder_args.return_global_only = True
+        if use_unified_encoder:
+            # If using a unified encoder, we ignore instance_encoder_args and build one encoder for both
+            encoder = RichOutputSelaEncoder(context_encoder_args)  # Use context args for the unified encoder
+            return encoder, encoder
+
+        if (not instance_encoder_args.return_global_only):
+            print("Warning: Overriding instance_encoder_args.return_global_only to True for use in PersistenceOutDualEncoderModel since the predictor relies on global features. Original value was:", instance_encoder_args.return_global_only)
+            instance_encoder_args.return_global_only = True
+
+        context_encoder = RichOutputSelaEncoder(context_encoder_args)
+        instance_encoder = RichOutputSelaEncoder(instance_encoder_args)
+        return context_encoder, instance_encoder
 

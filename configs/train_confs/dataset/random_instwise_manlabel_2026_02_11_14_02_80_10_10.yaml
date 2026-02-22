@@ -1,0 +1,9 @@
+_target_: training.dataset.distillation_dataset.DistillationDatasetConfig
+input_root_dir: /workspace/data/input/
+output_root_dir: /workspace/data/output/
+segmentation_config_name: semanticsam_granularity3_minArea0p001
+full_results_config_name: manlabel_2026_02_11_14_02
+split_id_kind: relpath
+split_granularity: image_instance
+split_json: splits/random_instwise_manlabel_2026_02_11_14_02_80_10_10.json
+

@@ -50,14 +50,21 @@ class InstructBLIPSceneLevelCaptioner(AbstractSceneLevelCaptioner):
         self.prompt = prompt
         self.max_new_tokens = max_new_tokens
         self.num_beams = num_beams
+        self.initialized = False
+        # self.initialize()
+
+
+
+    def initialize(self):
+        self.initialized = True
 
         # Load processor and model from HF Hub
-        self.processor = InstructBlipProcessor.from_pretrained(model_name)
+        self.processor = InstructBlipProcessor.from_pretrained(self.model_name)
 
         # Use fp16 on GPU, fp32 on CPU
         dtype = torch.float16 if "cuda" in self.device else torch.float32
         self.model = InstructBlipForConditionalGeneration.from_pretrained(
-            model_name,
+            self.model_name,
             torch_dtype=dtype,
         ).to(self.device)
         self.model.eval()
@@ -68,6 +75,9 @@ class InstructBLIPSceneLevelCaptioner(AbstractSceneLevelCaptioner):
         Generate a scene-level caption for the given image using InstructBLIP.
         Takes in a torch tensor image (C, H, W) or (B, C, H, W) and returns a string caption.
         """
+        if not self.initialized:
+            self.initialize()
+
         if image.dim() == 3:
             # (C, H, W) -> (1, C, H, W)
             image = image.unsqueeze(0)

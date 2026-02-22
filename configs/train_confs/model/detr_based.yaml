@@ -1,0 +1,59 @@
+# @package model
+
+defaults:
+  - _self_
+
+_target_: persistence_parameter_networks.models.persistence_output_predictors.PersistenceOutDetrLikePredictor
+
+# -----------------------------------------------------------------------------
+# Backbone config (FIXED in the sense of: same backbone *class* across models)
+# You can still swap weights/checkpoints externally; this config controls how the
+# backbone is constructed.
+# -----------------------------------------------------------------------------
+backbone_cfg:
+  _target_: persistence_parameter_networks.models.img_encoders.selavpr.rich_img_encoder.RichOutputSelaEncoderArgs
+
+  foundation_model_path: "pretrained_models/dinov2_vitl14_pretrain.pth"  # change to use different weights
+  registers: false
+  resume: false
+  image_size: 518
+
+  freeze_dino: true                 # change to false if you want to finetune the foundation model
+  use_adapter: true                 # common default; change to false if training full backbone
+  pretrained_adapter_path: null     # set if you have adapter weights to load
+  freeze_pre_sela: false
+  use_local: false                  # only change if some pipeline needs local map outputs
+
+# -----------------------------------------------------------------------------
+# DETR-like decoder capacity (MOST WORTH TUNING)
+# -----------------------------------------------------------------------------
+d_model: null          # default: null => match backbone token dim (robust)
+                       # change to 256/384 to make decoder cheaper or reduce overfitting
+                       # NOTE: if you set d_model explicitly, make sure nhead divides d_model
+
+nhead: 8               # tune with d_model (must divide d_model). Common: 4, 6, 8
+num_layers: 3          # most impactful capacity knob. Try 2 (faster) or 4-6 (more capacity)
+dim_ff: 1024           # FFN width. Try 512 (lighter) or 2048 (more capacity)
+dropout: 0.0           # increase to 0.1 if overfitting / poor generalization
+
+# -----------------------------------------------------------------------------
+# Query / mask behavior (TASK-DEPENDENT; worth tuning)
+# -----------------------------------------------------------------------------
+interact_queries: false      # DEFAULT per your preference:
+                             # false => each query only attends to image tokens
+                             # true  => enable self-attn among queries (can help if objects interact)
+
+mask_resize_mode: bilinear   # USUALLY FIXED. Change only if you suspect aliasing artifacts.
+init_from_mask_pool: true    # usually good. Try false if masks are noisy/tiny and hurt initialization.
+learned_query_fallback: true # usually keep true; helps when mask pooling is weak.
+max_queries: 32              # MUST be >= max number of masks K you will ever pass at runtime.
+                             # increase if you expect many masks per image.
+                             # TODO revise depending on split method
+
+eps: 1e-6                    # IN-BETWEEN: only change for numerical issues with near-empty masks.
+                             # try 1e-4 if you see instability/NaNs from extremely small masks.
+
+# -----------------------------------------------------------------------------
+# Output / confidence handling
+# -----------------------------------------------------------------------------
+confidenceFromLogits: false  # change only if your training/inference expects confidence derived from logits

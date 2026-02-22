@@ -104,5 +104,5 @@ if __name__ == "__main__":
 
 """
 Example usage:
-python generate_segmentation_debug_images.py --root_dir /workspace/data/output/ --excludeUnderscoreFiles
+python generate_segmentation_debug_images.py  --excludeUnderscoreFiles --root_dir /workspace/data/output/
 """

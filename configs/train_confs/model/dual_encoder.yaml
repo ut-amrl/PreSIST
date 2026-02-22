@@ -1,0 +1,44 @@
+# @package model
+
+
+_target_: persistence_parameter_networks.models.persistence_output_predictors.PersistenceOutDualEncoderModel
+context_encoder_args:
+  _target_: persistence_parameter_networks.models.img_encoders.selavpr.rich_img_encoder.RichOutputSelaEncoderArgs
+
+  foundation_model_path: "pretrained_models/dinov2_vitl14_pretrain.pth"
+  registers: false
+  resume: false
+  image_size: 518
+
+  freeze_dino: true
+  use_adapter: true
+  pretrained_adapter_path: null
+  freeze_pre_sela: false
+  use_local: False # Needs to be true if using local map pooler
+instance_encoder_args:
+  _target_: persistence_parameter_networks.models.img_encoders.selavpr.rich_img_encoder.RichOutputSelaEncoderArgs
+
+  foundation_model_path: "pretrained_models/dinov2_vitl14_pretrain.pth"
+  registers: false
+  resume: false
+  image_size: 518
+
+  freeze_dino: true
+  use_adapter: true
+  pretrained_adapter_path: null
+  freeze_pre_sela: false
+  use_local: False # Needs to be true if using local map pooler
+  return_global_only: true  # instance encoder only needs global token for our current tasks; set to false if you want full token outputs (e.g. for cross-attn)
+
+combiner_factory:
+  _target_: persistence_parameter_networks.models.dual_encoder_framework.GenericCombinerFactory
+  cls: persistence_parameter_networks.models.dual_encoder_framework.ConcatMLPCombiner
+  kwargs:
+    hidden: 512
+
+use_unified_encoder: false
+downstream_dim: 512
+preprocess_cfg:
+  _target_: persistence_parameter_networks.models.dual_encoder_framework.InstancePreprocessConfig
+  mode: mask
+confidenceFromLogits: false

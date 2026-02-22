@@ -1,0 +1,15 @@
+defaults:
+  - dataset: ran_inst_init_dataset_gen_qwen3_30b_instruct_semantic_sam_minA0p001_18_22_21
+  - loss_function: weighted_multi_loss
+  - lr_scheduler: cosine_epoch
+  - model: obj_conditioned_cross_attn
+  - optimizer: adamw
+  - registry_info: registry_default
+  - train: default
+  - _self_
+
+train:
+  batch_size: 32
+
+config_name: cross_attn_ran_inst_init_dataset_gen_qwen3_30b_instruct_semantic_sam_minA0p001_18_22_21
+model_output_root_dir: "/workspace/data/output/training_outputs/"

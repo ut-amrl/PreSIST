@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch
 from typing import Optional, Union, Dict, Any
 from training.validator import SurvivalValidationRunner, ValConfig
-from training.dataset.basic_dataset import SegmentationDatasetConfig
+from training.dataset.distillation_dataset import DistillationDatasetConfig
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -33,6 +33,7 @@ def train(
         validator: SurvivalValidationRunner,
         output_dir: str,
         cfg: TrainerConfig,
+        full_cfg_yaml: str,
         resumeFromCheckpoint: Optional[str] = None,
         ):
 
@@ -46,6 +47,7 @@ def train(
         validator=validator,
         output_dir=output_dir,
         cfg=cfg,
+        full_cfg_yaml=full_cfg_yaml,
     )
 
     if resumeFromCheckpoint is not None:
@@ -55,15 +57,15 @@ def train(
     trainer.train()
 
 
-def createDataloaders(segmentationDatasetConfig: SegmentationDatasetConfig, registryConfig: RegistryConfig, trainerConfig: TrainerConfig):
+def createDataloaders(distillationDatasetConfig: DistillationDatasetConfig, registryConfig: RegistryConfig, trainerConfig: TrainerConfig):
 
     relpath_to_image_id = RelpathToImageId(
-        image_root=segmentationDatasetConfig.input_root_dir,
+        image_root=distillationDatasetConfig.input_root_dir,
         registry_cfg=registryConfig,   # your existing Hydra RegistryConfig object
     )
 
     image_id_to_relpath = ImageIdToRelpath(
-        image_root=segmentationDatasetConfig.input_root_dir,
+        image_root=distillationDatasetConfig.input_root_dir,
         registry_cfg=registryConfig,
         warn=print,  # or your logger.warning
     )
@@ -71,17 +73,19 @@ def createDataloaders(segmentationDatasetConfig: SegmentationDatasetConfig, regi
     # trainingDataset = segmentationDatasetConfig.make_dataset("train", "per_instance")
     # validationDataset = segmentationDatasetConfig.make_dataset("val", "per_instance")
 
-    trainingDataset = segmentationDatasetConfig.make_dataset(
+    trainingDataset = distillationDatasetConfig.make_dataset(
         split="train",
         mode="per_instance",
         relpath_to_image_id=relpath_to_image_id,
         image_id_to_relpath=image_id_to_relpath,
+        img_size=trainerConfig.img_size,
     )
-    validationDataset = segmentationDatasetConfig.make_dataset(
+    validationDataset = distillationDatasetConfig.make_dataset(
         split="val",
         mode="per_instance",
         relpath_to_image_id=relpath_to_image_id,
-        image_id_to_relpath=image_id_to_relpath
+        image_id_to_relpath=image_id_to_relpath,
+        img_size=trainerConfig.img_size,
     )
 
     # Create dataloaders
@@ -106,7 +110,12 @@ def createDataloaders(segmentationDatasetConfig: SegmentationDatasetConfig, regi
 def loadModelAndBackpropStuff(cfg: DictConfig) -> nn.Module:
     model = hydra.utils.instantiate(cfg.model)
     loss_fn = hydra.utils.instantiate(cfg.loss_function)
-    optimizer = hydra.utils.instantiate(cfg.optimizer, params=model.parameters())
+
+    optimizer = hydra.utils.instantiate(
+        cfg.optimizer,
+        params=model.parameters(),
+        _convert_="all",   # Avoid ListConfig objects in optimizer params, convert to plain list/dict
+    )
     lr_scheduler = hydra.utils.instantiate(cfg.lr_scheduler, optimizer=optimizer)
 
     # Move necessary stuff to device
@@ -122,20 +131,21 @@ def createValidator(validationConfig: ValConfig, loss_fn: nn.Module, device: tor
 
 
 # Use hydra config to load in relevant configuration
-@hydra.main(version_base=None, config_path="configs", config_name="train_config.yaml")
+@hydra.main(version_base=None, config_path="configs/train_confs", config_name="train_config.yaml")
 def main(cfg: DictConfig):
 
     # Access Hydra's own config
     hydra_cfg = HydraConfig.get()
 
     # This is the name of the top-level config (e.g. "train_config")
-    config_name = hydra_cfg.job.config_name      # or hydra_cfg.job.name
+    # config_name = hydra_cfg.job.config_name      # or hydra_cfg.job.name
+    config_name = cfg.config_name if "config_name" in cfg else hydra_cfg.job.config_name
 
     # Output directory from config
     # Append timestamp to output directory to avoid overwriting previous runs
     date_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    output_dir = os.path.join(cfg.output_root_dir, config_name, date_time)
+    output_dir = os.path.join(cfg.model_output_root_dir, config_name, date_time)
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -165,7 +175,7 @@ def main(cfg: DictConfig):
     else:
         print("No checkpoint specified to resume from. Starting fresh training run.")
 
-    val_config = hydra.utils.instantiate(cfg.validation)
+    val_config = trainer_config.validationConfig
 
     # Make sure the loss function and the validation config both have the same value for confidence_from_logits
     if hasattr(loss_fn, "confidence_from_logits") and hasattr(val_config, "confidence_from_logits"):
@@ -197,6 +207,7 @@ def main(cfg: DictConfig):
         validator=validator,
         output_dir=output_dir,
         cfg=trainer_config,
+        full_cfg_yaml=OmegaConf.to_yaml(cfg, resolve=True),
         resumeFromCheckpoint=resumeFromCheckpoint,
     )
 

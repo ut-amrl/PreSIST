@@ -1,0 +1,4 @@
+_target_: dataset_generation.images_dataset.registry.RegistryConfig
+registry_root: /workspace/data/output/registry/
+strict: true
+export_human_readable: true

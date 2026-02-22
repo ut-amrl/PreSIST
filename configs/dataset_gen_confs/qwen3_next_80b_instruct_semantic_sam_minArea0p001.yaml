@@ -1,0 +1,29 @@
+defaults:
+  - dataset_generator: caching_dataset_generation_process
+  - registry_info: registry_default
+  - dataloader: dataloader_default
+  - override dataset_generator/instanceSegmenter: semanticsamautosegmenter_cache
+  - _self_
+
+# output_root_dir: "./debug_outputs_single_imgs/"
+
+
+dataset_generator:
+  llmPersistenceQuerier:
+    llmQuerier:
+      model_name: Qwen/Qwen3-Next-80B-A3B-Instruct
+      max_new_tokens: 16384
+      name: qwen3_next_80b_instruct
+    promptHandler:
+      prompt_template_file: "prompt_files/llm_querier/v2_time_scaled.txt"
+      name: v2_time_scaled
+  instanceSegmenter:
+    min_area_perc: 0.001
+    name: semanticsam_granularity3_minArea0p001
+
+
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

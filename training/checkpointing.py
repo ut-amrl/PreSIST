@@ -15,7 +15,8 @@ class CheckpointMeta:
     best_score: float = float("-inf")
     best_epoch: int = 0
     epochs_since_improve: int = 0
-    trainer_cfg: Optional[Dict[str, Any]] = None
+    # trainer_cfg: Optional[Dict[str, Any]] = None
+    trainer_cfg: Optional[str] = None  # YAML string of the full trainer config for easier loading and reproducibility
 
 
 def make_checkpoint_dict(
@@ -39,7 +40,7 @@ def make_checkpoint_dict(
         "best_score": float(meta.best_score),
         "best_epoch": int(meta.best_epoch),
         "epochs_since_improve": int(meta.epochs_since_improve),
-        "trainer_cfg": dict(meta.trainer_cfg) if meta.trainer_cfg is not None else None,
+        "trainer_cfg": meta.trainer_cfg
     }
 
 

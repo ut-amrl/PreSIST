@@ -1,0 +1,13 @@
+defaults:
+  - dataset: random_instwise_manlabel_2026_02_11_14_02_80_10_10
+  - loss_function: weighted_multi_loss
+  - lr_scheduler: cosine_epoch
+  - model: dual_encoder
+  - optimizer: adamw
+  - registry_info: registry_default
+  - train: default
+  - _self_
+
+
+config_name: dual_enc_concat_mask_random_instwise_manlabel_2026_02_11_14_02_80_10_10
+model_output_root_dir: "/workspace/data/output/training_outputs/"

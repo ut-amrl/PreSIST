@@ -17,6 +17,9 @@ from training.dataset.split_management import SplitName, SplitIdKind, SplitGranu
 
 
 import torchvision.transforms as T
+import torchvision.transforms.functional as F
+from torchvision.transforms import InterpolationMode
+
 
 ReturnMode = Literal["per_image", "per_instance"]
 
@@ -25,7 +28,7 @@ ReturnMode = Literal["per_image", "per_instance"]
 # -------------------------
 # DINOv2 default transform (Option 3)
 # -------------------------
-def make_default_dinov2_transform() -> Callable[[torch.Tensor], torch.Tensor]:
+def make_default_dinov2_transform(size: int) -> Callable[[torch.Tensor], torch.Tensor]:
     """
     Returns a torchvision transform that:
       - converts uint8 [0..255] -> float32 [0..1]
@@ -33,6 +36,7 @@ def make_default_dinov2_transform() -> Callable[[torch.Tensor], torch.Tensor]:
     """
     return T.Compose(
         [
+            T.Resize((size, size), interpolation=InterpolationMode.BILINEAR),
             T.ConvertImageDtype(torch.float32),  # scales uint8 -> float32 in [0,1]
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
@@ -172,13 +176,13 @@ def label_transform_log_ratio(raw: dict) -> torch.Tensor:
 
 
 @dataclass(frozen=True)
-class SegmentationDatasetConfig:
+class DistillationDatasetConfig:
     # Roots
     input_root_dir: Union[str, Path]
     output_root_dir: Union[str, Path]
 
     # Output config names
-    segmentation_config_name: str
+    segmentation_config_name: str # TODO save this in the full results top level directory and then read it dynamically so theres no chance of mismatch
     full_results_config_name: str
 
     # Splits contain relpaths or image_ids
@@ -218,6 +222,7 @@ class SegmentationDatasetConfig:
         split: SplitName,
         relpath_to_image_id: Callable[[str], str],
         image_id_to_relpath: Callable[[str], str],
+        img_size,
         *,
         mode: ReturnMode = "per_instance",
         strict: bool = True,
@@ -229,18 +234,20 @@ class SegmentationDatasetConfig:
             strict=strict,
             relpath_to_image_id=relpath_to_image_id,
             image_id_to_relpath=image_id_to_relpath,
+            img_size=img_size,
         )
 
 
 class _SegmentationDataset(Dataset):
     def __init__(
         self,
-        cfg: SegmentationDatasetConfig,
+        cfg: DistillationDatasetConfig,
         split: SplitName,
         mode: ReturnMode,
         relpath_to_image_id: Callable[[str], str],
         image_id_to_relpath: Callable[[str], str],
         strict: bool,
+        img_size: int=518,
     ):
         super().__init__()
 
@@ -250,6 +257,7 @@ class _SegmentationDataset(Dataset):
         self.strict = strict
         self.relpath_to_image_id = relpath_to_image_id
         self.image_id_to_relpath = image_id_to_relpath
+        self.img_size = img_size
         # ----------------------------
         # Root structure
         # ----------------------------
@@ -272,7 +280,7 @@ class _SegmentationDataset(Dataset):
         # ----------------------------
         # image_transform = torchvision transform (image-only)
         self._image_transform = (
-            cfg.image_transform if cfg.image_transform is not None else make_default_dinov2_transform()
+            cfg.image_transform if cfg.image_transform is not None else make_default_dinov2_transform(img_size)
         )
 
         # ----------------------------
@@ -465,6 +473,11 @@ class _SegmentationDataset(Dataset):
                             continue
                         self._instance_index.append((rec_idx, int(iid)))
 
+        # Print the number of records and instances indexed for this split
+        num_images = len(self._records)
+        num_instances = len(self._instance_index)
+        print(f"[SegDataset:{self.split}] Loaded {num_images} images and indexed {num_instances} instances with mode={self.mode}.")
+
         # for entry in split_entries:
 
         #     # --- Resolve relpath + image_id deterministically ---
@@ -583,7 +596,19 @@ class _SegmentationDataset(Dataset):
             mask = torch.zeros((H, W), dtype=self.cfg.masks_dtype)
         else:
             j = int(pos[0].item())
+
             mask = masks[j]
+            if mask.ndim == 2:
+                mask = mask.unsqueeze(0)  # (1,H,W)
+
+
+            mask = F.resize(
+                mask.float(),
+                [self.img_size, self.img_size],
+                interpolation=InterpolationMode.NEAREST,
+            )
+
+            mask = mask.to(self.cfg.masks_dtype)
 
         return self._format_training_sample(
             image=image,
@@ -591,6 +616,7 @@ class _SegmentationDataset(Dataset):
             label=label,
             image_id=rec["image_id"],
             instance_id=inst_id,
+            image_path=rec["image_path"],
         )
 
 
@@ -678,6 +704,7 @@ class _SegmentationDataset(Dataset):
         *,
         image_id: str,
         instance_id: int,
+        image_path: str,
     ) -> Dict[str, object]:
         if not torch.is_tensor(label):
             raise TypeError("label_transform must return a torch.Tensor of shape (3,) for this training format.")
@@ -690,22 +717,30 @@ class _SegmentationDataset(Dataset):
         if mask.dtype not in (torch.uint8, torch.bool):
             mask = mask.to(torch.uint8)
 
+
         return {
             "image": image,  # (C,H,W)
-            "mask": mask,    # (H,W)
+            "mask": mask,    # (1,H,W)
             "y50": y50,
             "yr": yr,
             "yc": yc,
             "image_id": image_id,
             "instance_id": torch.tensor(instance_id, dtype=torch.int64),
+            "image_path": str(image_path) if isinstance(image_path, Path) else image_path
         }
 
 
+    # def _default_image_loader(self, path: Path) -> torch.Tensor:
+    #     # EXIF-safe, CHW uint8
+    #     img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+    #     arr = np.asarray(img)  # HWC uint8
+    #     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+
     def _default_image_loader(self, path: Path) -> torch.Tensor:
-        # EXIF-safe, CHW uint8
         img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
-        arr = np.asarray(img)  # HWC uint8
+        arr = np.array(img, copy=True)  # HWC uint8, writable
         return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+
 
     def _load_seg(self, path: Path) -> Dict[str, torch.Tensor]:
         seg, _img_path = SegmentationResults.loadFromFile(str(path))

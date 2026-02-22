@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from tqdm import tqdm
+
 
 from utils.metrics import AverageMeter
 
@@ -102,6 +104,7 @@ class SurvivalValidationRunner:
         self,
         model: nn.Module,
         val_loader: torch.utils.data.DataLoader,
+        batchUseFreq: int = 1,
     ) -> Tuple[float, Dict[str, float]]:
         model = model.to(self.device)
         model.eval()
@@ -135,7 +138,12 @@ class SurvivalValidationRunner:
         use_amp = bool(self.cfg.use_amp and self.device.type == "cuda")
         autocast_ctx = torch.cuda.amp.autocast if self.device.type == "cuda" else torch.cpu.amp.autocast
 
-        for batch in val_loader:
+        # for batch in tqdm(val_loader, desc="Validation", unit="batch"):
+        # Enumerate the batches with tqdm for progress tracking, and also apply batchUseFreq skipping
+        for batch_idx, batch in enumerate(tqdm(val_loader, desc="Validation", unit="batch")):
+            if (batch_idx % batchUseFreq) != 0:
+                continue
+
             b = _unpack_batch(batch)
             b = _to_device(b, self.device)
 
@@ -150,7 +158,7 @@ class SurvivalValidationRunner:
             with autocast_ctx(enabled=use_amp):
                 y50_hat, yr_hat, yc_hat = model(image, mask)
 
-                total_loss = self.loss_fn(y50_hat, y50, yr_hat, yr, yc_hat, yc)
+                total_loss, lossMetrics, lossDebugTerms = self.loss_fn(y50_hat, y50, yr_hat, yr, yc_hat, yc)
 
                 mse_y50 = F.mse_loss(y50_hat, y50, reduction="mean")
                 mse_yr = F.mse_loss(yr_hat, yr, reduction="mean")

@@ -94,7 +94,7 @@ class DETRLikeMaskConditionedPersistencePredictor(AbsRawPredictor):
         max_queries: int = 32,
         eps: float = 1e-6,
     ):
-        super().__init__()
+        super().__init__(outputLength=outputLength)
         self.backbone = backbone
         self.outputLength = outputLength
         self.mask_resize_mode = mask_resize_mode

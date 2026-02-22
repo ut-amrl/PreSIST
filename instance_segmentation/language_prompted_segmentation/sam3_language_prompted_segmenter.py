@@ -36,12 +36,12 @@ class SAM3LanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
         name: str,
         device: Optional[str] = None,
         checkpoint_path: Optional[str] = None,
-        min_area: int = 0,          # optional: drop tiny masks
+
         score_thresh: float = -1.0, # optional: keep scores>=thresh (if scores provided)
     ):
         super().__init__(name=name)
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.min_area = int(min_area)
+
         self.score_thresh = float(score_thresh)
 
         try:
@@ -124,9 +124,8 @@ class SAM3LanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
                 if m.shape != (H, W):
                     m = m.reshape(H, W)
 
-                area = int(m.sum().item())
-                if self.min_area > 0 and area < self.min_area:
-                    continue
+
+
 
                 s = float(scores_list[i]) if scores_list is not None else 0.0
                 if self.score_thresh >= 0 and scores_list is not None and s < self.score_thresh:

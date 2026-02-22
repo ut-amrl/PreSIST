@@ -1,0 +1,6 @@
+_target_: torch.optim.lr_scheduler.CosineAnnealingLR
+
+# pass optimizer at instantiation time
+T_max: ${train.max_epochs}   # number of epochs
+eta_min: 1e-6
+last_epoch: -1

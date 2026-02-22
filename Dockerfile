@@ -120,6 +120,11 @@ RUN pip install --no-build-isolation 'git+https://github.com/facebookresearch/de
 RUN git clone https://github.com/UX-Decoder/Semantic-SAM.git /workspace/semantic-sam && \
     pip install -e /workspace/semantic-sam --no-deps
 
+RUN pip install wandb flash_attn
+
+
+# Maybe pip install -U --force-reinstall --no-cache-dir "pydantic-core==2.27.2"
+
 # # Download the Semantic-SAM checkpoints
 # RUN mkdir -p /workspace/semantic-sam/checkpoints && \
 #     wget -O /workspace/semantic-sam/checkpoints/swinl_only_sam_many2many.pth \

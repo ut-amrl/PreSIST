@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Optional, Tuple, Any, Dict, Type
 
 from abc import ABC, abstractmethod
 
-from persistence_parameter_networks.img_encoders.abs_img_encoder import AbsImgEncoder
+from persistence_parameter_networks.models.img_encoders.abs_img_encoder import AbsImgEncoder
 from utils.image_utils import apply_mask, crop_and_resize
 from persistence_parameter_networks.models.abs_raw_predictor import AbsRawPredictor
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import hydra
 
 
 # ----------------------------
@@ -183,6 +185,28 @@ class CrossAttnCombiner(FeatureCombiner):
         return self.proj_out(x)   # (B, d)
 
 
+@dataclass
+class GenericCombinerFactory:
+    """
+    Holds a combiner class and kwargs (dimensionless).
+    When build() is called, it injects nc/ni/d.
+    """
+    cls: Type = ConcatMLPCombiner   # <-- default combiner
+    kwargs: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "hidden": 512,
+            "dropout": 0.0,
+        }
+    )
+
+    def build(self, nc: int, ni: int, d: int):
+        cls = self.cls
+        if isinstance(cls, str):
+            cls = hydra.utils.get_class(cls)   # <-- resolves dotted path to class
+
+        return cls(nc=nc, ni=ni, d=d, **self.kwargs)
+
+
 # ----------------------------
 # Main model
 # ----------------------------
@@ -206,7 +230,7 @@ class DualEncoderModel(AbsRawPredictor):
       4) output = head(downstream_feat) -> (B, M)
 
     Notes:
-      - Encoders must implement getOutputFeatureLength() -> int
+      - Encoders must implement getOutputDim() -> int
       - head can be provided; if not, a default MLP head is used.
     """
     def __init__(
@@ -214,7 +238,8 @@ class DualEncoderModel(AbsRawPredictor):
         context_encoder: AbsImgEncoder,
         instance_encoder: AbsImgEncoder,
         outputLength: int,
-        combiner: FeatureCombiner | None = None,
+        combiner_factory: GenericCombinerFactory,
+        use_unified_encoder: bool = False,  # If True, instance_encoder is ignored and context_encoder is used for both
         downstream_dim: int = 512,
         preprocess_cfg: Optional[InstancePreprocessConfig] = None,
         head: Optional[nn.Module] = None,
@@ -225,27 +250,22 @@ class DualEncoderModel(AbsRawPredictor):
         self.context_encoder = context_encoder
         self.instance_encoder = instance_encoder
         self.preprocess_cfg = preprocess_cfg if preprocess_cfg is not None else InstancePreprocessConfig()
+        self.use_unified_encoder = use_unified_encoder
 
         # Query encoder output dimensions
-        if not hasattr(context_encoder, "getOutputFeatureLength"):
-            raise AttributeError("context_encoder must implement getOutputFeatureLength()")
-        if not hasattr(instance_encoder, "getOutputFeatureLength"):
-            raise AttributeError("instance_encoder must implement getOutputFeatureLength()")
+        if not hasattr(context_encoder, "getOutputDim"):
+            raise AttributeError("context_encoder must implement getOutputDim()")
+        if not hasattr(instance_encoder, "getOutputDim"):
+            raise AttributeError("instance_encoder must implement getOutputDim()")
 
         self.nc = int(context_encoder.getOutputDim())
-        self.ni = int(instance_encoder.getOutputDim())
+        if (self.use_unified_encoder):
+            self.ni = self.nc
+        else:
+            self.ni = int(instance_encoder.getOutputDim())
 
         # Default combiner (handles nc != ni) if not provided
-        if combiner is None:
-            self.combiner = ConcatMLPCombiner(
-                nc=self.nc,
-                ni=self.ni,
-                d=downstream_dim,
-                hidden=max(downstream_dim, 2 * downstream_dim),
-                dropout=head_dropout,
-            )
-        else:
-            self.combiner = combiner
+        self.combiner = combiner_factory.build(nc=self.nc, ni=self.ni, d=downstream_dim)
 
         # Head: user-specified or default
         if head is None:
@@ -280,7 +300,10 @@ class DualEncoderModel(AbsRawPredictor):
 
         # 2) instance encoding
         instance_img = self.make_instance_image(image, mask)
-        instance_feat = self.instance_encoder(instance_img)  # (B, ni)
+        if (self.use_unified_encoder):
+            instance_feat = self.context_encoder(instance_img)  # (B, ni) where ni should equal nc
+        else:
+            instance_feat = self.instance_encoder(instance_img)  # (B, ni)
         if instance_feat.dim() != 2:
             raise ValueError(f"instance_encoder must return (B,ni), got {tuple(instance_feat.shape)}")
 

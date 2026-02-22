@@ -1,0 +1,3 @@
+_target_: persistence_parameter_networks.losses.weighted_multi_loss.WeightedMultiLoss
+confidence_loss: mse
+confidence_from_logits: False

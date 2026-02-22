@@ -1,0 +1,9 @@
+_target_: training.dataset.split_management.SplitGenConfig
+search_path_config: init_dataset_gen_qwen3_30b_instruct_semantic_sam_minArea0p001
+split_json_out: "splits/ran_inst_init_dataset_gen_qwen3_30b_instruct_semantic_sam_minA0p001_18_22_21.json"
+train_ratio: 0.8
+val_ratio: 0.1
+test_ratio: 0.1
+split_id_kind: "relpath"
+split_granularity: "image_instance"
+

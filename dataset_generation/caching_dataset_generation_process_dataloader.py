@@ -129,9 +129,14 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
     def processImage(self, imageInfo):
         image = imageInfo["image"]
         timeAndDate = None
+        # return
 
         # print("Processing new image: ", imageInfo.get("image_id", "") + " " + imageInfo.get("path", imageInfo.get("relpath", "unknown")))
         self.intermediateLogger.logInputData(image, timeAndDate, imageInfo)
+
+        alreadyProcessed = self.intermediateLogger.checkIfAlreadyProcessed()
+        if alreadyProcessed:
+            return
 
         # print("Segmenting instances...")
         segmentationLambda = lambda: self.instanceSegmenter.segmentInstances(image)
@@ -147,13 +152,18 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
         captionLambda = lambda: self.sceneCaptioner.generateCaption(image)
         sceneCaption = self.intermediateLogger.getOrGenerateSceneCaption(captionLambda)
 
-        print("Generating object descriptions...")
+        # return instances, None
+        # return None
+
+        # print("Generating object descriptions...")
         objectDescriptionLambda = lambda: self.objectDescriber.describeObjects(image, instances)
         objectDescriptions = self.intermediateLogger.getOrGenerateObjectDescriptions(objectDescriptionLambda)
 
-        print("Generating relationship descriptions...")
+        # print("Generating relationship descriptions...")
         relationshipDescriberLambda = lambda: self.relationshipDescriber.describeRelationships(image, instances, objectDescriptions)
         relationshipDescriptions = self.intermediateLogger.getOrGenerateRelationshipDescriptions(relationshipDescriberLambda)
+
+        # return instances, None
 
         print("Estimating persistence parameters...")
         persistenceParamLambda = lambda: self.llmPersistenceQuerier.estimatePersistenceParameters(sceneCaption, objectDescriptions, relationshipDescriptions, timeAndDate)

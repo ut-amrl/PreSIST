@@ -14,6 +14,7 @@ from utils.metrics import AverageMeter
 from training.validator import SurvivalValidationRunner
 
 from training.checkpointing import CheckpointMeta, make_checkpoint_dict, save_checkpoint, load_training_state_from_checkpoint
+from training.validator import ValConfig
 
 # ----------------------------
 # JSONL Logger (fallback when W&B isn't used)
@@ -129,6 +130,8 @@ class TrainerConfig:
     # Checkpoint every N2 epochs
     save_every_n_epochs: int = 1   # N2
 
+    img_size: int = 518
+
     early_stopping_patience: int = 10  # Early stopping based on aggregate score plateau for this many epochs
 
     # AMP / grad clipping
@@ -146,6 +149,8 @@ class TrainerConfig:
     wandb_entity: Optional[str] = None
     # Wandb project name
     wandb_project: Optional[str] = None
+
+    validationConfig: ValConfig = ValConfig()
 
 
 # ----------------------------
@@ -187,6 +192,7 @@ class Trainer:
         output_dir: str,
         start_epoch: int = 0,
         cfg: Optional[TrainerConfig] = None,
+        full_cfg_yaml: Optional[str] = None,
     ):
         self.model = model
         self.loss_fn = loss_fn
@@ -198,6 +204,7 @@ class Trainer:
 
         self.start_epoch = int(start_epoch)
         self.cfg = cfg or TrainerConfig()
+        self.full_cfg_yaml = full_cfg_yaml or ""
         self.early_stopping_patience = int(self.cfg.early_stopping_patience)
 
         self.device = (
@@ -267,13 +274,15 @@ class Trainer:
 
 
     def save_checkpoint(self, epoch: int, filename: str) -> str:
-        path = os.path.join(self.output_dir, filename)
+        path = os.path.join(self.output_dir, "checkpoints", filename)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
 
         meta = CheckpointMeta(
             best_score=self.best_score,
             best_epoch=self.best_epoch,
             epochs_since_improve=self.epochs_since_improve,
-            trainer_cfg=vars(self.cfg),
+            trainer_cfg=self.full_cfg_yaml,
+            # trainer_cfg=vars(self.cfg),
         )
 
         state = make_checkpoint_dict(
@@ -288,7 +297,7 @@ class Trainer:
         save_checkpoint(state, path)
 
         print(f"[CKPT] Saved: {path}")
-        self.log_metrics({"saved_path": path, "epoch": epoch}, category="ckpt", step=epoch, allow_wandb=True)
+        # self.log_metrics({"saved_path": path, "epoch": epoch}, category="ckpt", step=epoch, allow_wandb=True)
         return path
 
 
@@ -394,7 +403,7 @@ class Trainer:
     # ----------------------------
     # Training / validation
     # ----------------------------
-    def fit(self) -> Dict[str, Any]:
+    def train(self) -> Dict[str, Any]:
         self.model = self.model.to(self.device)
 
         # Init W&B if enabled+available; else JSONL fallback
@@ -415,7 +424,18 @@ class Trainer:
 
         # If epoch==0 start, save weights before training
         if self.start_epoch == 0:
+            # Log initial validation metrics before training starts (epoch=0)
+            print("Running initial validation before training starts...")
+            val_score, val_metrics = self._validate(epoch=0, useValSplit=True, batchUseFreq=1)
+            train_score, train_metrics = self._validate(epoch=0, useValSplit=False, batchUseFreq=10)
+            self.log_metrics({"aggregate_score": val_score, **val_metrics}, category="validation", step=0, allow_wandb=True)
+            self.log_metrics({"aggregate_score": train_score, **train_metrics}, category="val_on_train", step=0, allow_wandb=True)
+
+            # Set best_score based on initial validation before saving the initial checkpoint
+            self.best_score = float(val_score)
+            # self.best_score = float("-inf")  # Don't set best_score based on initial validation; only update after first epoch
             self.save_checkpoint(epoch=0, filename="ckpt_epoch_0_pretrain.pth")
+
 
         for epoch in range(self.start_epoch, self.cfg.max_epochs):
             train_loss_avg, train_loss_dict_avgs = self._train_one_epoch(epoch)
@@ -424,7 +444,11 @@ class Trainer:
             self.log_metrics({"loss": train_loss_avg, **train_loss_dict_avgs}, category="train", step=epoch, allow_wandb=True)
 
             # Validate (epoch-based)
-            val_score, val_metrics = self._validate(epoch)
+            val_score, val_metrics = self._validate(epoch, useValSplit=True, batchUseFreq=1)
+            # Also compute the merics on the training set for this epoch to see train vs val metric gap (epoch-based)
+            train_score, train_metrics = self._validate(epoch, useValSplit=False, batchUseFreq=10)
+            # Log train metrics on the training set as well (step=epoch)
+            self.log_metrics({"aggregate_score": train_score, **train_metrics}, category="val_on_train", step=epoch, allow_wandb=True)
 
             # Epoch-based validation logging (step=epoch)
             self.log_metrics({**val_metrics, "aggregate_score": val_score}, category="validation", step=epoch, allow_wandb=True)
@@ -621,9 +645,12 @@ class Trainer:
         return train_loss_avg, train_loss_dict_avgs
 
     @torch.no_grad()
-    def _validate(self, epoch: int) -> Tuple[float, Dict[str, float]]:
+    def _validate(self, epoch: int, useValSplit: bool=True, batchUseFreq: int = 1) -> Tuple[float, Dict[str, float]]:
         self.model.eval()
-        agg_score, metrics = self.validator.validate(self.model, self.val_loader)
+        if (useValSplit):
+            agg_score, metrics = self.validator.validate(self.model, self.val_loader, batchUseFreq=batchUseFreq)
+        else:
+            agg_score, metrics = self.validator.validate(self.model, self.train_loader, batchUseFreq=batchUseFreq)
 
         # normalize validation metrics dict to floats
         val_metrics: Dict[str, float] = {}
@@ -631,7 +658,10 @@ class Trainer:
             for k, v in metrics.items():
                 val_metrics[k] = _as_float(v)
 
-        print(f"[Val]\tEpoch {epoch}\taggregate_score={float(agg_score):.6f}")
+        if (useValSplit):
+            print(f"[Val]\tEpoch {epoch}\taggregate_score={float(agg_score):.6f}")
+        else:
+            print(f"[Val on train]\tEpoch {epoch}\taggregate_score={float(agg_score):.6f}")
 
         return float(agg_score), val_metrics
 

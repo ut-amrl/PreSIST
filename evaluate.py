@@ -1,0 +1,787 @@
+#!/usr/bin/env python3
+"""
+evaluate_hydra.py
+
+Changes vs previous version:
+1) Loads checkpoint using the SAME checkpoint utilities as training:
+     training.checkpointing.load_training_state_from_checkpoint(...)
+   (instead of model.load_state_dict)
+
+2) Output path includes checkpoint epoch (read from the checkpoint meta):
+     <run_root>/eval/epoch_<EPOCH>/<split>/
+
+Other behavior:
+- run_root inferred from ckpt path:
+    <run_root>/checkpoints/<ckpt>.pth  -> run_root = parent(checkpoints)
+- Evaluates train/val/test splits (skips a split if dataset can't be created).
+- Saves metrics.json per split + optional overlay PNGs per split.
+- Writes summary.json under <run_root>/eval/epoch_<EPOCH>/summary.json
+
+Run (Hydra-style, same as training):
+  python evaluate_hydra.py ckpt=/path/to/<run_root>/checkpoints/ckpt_best.pth
+
+Optional overlay saving:
+  python evaluate_hydra.py ckpt=... eval.viz=true eval.viz_max=32 eval.num_workers=8
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, is_dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, Union
+
+import torch
+import torch.nn as nn
+
+import hydra
+from omegaconf import DictConfig
+from hydra.core.hydra_config import HydraConfig
+from torch.utils.data import DataLoader
+
+# Project imports (same as training)
+from dataset_generation.images_dataset.image_id_fn import ImageIdToRelpath
+from dataset_generation.images_dataset.registry import RegistryConfig
+from dataset_generation.images_dataset.relpath_id_fn import RelpathToImageId
+
+from training.validator import SurvivalValidationRunner, ValConfig
+from training.dataset.distillation_dataset import DistillationDatasetConfig
+
+from training.checkpointing import load_training_state_from_checkpoint
+
+import math
+from collections import defaultdict
+
+import numpy as np
+
+
+
+# ----------------------------
+# Batch helpers
+# ----------------------------
+def _to_device(x: Any, device: torch.device) -> Any:
+    if torch.is_tensor(x):
+        return x.to(device, non_blocking=True)
+    if isinstance(x, (list, tuple)):
+        return type(x)(_to_device(v, device) for v in x)
+    if isinstance(x, dict):
+        return {k: _to_device(v, device) for k, v in x.items()}
+    return x
+
+
+def _unpack_batch(batch: Union[Dict[str, Any], Tuple[Any, ...]]) -> Dict[str, Any]:
+    if isinstance(batch, dict):
+        return batch
+    if isinstance(batch, (list, tuple)) and len(batch) >= 5:
+        return {"image": batch[0], "mask": batch[1], "y50": batch[2], "yr": batch[3], "yc": batch[4]}
+    raise ValueError(
+        "Unsupported batch format. Expected dict with keys "
+        "('image','mask','y50','yr','yc') or tuple (image, mask, y50, yr, yc, ...)."
+    )
+
+
+def _safe_float(v: Any) -> float:
+    if torch.is_tensor(v):
+        return float(v.detach().cpu().item())
+    return float(v)
+
+
+# ----------------------------
+# Dataloaders (same pattern as training)
+# ----------------------------
+def _make_loader(
+    distillation_cfg: DistillationDatasetConfig,
+    registry_cfg: RegistryConfig,
+    *,
+    split: str,
+    img_size: int,
+    batch_size: int,
+    num_workers: int = 4,
+) -> DataLoader:
+    relpath_to_image_id = RelpathToImageId(
+        image_root=distillation_cfg.input_root_dir,
+        registry_cfg=registry_cfg,
+    )
+    image_id_to_relpath = ImageIdToRelpath(
+        image_root=distillation_cfg.input_root_dir,
+        registry_cfg=registry_cfg,
+        warn=print,
+    )
+
+    dataset = distillation_cfg.make_dataset(
+        split=split,
+        mode="per_instance",
+        relpath_to_image_id=relpath_to_image_id,
+        image_id_to_relpath=image_id_to_relpath,
+        img_size=img_size,
+    )
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+
+
+# ----------------------------
+# Visualization (save-to-file only)
+# ----------------------------
+def _tensor_to_uint8_img(x: torch.Tensor) -> torch.Tensor:
+    if x.ndim == 4:
+        x = x[0]
+    if x.ndim == 3 and x.shape[0] in (1, 3, 4):
+        x = x.permute(1, 2, 0)  # HWC
+    x = x.detach().float().cpu()
+    mn = float(x.min())
+    mx = float(x.max())
+    if mx > mn:
+        x = (x - mn) / (mx - mn)
+    x = (x * 255.0).clamp(0, 255).to(torch.uint8)
+    return x
+
+
+def _mask_to_uint8(m: torch.Tensor) -> torch.Tensor:
+    if m.ndim == 4:
+        m = m[0]
+    if m.ndim == 3:
+        m = m[0]
+    m = m.detach().float().cpu().clamp(0, 1)
+    return (m * 255.0).to(torch.uint8)
+
+
+def _save_overlay(
+    out_path: Union[str, Path],
+    image_chw: torch.Tensor,
+    mask_hw_or_chw: torch.Tensor,
+    text_lines: Tuple[str, ...],
+    *,
+    alpha: float = 0.45,
+) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    img_u8 = _tensor_to_uint8_img(image_chw)  # HWC
+    m_u8 = _mask_to_uint8(mask_hw_or_chw)     # HW
+
+    img = Image.fromarray(img_u8.numpy())
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    m = Image.fromarray(m_u8.numpy(), mode="L")
+
+    red = Image.new("RGB", img.size, (255, 0, 0))
+    red_masked = Image.composite(red, Image.new("RGB", img.size, (0, 0, 0)), m)
+
+    blended = Image.blend(img, Image.composite(red_masked, img, m), alpha=alpha)
+
+    draw = ImageDraw.Draw(blended)
+    try:
+        font = ImageFont.load_default()
+    except Exception:
+        font = None
+
+    pad = 6
+    text = "\n".join(text_lines)
+    bbox = draw.multiline_textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    x0, y0 = 8, 8
+    draw.rectangle([x0 - pad, y0 - pad, x0 + tw + pad, y0 + th + pad], fill=(0, 0, 0))
+    draw.multiline_text((x0, y0), text, fill=(255, 255, 255), font=font)
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    blended.save(str(out_path))
+
+
+def _as_1d_numpy(x: torch.Tensor) -> np.ndarray:
+    x = x.detach().float().cpu().view(-1)
+    return x.numpy()
+
+
+def _ecdf(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return x_sorted, y in [0,1] for empirical CDF."""
+    x = np.asarray(x, dtype=np.float64)
+    x = x[np.isfinite(x)]
+    if x.size == 0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    xs = np.sort(x)
+    ys = np.arange(1, xs.size + 1, dtype=np.float64) / float(xs.size)
+    return xs, ys
+
+
+def _plot_step_hist_overlay(
+    true_vals: np.ndarray,
+    pred_vals: np.ndarray,
+    out_path: Path,
+    *,
+    title: str,
+    bins: int = 60,
+    log_x: bool = False,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    true_vals = np.asarray(true_vals, dtype=np.float64)
+    pred_vals = np.asarray(pred_vals, dtype=np.float64)
+    true_vals = true_vals[np.isfinite(true_vals)]
+    pred_vals = pred_vals[np.isfinite(pred_vals)]
+
+    if true_vals.size == 0 or pred_vals.size == 0:
+        return
+
+    # If log_x, we plot on log-scale x, but still compute bins in linear-x space
+    # using positive-only data. (t50/t90 should be positive anyway.)
+    if log_x:
+        true_vals = true_vals[true_vals > 0]
+        pred_vals = pred_vals[pred_vals > 0]
+        if true_vals.size == 0 or pred_vals.size == 0:
+            return
+
+        xmin = min(true_vals.min(), pred_vals.min())
+        xmax = max(true_vals.max(), pred_vals.max())
+        if not (np.isfinite(xmin) and np.isfinite(xmax)) or xmin <= 0 or xmax <= xmin:
+            return
+        bin_edges = np.logspace(np.log10(xmin), np.log10(xmax), bins + 1)
+    else:
+        xmin = min(true_vals.min(), pred_vals.min())
+        xmax = max(true_vals.max(), pred_vals.max())
+        if not (np.isfinite(xmin) and np.isfinite(xmax)) or xmax <= xmin:
+            return
+        bin_edges = np.linspace(xmin, xmax, bins + 1)
+
+    # Density hist -> step lines
+    h_true, _ = np.histogram(true_vals, bins=bin_edges, density=True)
+    h_pred, _ = np.histogram(pred_vals, bins=bin_edges, density=True)
+
+    # Convert bin edges + heights into step-plot coordinates
+    # We'll use bin centers for a simple line, and step style for clarity.
+    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    plt.figure()
+    plt.step(centers, h_true, where="mid", label="dataset")
+    plt.step(centers, h_pred, where="mid", label="pred")
+    plt.title(title)
+    plt.xlabel("value")
+    plt.ylabel("density")
+    if log_x:
+        plt.xscale("log")
+    plt.legend()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+
+def _plot_cdf_overlay(
+    true_vals: np.ndarray,
+    pred_vals: np.ndarray,
+    out_path: Path,
+    *,
+    title: str,
+    log_x: bool = False,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    true_vals = np.asarray(true_vals, dtype=np.float64)
+    pred_vals = np.asarray(pred_vals, dtype=np.float64)
+
+    # For log_x, only positive values make sense
+    if log_x:
+        true_vals = true_vals[np.isfinite(true_vals) & (true_vals > 0)]
+        pred_vals = pred_vals[np.isfinite(pred_vals) & (pred_vals > 0)]
+    else:
+        true_vals = true_vals[np.isfinite(true_vals)]
+        pred_vals = pred_vals[np.isfinite(pred_vals)]
+
+    if true_vals.size == 0 or pred_vals.size == 0:
+        return
+
+    xt, yt = _ecdf(true_vals)
+    xp, yp = _ecdf(pred_vals)
+    if xt.size == 0 or xp.size == 0:
+        return
+
+    plt.figure()
+    plt.plot(xt, yt, label="dataset")
+    plt.plot(xp, yp, label="pred")
+    plt.title(title)
+    plt.xlabel("value")
+    plt.ylabel("CDF")
+    plt.ylim(0.0, 1.0)
+    if log_x:
+        plt.xscale("log")
+    plt.legend()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+
+@torch.no_grad()
+def _collect_split_distributions(
+    *,
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    confidence_from_logits: bool,
+    use_amp: bool,
+) -> dict[str, dict[str, np.ndarray]]:
+    """
+    Returns:
+      {
+        "y50": {"true": np.ndarray, "pred": np.ndarray},
+        "yr":  {"true": ..., "pred": ...},
+        "yc":  {"true": ..., "pred": ...},
+        "t50": {"true": ..., "pred": ...},
+        "t90": {"true": ..., "pred": ...},
+      }
+    """
+    model.eval()
+    autocast_ctx = torch.cuda.amp.autocast if device.type == "cuda" else torch.cpu.amp.autocast
+    use_amp = bool(use_amp and device.type == "cuda")
+
+    buf: dict[str, dict[str, list[np.ndarray]]] = {
+        k: {"true": [], "pred": []} for k in ("y50", "yr", "yc", "t50", "t90")
+    }
+
+    for batch in loader:
+        b = _unpack_batch(batch)
+        b = _to_device(b, device)
+
+        image = b["image"]
+        mask = b["mask"]
+        y50_true = b["y50"]
+        yr_true = b["yr"]
+        yc_true = b["yc"].float()
+
+        with autocast_ctx(enabled=use_amp):
+            y50_hat, yr_hat, yc_hat = model(image, mask)
+            yc_pred = torch.sigmoid(yc_hat) if confidence_from_logits else yc_hat
+
+        # Derived times (compute in float for stability under AMP)
+        t50_true = torch.exp(y50_true.float())
+        t50_pred = torch.exp(y50_hat.float())
+        t90_true = t50_true * (1.0 + torch.exp(yr_true.float()))
+        t90_pred = t50_pred * (1.0 + torch.exp(yr_hat.float()))
+
+        buf["y50"]["true"].append(_as_1d_numpy(y50_true))
+        buf["y50"]["pred"].append(_as_1d_numpy(y50_hat))
+
+        buf["yr"]["true"].append(_as_1d_numpy(yr_true))
+        buf["yr"]["pred"].append(_as_1d_numpy(yr_hat))
+
+        buf["yc"]["true"].append(_as_1d_numpy(yc_true))
+        buf["yc"]["pred"].append(_as_1d_numpy(yc_pred))
+
+        buf["t50"]["true"].append(_as_1d_numpy(t50_true))
+        buf["t50"]["pred"].append(_as_1d_numpy(t50_pred))
+
+        buf["t90"]["true"].append(_as_1d_numpy(t90_true))
+        buf["t90"]["pred"].append(_as_1d_numpy(t90_pred))
+
+    out: dict[str, dict[str, np.ndarray]] = {}
+    for k in buf.keys():
+        out[k] = {
+            "true": np.concatenate(buf[k]["true"], axis=0) if buf[k]["true"] else np.array([], dtype=np.float64),
+            "pred": np.concatenate(buf[k]["pred"], axis=0) if buf[k]["pred"] else np.array([], dtype=np.float64),
+        }
+    return out
+
+
+def _save_distribution_plots(
+    dists: dict[str, dict[str, np.ndarray]],
+    out_dir: Path,
+    *,
+    bins: int = 60,
+    log_x_for_times: bool = True,
+) -> None:
+    dist_dir = out_dir / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+
+    for var, tp in dists.items():
+        true_vals = tp["true"]
+        pred_vals = tp["pred"]
+
+        log_x = bool(log_x_for_times and var in ("t50", "t90"))
+
+        _plot_step_hist_overlay(
+            true_vals,
+            pred_vals,
+            dist_dir / f"hist_{var}.png",
+            title=f"{var}: step-hist density (dataset vs pred)",
+            bins=bins,
+            log_x=log_x,
+        )
+        _plot_cdf_overlay(
+            true_vals,
+            pred_vals,
+            dist_dir / f"cdf_{var}.png",
+            title=f"{var}: CDF (dataset vs pred)",
+            log_x=log_x,
+        )
+
+
+
+@torch.no_grad()
+def _save_some_overlays(
+    *,
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    out_dir: Path,
+    max_images: int,
+    confidence_from_logits: bool,
+    use_amp: bool,
+) -> int:
+    if max_images <= 0:
+        return 0
+
+    model.eval()
+    autocast_ctx = torch.cuda.amp.autocast if device.type == "cuda" else torch.cpu.amp.autocast
+    use_amp = bool(use_amp and device.type == "cuda")
+
+    viz_dir = out_dir / "viz"
+    viz_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = 0
+    for batch in loader:
+        b = _unpack_batch(batch)
+        b = _to_device(b, device)
+
+        # TODO figure out how to skip transformations for visualization (e.g., want to visualize original image/mask rather than transformed version)
+        image = b["image"]
+        mask = b["mask"]
+        y50 = b["y50"]
+        yr = b["yr"]
+        yc = b["yc"].float()
+
+        with autocast_ctx(enabled=use_amp):
+            y50_hat, yr_hat, yc_hat = model(image, mask)
+            yc_prob = torch.sigmoid(yc_hat) if confidence_from_logits else yc_hat
+
+        # --- NEW: compute t50 / t90 (in float for numeric stability under AMP) ---
+        t50_hat = torch.exp(y50_hat.float())
+        t50_true = torch.exp(y50.float())
+        t90_hat = t50_hat * (1.0 + torch.exp(yr_hat.float()))
+        t90_true = t50_true * (1.0 + torch.exp(yr.float()))
+        # ------------------------------------------------------------------------
+
+        bs = int(image.shape[0])
+        for i in range(bs):
+            if saved >= max_images:
+                return saved
+
+            lines = (
+                # NEW lines shown first
+                f"t50 true: {float(t50_true[i].detach().cpu()):.4f} | pred: {float(t50_hat[i].detach().cpu()):.4f}",
+                f"t90 true: {float(t90_true[i].detach().cpu()):.4f} | pred: {float(t90_hat[i].detach().cpu()):.4f}",
+                # Existing lines
+                f"y50 true: {float(y50[i].detach().cpu()):.4f} | pred: {float(y50_hat[i].detach().cpu()):.4f}",
+                f"yr  true: {float(yr[i].detach().cpu()):.4f} | pred: {float(yr_hat[i].detach().cpu()):.4f}",
+                f"yc  true: {float(yc[i].detach().cpu()):.4f} | pred: {float(yc_prob[i].detach().cpu()):.4f}",
+            )
+
+            out_path = viz_dir / f"overlay_{saved:04d}.png"
+            _save_overlay(out_path, image[i], mask[i], lines)
+            saved += 1
+
+        if saved >= max_images:
+            break
+
+    return saved
+
+
+
+# @torch.no_grad()
+# def _save_some_overlays(
+#     *,
+#     model: nn.Module,
+#     loader: DataLoader,
+#     device: torch.device,
+#     out_dir: Path,
+#     max_images: int,
+#     confidence_from_logits: bool,
+#     use_amp: bool,
+# ) -> int:
+#     if max_images <= 0:
+#         return 0
+
+#     model.eval()
+#     autocast_ctx = torch.cuda.amp.autocast if device.type == "cuda" else torch.cpu.amp.autocast
+#     use_amp = bool(use_amp and device.type == "cuda")
+
+#     viz_dir = out_dir / "viz"
+#     viz_dir.mkdir(parents=True, exist_ok=True)
+
+#     saved = 0
+#     for batch in loader:
+#         b = _unpack_batch(batch)
+#         b = _to_device(b, device)
+
+#         image = b["image"]
+#         mask = b["mask"]
+#         y50 = b["y50"]
+#         yr = b["yr"]
+#         yc = b["yc"].float()
+
+#         with autocast_ctx(enabled=use_amp):
+#             y50_hat, yr_hat, yc_hat = model(image, mask)
+#             yc_prob = torch.sigmoid(yc_hat) if confidence_from_logits else yc_hat
+
+#         bs = int(image.shape[0])
+#         for i in range(bs):
+#             if saved >= max_images:
+#                 return saved
+
+#             lines = (
+#                 f"y50 true: {float(y50[i].detach().cpu()):.4f} | pred: {float(y50_hat[i].detach().cpu()):.4f}",
+#                 f"yr  true: {float(yr[i].detach().cpu()):.4f} | pred: {float(yr_hat[i].detach().cpu()):.4f}",
+#                 f"yc  true: {float(yc[i].detach().cpu()):.4f} | pred: {float(yc_prob[i].detach().cpu()):.4f}",
+#             )
+
+#             out_path = viz_dir / f"overlay_{saved:04d}.png"
+#             _save_overlay(out_path, image[i], mask[i], lines)
+#             saved += 1
+
+#         if saved >= max_images:
+#             break
+
+#     return saved
+
+
+# ----------------------------
+# Split evaluation
+# ----------------------------
+def _evaluate_split(
+    *,
+    split: str,
+    model: nn.Module,
+    validator: SurvivalValidationRunner,
+    distillation_cfg: DistillationDatasetConfig,
+    registry_cfg: RegistryConfig,
+    train_cfg_obj: Any,
+    device: torch.device,
+    out_root_epoch: Path,
+    dist_bins: int = 60,
+    viz: bool,
+    viz_max: int,
+    num_workers: int,
+) -> Optional[Dict[str, Any]]:
+    img_size = int(getattr(train_cfg_obj, "img_size", 518))
+    batch_size = int(getattr(train_cfg_obj, "batch_size", 8))
+
+    try:
+        loader = _make_loader(
+            distillation_cfg,
+            registry_cfg,
+            split=split,
+            img_size=img_size,
+            batch_size=batch_size,
+            num_workers=num_workers,
+        )
+    except Exception as e:
+        print(f"[Eval] Split '{split}' could not be created ({e}). Skipping.")
+        return None
+
+    model.eval()
+    agg_score, metrics = validator.validate(model, loader)
+
+    split_dir = out_root_epoch / "eval" / split
+    split_dir.mkdir(parents=True, exist_ok=True)
+
+    dist_plots_saved = False
+
+
+
+    vcfg = getattr(train_cfg_obj, "validationConfig", ValConfig())
+    if isinstance(vcfg, dict):
+        vcfg = ValConfig(**vcfg)
+
+
+    dists = _collect_split_distributions(
+        model=model,
+        loader=loader,
+        device=device,
+        confidence_from_logits=bool(getattr(vcfg, "confidence_from_logits", False)),
+        use_amp=bool(getattr(vcfg, "use_amp", False)),
+    )
+    _save_distribution_plots(
+        dists,
+        split_dir,
+        bins=dist_bins,
+        log_x_for_times=True,
+    )
+
+    overlays_saved = 0
+    if viz:
+        overlays_saved = _save_some_overlays(
+            model=model,
+            loader=loader,
+            device=device,
+            out_dir=split_dir,
+            max_images=viz_max,
+            confidence_from_logits=bool(getattr(vcfg, "confidence_from_logits", False)),
+            use_amp=bool(getattr(vcfg, "use_amp", False)),
+        )
+
+    payload: Dict[str, Any] = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "split": split,
+        "aggregate_score": float(agg_score),
+        "metrics": {k: _safe_float(v) for k, v in metrics.items()},
+        "overlays_saved": int(overlays_saved),
+        "batch_size": batch_size,
+        "img_size": img_size,
+    }
+
+    metrics_path = split_dir / "metrics.json"
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+    print(f"[Eval] {split:>5} agg={float(agg_score):.6f} -> {metrics_path}")
+    if viz:
+        print(f"[Eval] {split:>5} overlays_saved={overlays_saved} -> {split_dir / 'viz'}")
+
+    return payload
+
+
+# ----------------------------
+# Hydra entry (mirrors training usage)
+# ----------------------------
+@hydra.main(version_base=None, config_path="configs/train_confs", config_name="train_config.yaml")
+def main(cfg: DictConfig) -> None:
+    hydra_cfg = HydraConfig.get()
+    config_name = cfg.config_name if "config_name" in cfg else hydra_cfg.job.config_name
+
+    if "ckpt" not in cfg or cfg.ckpt is None:
+        raise ValueError("Missing cfg.ckpt. Provide ckpt=/path/to/checkpoints/<file>.pth via Hydra overrides.")
+
+    ckpt_path = Path(str(cfg.ckpt)).expanduser().resolve()
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
+    # run_root = parent of the checkpoint's directory (i.e., parent of ".../checkpoints")
+    run_root = ckpt_path.parent.parent
+    print(f"[Paths] ckpt:     {ckpt_path}")
+    print(f"[Paths] run_root: {run_root}")
+    print(f"[Config] name:    {config_name}")
+
+    # Instantiate config objects exactly like training
+    train_cfg_obj = hydra.utils.instantiate(cfg.train)
+    registry_cfg: RegistryConfig = hydra.utils.instantiate(cfg.registry_info)
+    distillation_cfg: DistillationDatasetConfig = hydra.utils.instantiate(cfg.dataset)
+
+    # Device similar to training
+    device_str = getattr(train_cfg_obj, "device", None)
+    device = torch.device(device_str) if device_str else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[Device] {device}")
+
+    # Instantiate model/loss/optimizer/scheduler (like training utilities do)
+    model: nn.Module = hydra.utils.instantiate(cfg.model)
+    loss_fn: nn.Module = hydra.utils.instantiate(cfg.loss_function)
+    optimizer = hydra.utils.instantiate(cfg.optimizer, params=model.parameters())
+    lr_scheduler = hydra.utils.instantiate(cfg.lr_scheduler, optimizer=optimizer)
+
+    model.to(device)
+    loss_fn.to(device)
+
+    # Validation config + consistency checks (like training)
+    val_cfg = getattr(train_cfg_obj, "validationConfig", ValConfig())
+    if isinstance(val_cfg, dict):
+        val_cfg = ValConfig(**val_cfg)
+
+    if hasattr(loss_fn, "confidence_from_logits") and hasattr(val_cfg, "confidence_from_logits"):
+        if bool(loss_fn.confidence_from_logits) != bool(val_cfg.confidence_from_logits):
+            raise ValueError(
+                f"Mismatch in confidence_from_logits: loss_fn={loss_fn.confidence_from_logits} "
+                f"val_cfg={val_cfg.confidence_from_logits}"
+            )
+        if hasattr(model, "confidence_from_logits"):
+            if bool(model.confidence_from_logits) != bool(loss_fn.confidence_from_logits):
+                raise ValueError(
+                    f"Mismatch in confidence_from_logits: model={model.confidence_from_logits} "
+                    f"loss_fn={loss_fn.confidence_from_logits}"
+                )
+
+    # Load checkpoint using training utility
+    scaler = torch.cuda.amp.GradScaler(enabled=(getattr(train_cfg_obj, "use_amp", False) and device.type == "cuda"))
+    meta = load_training_state_from_checkpoint(
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        scaler=scaler,
+        ckpt=str(ckpt_path),
+        map_location=device,
+        strict_model=False,
+        load_optimizer=False,
+        load_scheduler=False,
+        load_scaler=False,
+    )
+    ckpt_epoch = int(getattr(meta, "epoch", -1))
+    ckpt_global_step = int(getattr(meta, "global_step", -1))
+    print(f"[CKPT] loaded epoch={ckpt_epoch} global_step={ckpt_global_step}")
+
+    # Output root that includes epoch
+    out_root_epoch = run_root / f"epoch_{ckpt_epoch:04d}"
+    out_root_epoch.mkdir(parents=True, exist_ok=True)
+
+    # Validator
+    validator = SurvivalValidationRunner(cfg=val_cfg, loss_fn=loss_fn, device=device)
+
+    # Optional eval toggles via cfg.eval.*
+    # viz = bool(getattr(getattr(cfg, "eval", {}), "viz", False)) if hasattr(cfg, "eval") else False
+    viz = True
+    # viz_max = int(getattr(getattr(cfg, "eval", {}), "viz_max", 16)) if hasattr(cfg, "eval") else 16
+    viz_max = 50
+    num_workers = int(getattr(getattr(cfg, "eval", {}), "num_workers", 4)) if hasattr(cfg, "eval") else 4
+
+    results: Dict[str, Any] = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "config_name": config_name,
+        "ckpt": str(ckpt_path),
+        "run_root": str(run_root),
+        "epoch": ckpt_epoch,
+        "global_step": ckpt_global_step,
+        "device": str(device),
+        "splits": {},
+    }
+
+    for split in ("test", "train", "val"):
+        payload = _evaluate_split(
+            split=split,
+            model=model,
+            validator=validator,
+            distillation_cfg=distillation_cfg,
+            registry_cfg=registry_cfg,
+            train_cfg_obj=train_cfg_obj,
+            device=device,
+            out_root_epoch=out_root_epoch,
+            viz=viz,
+            viz_max=viz_max,
+            num_workers=num_workers,
+        )
+        if payload is not None:
+            results["splits"][split] = payload
+
+    summary_path = out_root_epoch / "eval" / "summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2)
+
+    print(f"[Eval] Summary -> {summary_path}")
+
+
+if __name__ == "__main__":
+    main()
+
+"""
+Example usage
+python evaluate.py ckpt=/path/to/<output_root>/<cfg_name>/<timestamp>/checkpoints/ckpt_best.pth
+
+python evaluate.py \
+  ckpt=/path/to/.../checkpoints/ckpt_best.pth \
+  eval.viz=true eval.viz_max=32 eval.num_workers=8
+
+"""

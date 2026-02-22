@@ -1,0 +1,9 @@
+# @package model.pooler_cfg
+
+_target_: persistence_parameter_networks.models.attention_based_predictor.PoolerConfig
+
+kind: local_map
+mask_mode: bilinear
+up_mode: bilinear
+dilate_iters: 1
+eps: 1e-6

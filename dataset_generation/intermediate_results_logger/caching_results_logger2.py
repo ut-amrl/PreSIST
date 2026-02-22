@@ -200,6 +200,16 @@ class CachingResultsLoggerRevised:
         return caption
 
 
+    def checkIfAlreadyProcessed(self):
+        if (self.forceRegen):
+            return False
+
+        llmDataDir = self.getFinalOutputDirectory()
+
+        persistenceParamsPath = os.path.join(llmDataDir, PERSISTENCE_FILE_NAME)
+        return os.path.exists(persistenceParamsPath)
+
+
     def getOrGenerateObjectDescriptions(self, descriptionsLambda):
         descriptionsDir = self.getObjectDescriberResultsDirectory()
         descriptionsFilePath = os.path.join(descriptionsDir, "object_descriptions.json")
