@@ -1,3 +1,5 @@
+from datetime import datetime, time
+
 from dataset_generation.intermediate_results_logger.abs_intermediate_results_logger import AbsIntermediateResultsLogger
 import os
 from PIL import Image
@@ -6,6 +8,7 @@ import json
 from utils.visualization_utils import saveMasksOnImages
 
 from instance_segmentation.abs_instance_segmenter import SegmentationResults
+from utils.timing import timer
 import torch
 import numpy as np
 
@@ -54,6 +57,23 @@ class CachingResultsLoggerRevised:
         self.objectDescriberName = objectDescriberName
         self.relationshipDescriberName = relationshipDescriberName
         self.llmQuerierName = llmQuerierName
+
+        self.segmenterTimerName = f"Timer::seg::{self.segmenterName}"
+        self.sceneCaptionerTimerName = f"Timer::scene_cap::{self.sceneCaptionerName}"
+        self.objectDescriberTimerName = f"Timer::obj_desc::{self.objectDescriberName}"
+        self.relationshipDescriberTimerName = f"Timer::rel_desc::{self.relationshipDescriberName}"
+        self.llmQuerierTimerName = f"Timer::llm_querier::{self.llmQuerierName}"
+
+    def setConfigFileName(self, configFileName):
+        self.configFileName = configFileName
+
+        # Set up the timing output file
+        # Create a string that encodes the current date and time in a compact format (e.g. 20240601_153045)
+        dateTimeStr = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timingOutputFilePath = os.path.join(self.baseLogDirectory, "timing_reports", self.configFileName, "timing_report_" + dateTimeStr + ".txt")
+        # Create directory if it does not exist
+        os.makedirs(os.path.dirname(timingOutputFilePath), exist_ok=True)
+        timer.set_output_file(timingOutputFilePath)
 
 
     def createDirectoryIfNotExists(self, dirPath):
@@ -147,7 +167,8 @@ class CachingResultsLoggerRevised:
                 print("Will attempt to recompute segmentation results.")
 
         # Otherwise, compute segmentation results
-        segmentationResults = segmentationLambda()
+        with timer.time_block(self.segmenterTimerName):
+            segmentationResults = segmentationLambda()
 
         # Make sure directory exists
         # Create directory if it does not exist
@@ -171,7 +192,7 @@ class CachingResultsLoggerRevised:
 
         # If the caption already exists, and forceRegen is False, load and return it
         if not self.forceRegen and os.path.exists(primaryCaptionFilePath):
-            print("Retrieving cached scene caption from: ", primaryCaptionFilePath)
+            # print("Retrieving cached scene caption from: ", primaryCaptionFilePath)
             with open(primaryCaptionFilePath, 'r', encoding='utf-8') as f:
                 captionData = json.load(f)
             caption = captionData.get("caption", "").strip()
@@ -179,13 +200,14 @@ class CachingResultsLoggerRevised:
             return caption
 
         if not self.forceRegen and os.path.exists(alternateCaptionFilePath):
-            print("Retrieving cached scene caption from: ", alternateCaptionFilePath)
+            # print("Retrieving cached scene caption from: ", alternateCaptionFilePath)
             with open(alternateCaptionFilePath, 'r', encoding='utf-8') as f:
                 caption = f.read().strip()
             return caption
 
         # Otherwise, compute caption
-        caption = captionLambda()
+        with timer.time_block(self.sceneCaptionerTimerName):
+            caption = captionLambda()
 
         # Save caption to a JSON file
         # Make sure directory exists
@@ -216,7 +238,7 @@ class CachingResultsLoggerRevised:
 
         # If the descriptions already exist, and forceRegen is False, load and return them
         if not self.forceRegen and os.path.exists(descriptionsFilePath):
-            print("Retrieving cached object descriptions from: ", descriptionsFilePath)
+            # print("Retrieving cached object descriptions from: ", descriptionsFilePath)
             with open(descriptionsFilePath, 'r', encoding='utf-8') as f:
                 objectDescriptions = json.load(f)
 
@@ -226,7 +248,8 @@ class CachingResultsLoggerRevised:
             return objectDescriptions
 
         # Otherwise, compute descriptions
-        objectDescriptions = descriptionsLambda()
+        with timer.time_block(self.objectDescriberTimerName):
+            objectDescriptions = descriptionsLambda()
 
         # Save object descriptions to a JSON file
         # Make sure directory exists
@@ -248,6 +271,10 @@ class CachingResultsLoggerRevised:
         return relationshipDescriptions
 
 
+    def _is_per_object_format(self, prompts, rawResponse):
+        """Returns True if prompts and rawResponse are both dicts (per-object map format)."""
+        return isinstance(prompts, dict) and isinstance(rawResponse, dict)
+
     def getOrGenerateLLMPromptsAndOutput(self, llmLambda):
 
         llmDataDir = self.getFinalOutputDirectory()
@@ -255,30 +282,57 @@ class CachingResultsLoggerRevised:
         promptsFilePath = os.path.join(llmDataDir, "llm_prompt.txt")
         persistenceParamsPath = os.path.join(llmDataDir, PERSISTENCE_FILE_NAME)
         rawResponsePath = os.path.join(llmDataDir, "llm_raw_response.txt")
+        promptsByObjectPath = os.path.join(llmDataDir, "llm_prompts_by_object.json")
+        responsesByObjectPath = os.path.join(llmDataDir, "llm_raw_responses_by_object.json")
 
-        # If both the prompts and persistence parameters already exist, and forceRegen is False, load and return them
-        if (not self.forceRegen) and os.path.exists(promptsFilePath) and os.path.exists(persistenceParamsPath) and os.path.exists(rawResponsePath):
-            print("Retrieving cached LLM prompts and persistence parameters from: ", llmDataDir)
-            with open(promptsFilePath, 'r', encoding='utf-8') as f:
-                prompts = [f.read().strip()]
-
-            with open(rawResponsePath, 'r', encoding='utf-8') as f:
-                rawResponse = f.read().strip()
+        # If forceRegen is False and persistence params exist, try loading from cache
+        if not self.forceRegen and os.path.exists(persistenceParamsPath):
 
             persistenceParameters = readPersistenceData(persistenceParamsPath)
+
+            prompts = None
+            rawResponse = None
+
+            # First check for per-object format (VLM), stored in separate files
+            if os.path.exists(promptsByObjectPath) and os.path.exists(responsesByObjectPath):
+                # print("Retrieving cached LLM prompts and persistence parameters from: ", llmDataDir)
+                with open(promptsByObjectPath, 'r', encoding='utf-8') as f:
+                    prompts = json.load(f)
+                with open(responsesByObjectPath, 'r', encoding='utf-8') as f:
+                    rawResponse = json.load(f)
+
+            # Else check for single format (LLM)
+            elif os.path.exists(promptsFilePath) and os.path.exists(rawResponsePath):
+                # print("Retrieving cached LLM prompts and persistence parameters from: ", llmDataDir)
+                with open(promptsFilePath, 'r', encoding='utf-8') as f:
+                    prompts = [f.read().strip()]
+
+                with open(rawResponsePath, 'r', encoding='utf-8') as f:
+                    rawResponse = f.read().strip()
+
+            # Log a warning if the prompts or rawResponse are None
+            if prompts is None or rawResponse is None:
+                print("Warning: prompts or rawResponse are None in getOrGenerateLLMPromptsAndOutput")
 
             return prompts, rawResponse, persistenceParameters
 
         # Otherwise, compute prompts and persistence parameters
-        prompts, rawResponse, persistenceParameters = llmLambda()
+        with timer.time_block(self.llmQuerierTimerName):
+            prompts, rawResponse, persistenceParameters = llmLambda()
 
         # Save prompts and persistence parameters to their respective files
         self.createDirectoryIfNotExists(llmDataDir)
 
-        with open(promptsFilePath, 'w', encoding='utf-8') as f:
-            f.write(prompts[0] + "\n\n")
-        with open(rawResponsePath, 'w', encoding='utf-8') as f:
-            f.write(rawResponse + "\n\n")
+        if self._is_per_object_format(prompts, rawResponse):
+            with open(promptsByObjectPath, 'w', encoding='utf-8') as f:
+                json.dump(prompts, f, indent=2, ensure_ascii=False)
+            with open(responsesByObjectPath, 'w', encoding='utf-8') as f:
+                json.dump(rawResponse, f, indent=2, ensure_ascii=False)
+        else:
+            with open(promptsFilePath, 'w', encoding='utf-8') as f:
+                f.write(prompts[0] + "\n\n")
+            with open(rawResponsePath, 'w', encoding='utf-8') as f:
+                f.write(rawResponse + "\n\n")
 
         writePersistenceData(persistenceParamsPath, persistenceParameters=persistenceParameters, imgFileName=self.imgFileName)
 

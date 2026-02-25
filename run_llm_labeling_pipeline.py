@@ -49,7 +49,7 @@ def main(cfg: DictConfig):
     datasetGenerator = hydra.utils.instantiate(cfg.dataset_generator)
 
     # datasetGenerator.intermediateLogger.logDirectory = output_dir
-    datasetGenerator.intermediateLogger.configFileName = config_name
+    datasetGenerator.intermediateLogger.setConfigFileName(config_name)
 
     # TODO hook up to caching dataset generation process loader
 
@@ -59,6 +59,25 @@ def main(cfg: DictConfig):
 
 if __name__ == "__main__":
     main()
+
+# ---------------------------------------------------------------------------
+# Running with a subset of phases (override dataset_generator.run_phases):
+#
+# Run only segmentation:
+#   python run_llm_labeling_pipeline.py dataset_generator.run_phases=[segmentation]
+#
+# Run segmentation and object descriptions:
+#   python run_llm_labeling_pipeline.py dataset_generator.run_phases=[segmentation,object_descriptions]
+#
+# Run segmentation, scene caption, object descriptions, and persistence (skip relationships):
+#   python run_llm_labeling_pipeline.py dataset_generator.run_phases=[segmentation,scene_caption,object_descriptions,persistence]
+#
+# Run all phases (default; omit run_phases or set to full list):
+#   python run_llm_labeling_pipeline.py
+#   python run_llm_labeling_pipeline.py dataset_generator.run_phases=[segmentation,scene_caption,object_descriptions,relationships,persistence]
+#
+# Valid phase names: segmentation, scene_caption, object_descriptions, relationships, persistence
+# ---------------------------------------------------------------------------
 
 # dataset:
 #   image_root: /work/datasets

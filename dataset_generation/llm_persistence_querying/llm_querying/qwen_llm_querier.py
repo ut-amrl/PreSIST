@@ -12,22 +12,24 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from dataset_generation.llm_persistence_querying.llm_querying.abs_llm_querier import AbsLLMQuerier
 import os
 
-def _derive_served_model_name(model_name, torch_dtype, quantization=False):
+from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import derive_served_model_name, resolve_torch_dtype
 
-    model_basename = os.path.basename(model_name)
-    model_normalized = model_basename.lower()
+# def _derive_served_model_name(model_name, torch_dtype, quantization=False):
 
-    if isinstance(torch_dtype, str):
-        dtype_str = torch_dtype.split(".")[-1]
-    else:
-        dtype_str = str(torch_dtype).split(".")[-1]
+#     model_basename = os.path.basename(model_name)
+#     model_normalized = model_basename.lower()
 
-    dtype_str = dtype_str.lower()
+#     if isinstance(torch_dtype, str):
+#         dtype_str = torch_dtype.split(".")[-1]
+#     else:
+#         dtype_str = str(torch_dtype).split(".")[-1]
 
-    name = f"{model_normalized}__{dtype_str}"
-    if quantization:
-        name = f"{name}__{quantization}"
-    return name
+#     dtype_str = dtype_str.lower()
+
+#     name = f"{model_normalized}__{dtype_str}"
+#     if quantization:
+#         name = f"{name}__{quantization}"
+#     return name
 
 
 class QwenLLMQuerier(AbsLLMQuerier):
@@ -95,7 +97,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
 
         if self.use_vllm_server:
 
-            self.vllm_served_model_name = _derive_served_model_name(self.model_name, torch_dtype)
+            self.vllm_served_model_name = derive_served_model_name(self.model_name, torch_dtype)
 
         # -------------------------
         # vLLM server mode
@@ -142,7 +144,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
 
         else:
             # Initialize local Transformers model+tokenizer
-            resolved_dtype = self._resolve_torch_dtype(torch_dtype)
+            resolved_dtype = resolve_torch_dtype(torch_dtype)
 
             # Try requested attention impl; fall back to sdpa if needed
             self.model = self._load_local_model_with_fallback(
@@ -168,19 +170,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
     # Helpers
     # -------------------------
 
-    def _resolve_torch_dtype(self, torch_dtype: Union[torch.dtype, str]) -> Union[torch.dtype, str]:
-        if isinstance(torch_dtype, str):
-            if torch_dtype == "auto":
-                return "auto"
-            name = torch_dtype.split(".")[-1]
-            try:
-                return getattr(torch, name)
-            except AttributeError as e:
-                raise ValueError(
-                    f"Unknown torch dtype string {torch_dtype!r}. "
-                    f"Expected 'auto' or something like 'bfloat16', 'float16', 'float32', etc."
-                ) from e
-        return torch_dtype
+
 
     def _load_local_model_with_fallback(
         self,

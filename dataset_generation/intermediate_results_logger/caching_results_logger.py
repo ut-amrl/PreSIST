@@ -56,6 +56,8 @@ class CachingResultsLogger:
         self.relationshipDescriberName = relationshipDescriberName
         self.llmQuerierName = llmQuerierName
 
+    def setConfigFileName(self, configFileName):
+        self.configFileName = configFileName
 
     def createDirectoryIfNotExists(self, dirPath):
         # For each part of the path, create directory if it does not exist

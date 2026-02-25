@@ -25,8 +25,15 @@ class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
         self.prompt_handler = promptHandler
         self.llm_querier = llmQuerier
 
-    def estimatePersistenceParameters(self, scene_caption, object_descriptions, relationship_descriptions, time_and_date):
-
+    def estimatePersistenceParameters(
+        self,
+        scene_caption,
+        object_descriptions,
+        relationship_descriptions,
+        time_and_date,
+        image: torch.Tensor,
+        instances: SegmentationResults,
+    ):
         prompt = self.prompt_handler.generatePrompt(
             scene_caption,
             object_descriptions,

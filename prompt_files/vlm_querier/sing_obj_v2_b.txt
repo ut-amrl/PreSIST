@@ -1,0 +1,55 @@
+You are an expert in robot perception and probabilistic object tracking.
+
+You are shown two images:
+1) The full scene
+2) A version of the scene where the object of interest is visually highlighted by a mask
+The masked object is ALWAYS the object you must evaluate. Ignore all other objects except as environmental context.
+
+Your task is to estimate how long this specific object instance is likely to remain exactly where it currently is, considering that:
+- “Stationary” means no movement whatsoever, including even a small shift of a few inches.
+- Any detectable relocation counts as movement. Do NOT estimate persistence based on how long the object remains in the general environment (e.g., how long a customer stays in a café). Estimate only how long it will stay in the exact same physical location without any movement.
+
+Use the object’s physical properties, environment context, expected human or agent interaction, and typical real-world behavioral patterns.
+
+Return a single JSON object (not an array) containing exactly these keys:
+- "median_persistence_hours": positive float — estimated median time (in hours) the object stays completely unmoved.
+- "p90_persistence_hours": positive float — 90th percentile time (in hours) the object stays completely unmoved. Must be strictly greater than the median.
+- "persistence_uncertainty": one of ["low", "medium", "high"] — uncertainty in the estimates.
+- "persistence_conf": float in [0.0, 1.0] — model confidence. Must never be exactly 0 or 1.
+- "static_likelihood": float in [0.0, 1.0] — probability the object is truly static.
+- "notes": a single sentence explaining the reasoning.
+
+Guidelines:
+- Objects with fixed but movable components (e.g., doors, cabinets) should not be treated as immovable; estimate how long until they next move.
+- Structural or immovable items (e.g., walls, built-ins, countertops) should have very large persistence values (1000 to 20000 hours).
+- Objects currently in motion (vehicles, walking people, animals, or objects being carried) should have extremely short persistence (~0.001 hours).
+- For objects that can move but appear still, estimate persistence based on typical real-world patterns given the current context (e.g., minutes for a chair at an occupied desk, several hours for a chair at a night-time office, minutes for utensils in an active kitchen, 3–24 hours for an unoccupied kitchen, 1 hour for a car at a grocery store, 4 hours for a car at an office building). Consider both the type of environment and surrounding objects that may interact with the target object.
+
+IMPORTANT STATE-OF-MOTION RULES:
+- Any object in a "ready-to-move" state should be treated as having extremely short persistence. A ready-to-move state includes:
+---- humans or animals standing, walking, turning, crouching, or shifting weight
+---- vehicles that are occupied, running, or positioned as if about to move
+---- handheld or carried items
+---- objects that appear actively in use or about to be used
+- “Stationary” always means absolutely no movement at all, not even small shifts such as a person adjusting posture, an animal stepping, or a vehicle rolling slightly. Any detectable relocation, even inches, counts as movement.
+- Unless there is clear evidence of a stable configuration (e.g., sitting humans, resting animals, parked vehicles with no occupants, objects resting securely on surfaces), assume ready-to-move objects will move within seconds to minutes.
+- For ready-to-move objects, median_persistence_hours should generally fall between 0.0003 and 0.005 hours unless compelling evidence suggests otherwise.
+
+
+If uncertain, set persistence_uncertainty to "high".
+
+Note any discrepancies between the scene descriptions and the image and increase uncertainty accordingly.
+
+Object description:
+{object_description}
+
+Scene description:
+{scene_caption}
+
+Time and date:
+{time_str}
+
+Other objects in the scene (for context only):
+{other_objects_block}
+
+JSON answer:

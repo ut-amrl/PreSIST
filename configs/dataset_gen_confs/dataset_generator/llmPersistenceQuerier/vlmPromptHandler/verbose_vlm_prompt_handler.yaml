@@ -1,0 +1,10 @@
+_target_: dataset_generation.llm_persistence_querying.prompt_handler.verbose_vlm_prompt_handler.VerboseVLMPersistencePromptHandler
+name: vp_over_only_fore_single_object_v2
+# prompt_template_file: "prompt_files/vlm_querier/single_object_v2.txt"
+prompt_template_file: "prompt_files/vlm_querier/sing_obj_v2_a.txt"
+# One of: mask_overlay, foreground_only, binary_mask
+# mask_style: mask_overlay
+mask_style: blur_bg_outline_fg
+# BGR for mask_overlay style
+mask_highlight_color: [0, 255, 0]
+include_other_descriptions: false

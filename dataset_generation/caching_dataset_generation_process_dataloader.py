@@ -64,6 +64,7 @@ class AbstractDatasetGeneratorFromDataloader(ABC):
 
                 try:
                     out = self.processImage(imageInfo)
+
                     # print("Done processing image: ", imageInfo.get("image_id", "") + " " + imageInfo.get("path", imageInfo.get("relpath", "unknown")))
                     # if out is not None:
                         # outputs.append(out)
@@ -74,7 +75,6 @@ class AbstractDatasetGeneratorFromDataloader(ABC):
                 # print("Done processing image: ", imageInfo.get("image_id", "") + " " + imageInfo.get("path", imageInfo.get("relpath", "unknown")))
                 # if out is not None:
                     # outputs.append(out)
-
         # return outputs
 
 
@@ -99,6 +99,23 @@ class AbstractDatasetGeneratorFromDataloader(ABC):
 
 
 
+# Default: run all phases. Subset to e.g. ["segmentation"] or ["segmentation", "object_descriptions"].
+DEFAULT_RUN_PHASES = [
+    "segmentation",
+    "scene_caption",
+    "object_descriptions",
+    "relationships",
+    "persistence",
+]
+
+RUN_PHASE_DEPENDENCIES_REVERSE = {
+    "segmentation": ["segmentation"],
+    "scene_caption": ["scene_caption"],
+    "object_descriptions": ["segmentation", "object_descriptions"],
+    "relationships": ["segmentation", "object_descriptions", "relationships"],
+    "persistence": ["segmentation", "scene_caption", "object_descriptions", "relationships", "  persistence"],
+}
+
 class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGeneratorFromDataloader):
 
     def __init__(
@@ -108,7 +125,8 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
             objectDescriber: AbstractObjectDescriber,
             relationshipDescriber,
             llmPersistenceQuerier: AbsLLMPersistenceQuerier,
-            intermediateLogger: CachingResultsLoggerRevised
+            intermediateLogger: CachingResultsLoggerRevised,
+            run_phases: list = None,
     ):
         self.instanceSegmenter = instanceSegmenter
         self.sceneCaptioner = sceneCaptioner
@@ -116,6 +134,15 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
         self.relationshipDescriber = relationshipDescriber
         self.llmPersistenceQuerier = llmPersistenceQuerier
         self.intermediateLogger = intermediateLogger
+
+
+        if (run_phases is None) or (len(run_phases) == 0):
+            phases_to_run = DEFAULT_RUN_PHASES
+        else:
+            phases_to_run = []
+            for phase in run_phases:
+                phases_to_run.extend(RUN_PHASE_DEPENDENCIES_REVERSE[phase])
+        self.run_phases = list(set(phases_to_run))
 
         self.intermediateLogger.configureComponentNames(
             segmenterName=self.instanceSegmenter.getName(),
@@ -129,44 +156,67 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
     def processImage(self, imageInfo):
         image = imageInfo["image"]
         timeAndDate = None
-        # return
+        run = self.run_phases
+        img_id = imageInfo.get("image_id", imageInfo.get("path", imageInfo.get("relpath", "unknown")))
 
-        # print("Processing new image: ", imageInfo.get("image_id", "") + " " + imageInfo.get("path", imageInfo.get("relpath", "unknown")))
         self.intermediateLogger.logInputData(image, timeAndDate, imageInfo)
 
-        alreadyProcessed = self.intermediateLogger.checkIfAlreadyProcessed()
-        if alreadyProcessed:
+        if self.intermediateLogger.checkIfAlreadyProcessed():
             return
 
-        # print("Segmenting instances...")
-        segmentationLambda = lambda: self.instanceSegmenter.segmentInstances(image)
-        instances = self.intermediateLogger.getOrGenerateSegmentationResults(segmentationLambda)
+        instances = None
+        sceneCaption = None
+        objectDescriptions = None
+        relationshipDescriptions = None
 
-        # Print the size of each instance mask for debugging
+        # --- Segmentation (run when needed by any later phase) ---
+        if ("segmentation" in run):
+            try:
+                segmentationLambda = lambda: self.instanceSegmenter.segmentInstances(image)
+                instances = self.intermediateLogger.getOrGenerateSegmentationResults(segmentationLambda)
+            except Exception as e:
+                print(f"Skipping image {img_id}: segmentation failed or skipped — {e}")
+                return
 
-        # print("Segmentation complete. Instances: ", len(instances.ids))
+        if ("scene_caption" in run):
+            try:
+                captionLambda = lambda: self.sceneCaptioner.generateCaption(image)
+                sceneCaption = self.intermediateLogger.getOrGenerateSceneCaption(captionLambda)
+            except Exception as e:
+                print(f"Skipping image {img_id}: scene caption failed or skipped — {e}")
+                return
 
-        # return instances, None
 
-        print("Generating scene caption and descriptions...")
-        captionLambda = lambda: self.sceneCaptioner.generateCaption(image)
-        sceneCaption = self.intermediateLogger.getOrGenerateSceneCaption(captionLambda)
+        if ("object_descriptions" in run):
+            try:
+                objectDescriptionLambda = lambda: self.objectDescriber.describeObjects(image, instances)
+                objectDescriptions = self.intermediateLogger.getOrGenerateObjectDescriptions(objectDescriptionLambda)
+            except Exception as e:
+                print(f"Skipping image {img_id}: object descriptions failed or skipped — {e}")
+                return
 
-        # return instances, None
-        # return None
+        if ("relationships" in run):
+            try:
+                relationshipDescriberLambda = lambda: self.relationshipDescriber.describeRelationships(image, instances, objectDescriptions)
+                relationshipDescriptions = self.intermediateLogger.getOrGenerateRelationshipDescriptions(relationshipDescriberLambda)
+            except Exception as e:
+                print(f"Skipping image {img_id}: relationship descriptions failed or skipped — {e}")
+                return
 
-        # print("Generating object descriptions...")
-        objectDescriptionLambda = lambda: self.objectDescriber.describeObjects(image, instances)
-        objectDescriptions = self.intermediateLogger.getOrGenerateObjectDescriptions(objectDescriptionLambda)
+        if ("persistence" in run):
+            try:
+                persistenceParamLambda = lambda: self.llmPersistenceQuerier.estimatePersistenceParameters(
+                    sceneCaption,
+                    objectDescriptions,
+                    relationshipDescriptions,
+                    timeAndDate,
+                    image=image,
+                    instances=instances
+                )
+                prompts, rawResponse, persistenceParameterEstimates = self.intermediateLogger.getOrGenerateLLMPromptsAndOutput(persistenceParamLambda)
+                return instances, persistenceParameterEstimates
+            except Exception as e:
+                print(f"Skipping image {img_id}: persistence estimation failed or skipped — {e}")
+                return
 
-        # print("Generating relationship descriptions...")
-        relationshipDescriberLambda = lambda: self.relationshipDescriber.describeRelationships(image, instances, objectDescriptions)
-        relationshipDescriptions = self.intermediateLogger.getOrGenerateRelationshipDescriptions(relationshipDescriberLambda)
-
-        # return instances, None
-
-        print("Estimating persistence parameters...")
-        persistenceParamLambda = lambda: self.llmPersistenceQuerier.estimatePersistenceParameters(sceneCaption, objectDescriptions, relationshipDescriptions, timeAndDate)
-        prompts, rawResponse, persistenceParameterEstimates = self.intermediateLogger.getOrGenerateLLMPromptsAndOutput(persistenceParamLambda)
-
-        return instances, persistenceParameterEstimates
+        return

@@ -20,8 +20,15 @@ class DummyPersistenceQuerier(AbsLLMPersistenceQuerier):
         """
         super().__init__(name="DummyPersistenceQuerier")
 
-    def estimatePersistenceParameters(self, scene_caption, object_descriptions, relationship_descriptions, time_and_date):
-
+    def estimatePersistenceParameters(
+        self,
+        scene_caption,
+        object_descriptions,
+        relationship_descriptions,
+        time_and_date,
+        image: torch.Tensor,
+        instances: SegmentationResults,
+    ):
         prompt = ""
         response = ""
         persistence_parameter_estimates = {}

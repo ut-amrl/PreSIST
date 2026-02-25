@@ -7,6 +7,24 @@ import numpy as np
 # Import tuple
 from typing import Tuple
 
+
+def image_tensor_to_pil(image: torch.Tensor) -> Image.Image:
+    """Convert (C, H, W) tensor to PIL Image. Handles uint8 or float in [0,1]."""
+    if image.ndim != 3 or image.shape[0] not in (1, 3, 4):
+        raise ValueError("Expected image (C,H,W) with C in {1,3,4}.")
+    img = image[:3].detach().cpu().permute(1, 2, 0).numpy()
+    if img.max() <= 1.0:
+        img = (np.clip(img, 0, 1) * 255).astype(np.uint8)
+    else:
+        img = np.clip(img, 0, 255).astype(np.uint8)
+    return Image.fromarray(img)
+
+
+def numpy_bgr_to_pil(bgr: np.ndarray) -> Image.Image:
+    """(H, W, 3) BGR uint8 numpy to PIL RGB."""
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(rgb)
+
 def loadImageAsTensor(filename):
     """Load an image from a file and convert it to a tensor."""
     image = Image.open(filename).convert("RGB")

@@ -1,0 +1,9 @@
+_target_: dataset_generation.llm_persistence_querying.vlm_querying.qwen_vlm_querier.QwenVLMQuerier
+torch_dtype: torch.bfloat16
+model_name: "Qwen/Qwen3-VL-30B-A3B-Instruct"
+device_map: "auto"
+max_new_tokens: 16384
+temperature: 0.2
+top_p: 0.9
+repetition_penalty: 1.05
+name: qwen_vl_30b_instruct

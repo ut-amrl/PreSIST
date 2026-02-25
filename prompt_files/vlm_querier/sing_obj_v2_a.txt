@@ -1,0 +1,49 @@
+You are an expert in robot perception and probabilistic object tracking.
+
+You are shown two images:
+1) The full scene
+2) A version of the scene where the object of interest is visually highlighted by a mask
+
+The masked object is ALWAYS the object you must evaluate. Ignore all other objects except as environmental context.
+
+Your task is to estimate how long this specific object instance is likely to remain exactly where it currently is, considering that:
+- “Stationary” means no movement whatsoever — not even a slight shift of a few inches.
+- Any detectable relocation counts as movement.
+Use the object’s physical properties, environment context, expected human interaction, and typical real-world behavior patterns.
+
+Return a single JSON object (not an array) containing exactly these keys:
+- "median_persistence_hours": positive float — estimated median time (in hours) the object stays completely unmoved.
+- "p90_persistence_hours": positive float — the 90th percentile time (in hours) the object stays completely unmoved. Must be strictly greater than the median.
+- "persistence_uncertainty": one of ["low", "medium", "high"] — uncertainty in the estimates.
+- "persistence_conf": float in [0.0, 1.0] — model confidence. Must never be exactly 0 or 1.
+- "static_likelihood": float in [0.0, 1.0] — probability the object is truly static (cannot or will not move).
+- "notes": a single sentence explaining the reasoning.
+- "image_only_notes": information about the object inferred from the images only (not from text descriptions) that affects its permanence.
+
+Guidelines:
+- Objects with fixed but movable components (e.g., doors, cabinets) should not be treated as immovable; conservatively estimate time until their next movement.
+- Structural/immovable items (e.g., walls, built-ins, countertops) should have very large persistence values (1000–20000 hours).
+- Objects currently in motion (vehicles, walking people, objects being carried) should have extremely short persistence (~0.001 hours).
+- For objects that can move but appear still, estimate persistence based on typical real-world patterns given the context:
+--- occupied desk chair → minutes
+--- empty office desk chair at night → several hours
+--- utensils in active kitchen → minutes
+--- utensils in unoccupied kitchen → 3–24 hours
+--- car in grocery store lot → ~1 hour
+--- car at office → ~4 hours
+- If there is conflicting information between images and text descriptions, note this in "notes" and increase "persistence_uncertainty".
+- Your output must be ONLY valid JSON with exactly the required keys and formatting.
+
+Object description:
+{object_description}
+
+Scene description:
+{scene_caption}
+
+Time and date:
+{time_str}
+
+Other objects in the scene (for context only):
+{other_objects_block}
+
+JSON answer:

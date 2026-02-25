@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Start a vLLM server (OpenAI-compatible). Supports both text-only LLMs and
+# vision-language models (VLMs); use --model with a VLM (e.g. Qwen/Qwen2-VL-7B-Instruct)
+# to serve image+text requests.
 
 ############################################
 # ========== EDIT THESE DEFAULTS ===========
 ############################################
 
 # ---- Networking ----
-PORT=9008
+PORT=9006
 HOST="0.0.0.0"
 
 # ---- Model selection (HF repo or local path) ----
 # MODEL="Qwen/Qwen3-30B-A3B-Instruct-2507"
-MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507"
+# MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507"
 # MODEL="Qwen/Qwen3-235B-A22B-Instruct-2507"
 # MODEL="Qwen/Qwen3-Next-80B-A3B-Instruct"
+# MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
+MODEL="Qwen/Qwen3-VL-30B-A3B-Thinking"
+# MODEL="Qwen/Qwen3.5-122B-A10B"
+
 
 # ---- Engine/runtime params (fixed at server start) ----
 DTYPE="bfloat16"                  # float16 | bfloat16 | float32
@@ -43,6 +50,7 @@ Examples:
   $0 0 --port 9001 --model Qwen/Qwen3-30B-A3B-Instruct-2507
   $0 1 --port 9002 --model meta-llama/Llama-3.1-8B-Instruct --dtype float16
   $0 0,1 --port 9003 --model Qwen/Qwen3-30B-A3B-Thinking-2507 --quant awq --name thinking
+  $0 0 --port 9010 --model Qwen/Qwen2-VL-7B-Instruct
 EOF
 }
 

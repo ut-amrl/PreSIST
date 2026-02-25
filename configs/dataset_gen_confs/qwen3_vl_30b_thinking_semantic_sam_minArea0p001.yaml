@@ -1,0 +1,26 @@
+defaults:
+  - dataset_generator: caching_dataset_generation_process
+  - registry_info: registry_default
+  - dataloader: dataloader_default
+  - override dataset_generator/instanceSegmenter: semanticsamautosegmenter_cache
+  - override dataset_generator/llmPersistenceQuerier: chained_vlm_persistence_querier
+  - _self_
+
+# output_root_dir: "./debug_outputs_single_imgs/"
+
+
+dataset_generator:
+  instanceSegmenter:
+    min_area_perc: 0.001
+    name: semanticsam_granularity3_minArea0p001
+  llmPersistenceQuerier:
+    vlmQuerier:
+      model_name: Qwen/Qwen3-VL-30B-A3B-Thinking
+      name: qwen_vl_30b_thinking
+
+
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2
