@@ -22,16 +22,46 @@ module load tacc-apptainer
 export IMAGE="${IMAGE:-$SCRATCH/containers/spf_latest.sif}"
 export CODE_DIR="${CODE_DIR:-$WORK/workspaces/semantic-persistence-filter}"
 export DATA_DIR="${DATA_DIR:-$SCRATCH/data/semantic-persistence-filter}"
-export HF_CACHE_DIR="${HF_CACHE_DIR:-$WORK/.cache/huggingface}"
+export HF_CACHE_DIR="${HF_CACHE_DIR:-$SCRATCH/.cache/huggingface}"
+
+VLLM_PORT="${VLLM_PORT:-9006}"
+# VLLM_TP="${VLLM_TP:-8}"
+# VLLM_MODEL="${VLLM_MODEL:-Qwen/Qwen3-VL-235B-A22B-Instruct}"
+# CONFIG_NAME="${CONFIG_NAME:-qwen3_vl_235b_instruct_v2_b_semantic_sam_minArea0p001}"
+
+# VLLM_MODEL="${VLLM_MODEL:-Qwen/Qwen3-VL-30B-A3B-Thinking}"
+# CONFIG_NAME="${CONFIG_NAME:-qwen3_vl_30b_thinking_v2_b_semantic_sam_minArea0p001}"
+
+VLLM_MODEL="${VLLM_MODEL:-Qwen/Qwen3-VL-30B-A3B-Instruct}"
+CONFIG_NAME="${CONFIG_NAME:-qwen3_vl_30b_instruct_v2_b_semantic_sam_minArea0p001}"
+
+VLLM_TP="${VLLM_TP:-4}"
+
+DATASET_NAME="${DATASET_NAME:-openloris_location_all}"
+
+
+############################################
+# GPU assignment (can override via env)
+############################################
+
+# Example for an 8-GPU node:
+#   export VLLM_GPUS="0,1,2,3"
+#   export PIPELINE_GPUS="4,5,6,7"
+VLLM_GPUS="${VLLM_GPUS:-0,1,2,3,4,5,6,7}"
+PIPELINE_GPUS="${PIPELINE_GPUS:-0,1,2,3,4,5,6,7}"
+
+
 
 cd "$CODE_DIR"
 
 echo "Using:"
-echo "  Image:    $IMAGE"
-echo "  Code dir: $CODE_DIR"
-echo "  Data dir: $DATA_DIR"
-echo "  HF cache: $HF_CACHE_DIR"
-echo
+echo "  Image:          $IMAGE"
+echo "  Code dir:       $CODE_DIR"
+echo "  Data dir:       $DATA_DIR"
+echo "  HF cache:       $HF_CACHE_DIR"
+echo "  vLLM GPUs:      $VLLM_GPUS"
+echo "  Pipeline GPUs:  $PIPELINE_GPUS"
+
 
 ############################################
 # micromamba + vllm env activation
@@ -71,16 +101,6 @@ if ! micromamba activate "$ENV_NAME"; then
 fi
 
 
-echo "After activation:"
-echo "  PATH: $PATH"
-which python || echo "python not found on PATH"
-which vllm || echo "vllm not found on PATH"
-
-python -c "import sys; print('Python:', sys.executable)" || echo "Python failed"
-python -c "import vllm; print('vLLM module:', vllm.__file__)" || echo "Python vllm import failed"
-
-pip list
-
 # At this point, we assume vllm is already installed in the env.
 # No creation / pip install is done here.
 
@@ -94,10 +114,6 @@ pip list
 #   export VLLM_TP=...
 #   export VLLM_DTYPE=...
 #   export VLLM_QUANT="awq"
-VLLM_MODEL="${VLLM_MODEL:-Qwen/Qwen3-VL-30B-A3B-Thinking}"
-# VLLM_MODEL="${VLLM_MODEL:-Qwen/Qwen3-VL-235B-A22B-Instruct}"
-VLLM_PORT="${VLLM_PORT:-9006}"
-VLLM_TP="${VLLM_TP:-8}"
 VLLM_DTYPE="${VLLM_DTYPE:-bfloat16}"
 VLLM_QUANT="${VLLM_QUANT:-}"   # e.g. "awq" or "" for none
 
@@ -120,7 +136,7 @@ echo "  Served model name: $VLLM_SERVED_NAME"
 echo
 
 # Use $WORK for HF cache (avoid $HOME quota)
-export HF_HOME="${HF_HOME:-$WORK/.cache/huggingface}"
+export HF_HOME="${HF_HOME:-$SCRATCH/.cache/huggingface}"
 mkdir -p "$HF_HOME"
 
 # Optional: OpenAI-style env for client code
@@ -134,7 +150,8 @@ export SPF_VLLM_MODEL_NAME="$VLLM_SERVED_NAME"
 
 VLLM_LOG="logs/spf/vllm_${SLURM_JOB_ID:-interactive}.out"
 
-echo "Starting vLLM server (logs: $VLLM_LOG)..."
+echo "Starting vLLM server on GPUs [$VLLM_GPUS] (logs: $VLLM_LOG)..."
+CUDA_VISIBLE_DEVICES="$VLLM_GPUS" \
 vllm serve "$VLLM_MODEL" \
   --port "$VLLM_PORT" \
   --tensor-parallel-size "$VLLM_TP" \
@@ -193,18 +210,18 @@ echo
 
 chmod +x "$CODE_DIR/tacc_run_spf_container.sh"
 
-# If you want to split GPUs between vLLM and the pipeline, set:
-#   export CUDA_VISIBLE_DEVICES="4,5,6,7"
-# here (and configure vLLM with different GPUs earlier).
+# GPUs used by the pipeline are controlled via PIPELINE_GPUS
+export CUDA_VISIBLE_DEVICES="$PIPELINE_GPUS"
+
 
 CONTAINER_CMD="cd /workspace/code/semantic-persistence-filter && \
 HYDRA_FULL_ERROR=1 python3 run_llm_labeling_pipeline.py \
-  --config-name qwen3_vl_30b_thinking_v2_b_semantic_sam_minArea0p001 \
-  +image_dataset=openloris_location_all \
+  --config-name ${CONFIG_NAME} \
+  +image_dataset=${DATASET_NAME} \
   ++dataset_generator.llmPersistenceQuerier.vlmQuerier.use_vllm_server=True \
   ++dataset_generator.llmPersistenceQuerier.vlmQuerier.vllm_port=${VLLM_PORT}"
 
-echo "Running container command:"
+echo "Running container command on GPUs [$PIPELINE_GPUS]:"
 echo "  $CONTAINER_CMD"
 echo
 
