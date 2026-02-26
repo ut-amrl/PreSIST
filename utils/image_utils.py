@@ -3,6 +3,7 @@ from PIL import Image
 import torchvision.transforms as transforms
 import torch
 import numpy as np
+import cv2
 
 # Import tuple
 from typing import Tuple

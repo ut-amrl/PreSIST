@@ -23,7 +23,7 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
         prompt_mode: str = "focal_prompt",
         *,
         # --- NEW ---
-        use_server: bool = True,
+        use_server: bool = False,
         # server_url: str = "http://localhost:9002",
         server_base_url: str = "http://localhost",
         server_port: int = 9002,
