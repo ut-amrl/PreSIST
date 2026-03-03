@@ -36,11 +36,19 @@ class SAM3InstanceSegmenter(AbsInstanceSegmenter):
         checkpoint_path: Optional[str] = None,
         device: Optional[str] = None,
         predictor: Optional[SAM3InteractiveImagePredictor] = None,
+        min_area_perc: float = 0.0,
+        dedupe_iou_threshold: float = 1.01,
+        confidence_threshold: Optional[float] = None,
         # mask_generator_kwargs: Optional[Dict[str, Any]] = None,
     ):
         if name is None:
             raise ValueError("A name must be provided for the SAM3InstanceSegmenter.")
-        super().__init__(name=name)
+        super().__init__(
+            name=name,
+            min_area_perc=min_area_perc,
+            dedupe_iou_threshold=dedupe_iou_threshold,
+            confidence_threshold=confidence_threshold,
+        )
 
         if predictor is not None and checkpoint_path is not None:
             raise ValueError(
@@ -105,16 +113,7 @@ class SAM3InstanceSegmenter(AbsInstanceSegmenter):
         x, y, w, h = map(float, xywh)
         return [x, y, x + w, y + h]
 
-    def segmentInstances(self, image: torch.Tensor) -> SegmentationResults:
-        if not isinstance(image, torch.Tensor):
-            raise TypeError("image must be a torch.Tensor")
-
-        if image.ndim != 3 or image.shape[0] not in (3, 4):
-            raise ValueError("Expected image of shape (C, H, W) with C in {3,4}.")
-
-        if image.dtype != torch.uint8:
-            raise ValueError("Expected image dtype=torch.uint8.")
-
+    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
         # (C, H, W) -> (H, W, C) numpy uint8
         img_np = image[:3].permute(1, 2, 0).contiguous().cpu().numpy()
         H, W = img_np.shape[:2]
@@ -122,16 +121,7 @@ class SAM3InstanceSegmenter(AbsInstanceSegmenter):
         raw = self._mask_generator.generate(img_np)
 
         if len(raw) == 0:
-            empty_ids = torch.zeros((0,), dtype=torch.int64)
-            empty_masks = torch.zeros((0, H, W), dtype=torch.bool)
-            empty_boxes = torch.zeros((0, 4), dtype=torch.float32)
-            empty_scores = torch.zeros((0,), dtype=torch.float32)
-            return SegmentationResults(
-                ids=empty_ids,
-                masks=empty_masks,
-                boxes=empty_boxes,
-                scores=empty_scores,
-            )
+            return SegmentationResults.empty(h=H, w=W)
 
         ids = torch.arange(len(raw), dtype=torch.int64)
 

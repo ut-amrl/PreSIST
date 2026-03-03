@@ -1,6 +1,10 @@
+import torch
+
 from dataset_generation.llm_persistence_querying.abs_llm_persistence_querier import AbsLLMPersistenceQuerier
 from dataset_generation.llm_persistence_querying.llm_querying.abs_llm_querier import AbsLLMQuerier
 from dataset_generation.llm_persistence_querying.prompt_handler.abs_prompt_handler import AbsPromptHandler
+
+from instance_segmentation.abs_instance_segmenter import SegmentationResults
 
 class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
     def __init__(

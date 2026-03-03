@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
 import torch
 
 from instance_segmentation.abs_instance_segmenter import AbsInstanceSegmenter, SegmentationResults
@@ -24,22 +23,24 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
         object_discoverer: AbsObjectDiscoverer,
         language_segmenter: AbsLanguagePromptedSegmenter,
         min_area_perc: float = 0,          # optional: drop tiny masks
+        dedupe_iou_threshold: float = 1.01,  # default > 1.0 disables dedupe
+        confidence_threshold: float | None = None,
+        name_suffix="",
     ):
-        super().__init__(name="langGround_p_" + object_discoverer.getName() + "_s_" + language_segmenter.getName())
+        if (name_suffix is not ""):
+            name_suffix = "_" + name_suffix
+        super().__init__(
+            name="langGround_p_" + object_discoverer.getName() + "_s_" + language_segmenter.getName() + name_suffix,
+            min_area_perc=min_area_perc,
+            dedupe_iou_threshold=dedupe_iou_threshold,
+            confidence_threshold=confidence_threshold,
+        )
         self.object_discoverer = object_discoverer
-        self.min_area_perc = float(min_area_perc)
         self.language_segmenter = language_segmenter
 
     @torch.no_grad()
-    def segmentInstances(self, image: torch.Tensor) -> SegmentationResults:
-        if not isinstance(image, torch.Tensor):
-            raise TypeError("image must be a torch.Tensor")
-        if image.ndim != 3 or image.shape[0] not in (3, 4):
-            raise ValueError("Expected image of shape (C,H,W) with C in {3,4}.")
-        if image.dtype != torch.uint8:
-            raise ValueError("Expected image dtype=torch.uint8.")
-
-        C, H, W = image.shape
+    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
+        _, H, W = image.shape
 
         obj_descriptions = self.object_discoverer.identify(image)
         # print("Object descriptions:", obj_descriptions)
@@ -52,41 +53,11 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
         # Convert to your SegmentationResults.
         # ids are prompt indices for each mask (can swap to arange if you prefer).
         if seg.masks.shape[0] == 0:
-            return SegmentationResults(
-                ids=torch.zeros((0,), dtype=torch.int64),
-                masks=torch.zeros((0, H, W), dtype=torch.bool),
-                boxes=torch.zeros((0, 4), dtype=torch.float32),
-                scores=torch.zeros((0,), dtype=torch.float32),
-            )
-
-        min_area_pixels = int(self.min_area_perc * H * W)
-
-        # Filter out small masks if min_area_perc > 0
-        keep_indices = []
-        for i in range(seg.masks.shape[0]):
-            m = seg.masks[i]
-
-            area = int(m.sum().item())
-            if min_area_pixels > 0 and area < min_area_pixels:
-                continue
-            keep_indices.append(i)
-
-        if len(keep_indices) == 0:
-            return SegmentationResults(
-                ids=torch.zeros((0,), dtype=torch.int64),
-                masks=torch.zeros((0, H, W), dtype=torch.bool),
-                boxes=torch.zeros((0, 4), dtype=torch.float32),
-                scores=torch.zeros((0,), dtype=torch.float32),
-            )
-
-        filtererd_ids = seg.prompt_ids[keep_indices]
-        filtererd_masks = seg.masks[keep_indices]
-        filtererd_boxes = seg.boxes[keep_indices]
-        filtererd_scores = seg.scores[keep_indices] if seg.scores is not None else None
+            return SegmentationResults.empty(h=H, w=W)
 
         return SegmentationResults(
-            ids=filtererd_ids.to(torch.int64),
-            masks=filtererd_masks.to(torch.bool),
-            boxes=filtererd_boxes.to(torch.float32),
-            scores=filtererd_scores.to(torch.float32),
+            ids=seg.prompt_ids.to(torch.int64),
+            masks=seg.masks.to(torch.bool),
+            boxes=seg.boxes.to(torch.float32),
+            scores=seg.scores.to(torch.float32) if seg.scores is not None else None,
         )

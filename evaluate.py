@@ -319,6 +319,66 @@ def _plot_cdf_overlay(
     plt.close()
 
 
+def _plot_pred_vs_true_scatter(
+    true_vals: np.ndarray,
+    pred_vals: np.ndarray,
+    out_path: Path,
+    *,
+    title: str,
+    log_xy: bool = False,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    true_vals = np.asarray(true_vals, dtype=np.float64).reshape(-1)
+    pred_vals = np.asarray(pred_vals, dtype=np.float64).reshape(-1)
+    if true_vals.size == 0 or pred_vals.size == 0:
+        return
+
+    # Keep aligned true/pred pairs even if lengths diverge unexpectedly.
+    n = min(true_vals.size, pred_vals.size)
+    true_vals = true_vals[:n]
+    pred_vals = pred_vals[:n]
+
+    mask = np.isfinite(true_vals) & np.isfinite(pred_vals)
+    if log_xy:
+        mask &= (true_vals > 0) & (pred_vals > 0)
+    true_vals = true_vals[mask]
+    pred_vals = pred_vals[mask]
+    if true_vals.size == 0:
+        return
+
+    vmin = min(float(true_vals.min()), float(pred_vals.min()))
+    vmax = max(float(true_vals.max()), float(pred_vals.max()))
+    if not (np.isfinite(vmin) and np.isfinite(vmax)):
+        return
+    if vmax <= vmin:
+        eps = 1e-6 if vmin == 0.0 else max(abs(vmin) * 1e-6, 1e-12)
+        vmin -= eps
+        vmax += eps
+        if log_xy and vmin <= 0:
+            vmin = max(min(float(true_vals.min()), float(pred_vals.min())), 1e-12)
+            vmax = max(vmax, vmin * 1.01)
+
+    line_x = np.array([vmin, vmax], dtype=np.float64)
+
+    plt.figure()
+    plt.scatter(true_vals, pred_vals, s=10, alpha=0.35, label="samples")
+    plt.plot(line_x, line_x, "k--", linewidth=1.2, label="ideal (y=x)")
+    plt.title(title)
+    plt.xlabel("true")
+    plt.ylabel("pred")
+    plt.xlim(vmin, vmax)
+    plt.ylim(vmin, vmax)
+    if log_xy:
+        plt.xscale("log")
+        plt.yscale("log")
+    plt.legend()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+
 @torch.no_grad()
 def _collect_split_distributions(
     *,
@@ -420,6 +480,13 @@ def _save_distribution_plots(
             dist_dir / f"cdf_{var}.png",
             title=f"{var}: CDF (dataset vs pred)",
             log_x=log_x,
+        )
+        _plot_pred_vs_true_scatter(
+            true_vals,
+            pred_vals,
+            dist_dir / f"scatter_{var}.png",
+            title=f"{var}: true vs pred",
+            log_xy=log_x,
         )
 
 

@@ -117,6 +117,9 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
         device: Optional[str] = None,
         mask_generator_kwargs: Optional[dict] = None,
         name: Optional[str] = None,
+        min_area_perc: float = 0.0,
+        dedupe_iou_threshold: float = 1.01,
+        confidence_threshold: Optional[float] = None,
     ):
         # self._sam = build_sam2(
         #     model_cfg,
@@ -127,7 +130,12 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
         if (name is None):
             # Throw an error if no name is provided
             raise ValueError("A name must be provided for the SAM2InstanceSegmenter.")
-        super().__init__(name=name)
+        super().__init__(
+            name=name,
+            min_area_perc=min_area_perc,
+            dedupe_iou_threshold=dedupe_iou_threshold,
+            confidence_threshold=confidence_threshold,
+        )
 
         self._sam = customBuildSam2(
             model_cfg,
@@ -148,7 +156,7 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
         x, y, w, h = map(float, xywh)
         return [x, y, x + w, y + h]
 
-    def segmentInstances(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
         """
         Args:
             image: torch.uint8 tensor, shape (3, H, W), RGB.
@@ -160,12 +168,6 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
                 boxes:  (N, 4) XYXY float32
                 scores: (N,) float32 (predicted IoU from SAM2)
         """
-        if not isinstance(image, torch.Tensor):
-            raise TypeError("image must be a torch.Tensor")
-        if image.ndim != 3 or image.shape[0] not in (3, 4):
-            raise ValueError("Expected (C, H, W) with C in {3,4}.")
-        if image.dtype != torch.uint8:
-            raise ValueError("Expected image dtype=torch.uint8.")
         # SAM2 expects HxWxC uint8 RGB numpy array
         img_np = image[:3].permute(1, 2, 0).contiguous().cpu().numpy()
 
@@ -174,11 +176,7 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
 
         if len(raw) == 0:
             H, W = image.shape[-2:]
-            empty_masks = torch.zeros((0, H, W), dtype=torch.bool)
-            empty_boxes = torch.zeros((0, 4), dtype=torch.float32)
-            empty_scores = torch.zeros((0,), dtype=torch.float32)
-            ids = torch.zeros((0,), dtype=torch.int64)
-            return SegmentationResults(masks=empty_masks, boxes=empty_boxes, scores=empty_scores, ids=ids)
+            return SegmentationResults.empty(h=H, w=W)
 
         ids = torch.arange(len(raw), dtype=torch.int64)
 

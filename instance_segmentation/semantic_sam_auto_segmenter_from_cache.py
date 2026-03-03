@@ -53,15 +53,22 @@ class SemanticSAMInstanceSegmenterFromCache(AbsInstanceSegmenter):
         granularity: GranularitySpec = "all",
         resize_short_edge: int = 640,
         min_area_perc: float = 0.0,
+        dedupe_iou_threshold: float = 1.01,
+        confidence_threshold: Optional[float] = None,
         name: Optional[str] = None,
         generator_kwargs: Optional[dict] = None,
     ):
         if name is None:
             raise ValueError("A name must be provided for the SemanticSAMInstanceSegmenter.")
-        super().__init__(name=name)
+        super().__init__(
+            name=name,
+            min_area_perc=min_area_perc,
+            dedupe_iou_threshold=dedupe_iou_threshold,
+            confidence_threshold=confidence_threshold,
+        )
 
 
 
-    def segmentInstances(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
         # Throw an error if it actually gets here -- this segmenter is only meant to be used with cached results, so segmentInstances should never be called.
         raise RuntimeError("SemanticSAMInstanceSegmenterFromCache is only meant to be used with cached segmentation results. segmentInstances should never be called.")

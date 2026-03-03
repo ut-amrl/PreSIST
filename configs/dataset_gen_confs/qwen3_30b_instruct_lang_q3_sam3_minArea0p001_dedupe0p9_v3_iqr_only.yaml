@@ -1,0 +1,35 @@
+defaults:
+  - dataset_generator: caching_dataset_generation_process
+  - registry_info: registry_default
+  - dataloader: dataloader_default
+  # - override dataset_generator/instanceSegmenter: semanticsamautosegmenter_cache
+  - override dataset_generator/instanceSegmenter: languagegroundedsegmenter
+  - _self_
+
+# output_root_dir: "./debug_outputs_single_imgs/"
+
+
+dataset_generator:
+  llmPersistenceQuerier:
+    llmQuerier:
+      model_name: Qwen/Qwen3-30B-A3B-Instruct-2507
+      max_new_tokens: 16384
+      name: qwen3_30b_instruct
+    promptHandler:
+      prompt_template_file: "prompt_files/llm_querier/v3_iqr_only_time_scaled.txt"
+      name: v3_iqr_only_time_scaled
+  instanceSegmenter:
+    object_discoverer:
+      _target_: instance_segmentation.object_discovery.qwen_object_discoverer.QwenVLObjectDiscoverer
+      name: "qwenvl37b_disc"
+      model_name: "Qwen/Qwen3-VL-8B-Instruct"
+    min_area_perc: 0.001
+    dedupe_iou_threshold: 0.9
+    name_suffix: "_map0p001_dedupe0p9"
+
+
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

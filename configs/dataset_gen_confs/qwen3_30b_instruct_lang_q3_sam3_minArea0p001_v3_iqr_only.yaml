@@ -24,6 +24,8 @@ dataset_generator:
       name: "qwenvl37b_disc"
       model_name: "Qwen/Qwen3-VL-8B-Instruct"
     min_area_perc: 0.001
+    name_suffix: "_map0p001"
+
 
 
 
