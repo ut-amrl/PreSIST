@@ -26,7 +26,7 @@ class ChainedVLMPersistenceQuerier(AbsLLMPersistenceQuerier):
     def __init__(
         self,
         vlmPromptHandler: AbsVLMPromptHandler,
-        vlmQuerier: AbsVLMQuerier,
+        llmQuerier: AbsVLMQuerier,
         error_on_object_failure: bool = False,
     ):
         """
@@ -37,7 +37,7 @@ class ChainedVLMPersistenceQuerier(AbsLLMPersistenceQuerier):
         """
         super().__init__(name=f"CQ_VLM_{vlmPromptHandler.name}_{vlmQuerier.name}_errOnFail{error_on_object_failure}")
         self.vlm_prompt_handler = vlmPromptHandler
-        self.vlm_querier = vlmQuerier
+        self.llm_querier = vlmQuerier
         self.error_on_object_failure = error_on_object_failure
 
     def estimatePersistenceParameters(
@@ -76,7 +76,7 @@ class ChainedVLMPersistenceQuerier(AbsLLMPersistenceQuerier):
             )
 
             try:
-                response = self.vlm_querier.queryVLM(prompt, images_for_vlm)
+                response = self.llm_querier.queryVLM(prompt, images_for_vlm)
                 parsed = self.vlm_prompt_handler.parseSingleObjectPersistenceResponse(response)
                 parsed["id"] = obj_id
                 persistence_parameter_estimates.append(parsed)

@@ -27,7 +27,7 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
         confidence_threshold: float | None = None,
         name_suffix="",
     ):
-        if (name_suffix is not ""):
+        if (name_suffix != ""):
             name_suffix = "_" + name_suffix
         super().__init__(
             name="langGround_p_" + object_discoverer.getName() + "_s_" + language_segmenter.getName() + name_suffix,

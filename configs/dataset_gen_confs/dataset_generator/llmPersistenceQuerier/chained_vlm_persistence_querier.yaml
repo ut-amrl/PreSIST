@@ -1,5 +1,5 @@
 defaults:
   - vlmPromptHandler: verbose_vlm_prompt_handler
-  - vlmQuerier: qwen_vlm_querier
+  - llmQuerier: qwen_vlm_querier
 
 _target_: dataset_generation.llm_persistence_querying.chained_vlm_persistence_querier.ChainedVLMPersistenceQuerier

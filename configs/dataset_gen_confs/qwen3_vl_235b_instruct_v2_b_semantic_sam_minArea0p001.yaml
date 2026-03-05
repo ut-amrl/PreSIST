@@ -14,7 +14,7 @@ dataset_generator:
     min_area_perc: 0.001
     name: semanticsam_granularity3_minArea0p001
   llmPersistenceQuerier:
-    vlmQuerier:
+    llmQuerier:
       model_name: Qwen/Qwen3-VL-235B-A22B-Instruct
       name: qwen_vl_235b_thinking
     vlmPromptHandler:
