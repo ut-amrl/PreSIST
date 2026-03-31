@@ -1,5 +1,6 @@
 from dataset_generation.dataset_generation_process import SceneInstanceAndRelationalDatasetGenerator
 from instance_segmentation.sam2_auto_segmenter import SAM2InstanceSegmenter
+from dataset_generation.semantic_class_classifier import SemanticClassClassifier
 from dataset_generation.instance_descriptions.describe_anything_object_describer import DescribeAnythingObjectDescriber
 from dataset_generation.scene_level_captioning.instructblip_scene_level_captioner import InstructBLIPSceneLevelCaptioner
 from dataset_generation.llm_persistence_querying.prompt_handler.verbose_prompt_handler import VerbosePersistencePromptHandler
@@ -57,6 +58,11 @@ def createLLMPersistenceQuerier():
 def createIntermediateLogger(outputDir):
     return DiskIntermediateResultsLogger(logDirectory=outputDir)
 
+def createClipClassifier():
+    return SemanticClassClassifier(
+        model_name="ViT-L/14",
+        device="cuda",
+    )
 
 class ConcreteDatasetGenerator(SceneInstanceAndRelationalDatasetGenerator):
 
@@ -81,6 +87,7 @@ class ConcreteDatasetGenerator(SceneInstanceAndRelationalDatasetGenerator):
             ),
             relationshipDescriber=EmptyRelationshipDescriber(),  # Placeholder, implement as needed
             llmPersistenceQuerier=createLLMPersistenceQuerier(),
-            intermediateLogger=createIntermediateLogger(outputDir=outputDir)
+            intermediateLogger=createIntermediateLogger(outputDir=outputDir),
+            clipClassifier=createClipClassifier(),  
         )
 

@@ -122,7 +122,9 @@ RUN git clone https://github.com/UX-Decoder/Semantic-SAM.git /workspace/semantic
 
 RUN pip install wandb flash_attn qwen-vl-utils==0.0.14
 
-
+# ---------- OpenAI CLIP ----------
+RUN pip install ftfy regex tqdm && \
+    pip install git+https://github.com/openai/CLIP.git
 # Maybe pip install -U --force-reinstall --no-cache-dir "pydantic-core==2.27.2"
 
 # # Download the Semantic-SAM checkpoints

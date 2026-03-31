@@ -1,3 +1,5 @@
+import numpy as np
+
 from abc import ABC, abstractmethod
 
 from persistence_param_dataset.persistence_dataset_types import DatasetResult, ImageWithMetadata
@@ -46,7 +48,8 @@ class SceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator):
             objectDescriber: AbstractObjectDescriber,
             relationshipDescriber,
             llmPersistenceQuerier: AbsLLMPersistenceQuerier,
-            intermediateLogger: AbsIntermediateResultsLogger
+            intermediateLogger: AbsIntermediateResultsLogger,
+            clipClassifier,
     ):
         self.instanceSegmenter = instanceSegmenter
         self.sceneCaptioner = sceneCaptioner
@@ -54,6 +57,7 @@ class SceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator):
         self.relationshipDescriber = relationshipDescriber
         self.llmPersistenceQuerier = llmPersistenceQuerier
         self.intermediateLogger = intermediateLogger
+        self.clipClassifier = clipClassifier 
 
     def processImage(self, image, timeAndDate=None, inputBatchInfo=None):
 
@@ -65,6 +69,11 @@ class SceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator):
         print("Segmenting instances...")
         instances = self.instanceSegmenter.segmentInstances(image)
         self.intermediateLogger.logSegmentationResults(instances)
+        print("Classifying semantic classes...")
+        image_np = np.array(image)
+        masks = [inst.mask for inst in instances]  
+        clip_results = self.clipClassifier.classify_all_instances(image_np, masks)
+        clip_by_id = {r["instance_id"]: r for r in clip_results}
         print("Generating object descriptions...")
         objectDescriptions = self.objectDescriber.describeObjects(image, instances)
         self.intermediateLogger.logObjectDescriptions(objectDescriptions)
