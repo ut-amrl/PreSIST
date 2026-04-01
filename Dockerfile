@@ -105,10 +105,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpng-dev \
     && rm -rf /var/lib/apt/lists/*
 
-#RUN pip install -U openmim && \
-#    pip install -U pip setuptools wheel && \
- #   mim install "mmcv==2.1.0" && \
- #   mim install "mmdet==3.3.0"
+RUN pip install -U openmim && \
+    pip install "setuptools>=67.0,<70" && \
+    mim install "mmcv==2.1.0" && \
+    mim install "mmdet==3.3.0"
 
 # ---------- Detectron2 ----------
 RUN pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git'
@@ -121,8 +121,8 @@ RUN pip install --no-build-isolation 'git+https://github.com/facebookresearch/de
 RUN git clone https://github.com/UX-Decoder/Semantic-SAM.git /workspace/semantic-sam && \
     pip install -e /workspace/semantic-sam --no-deps
 
-#RUN pip install wandb flash_attn qwen-vl-utils==0.0.14
-
+RUN pip install wandb qwen-vl-utils==0.0.14 && \
+    pip install flash_attn --no-build-isolation
 # ---------- OpenAI CLIP ----------
 RUN pip install ftfy regex tqdm && \
     pip install git+https://github.com/openai/CLIP.git
