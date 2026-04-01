@@ -11,7 +11,7 @@ if [ ! -x "$SHARED_SCRIPT" ]; then
 fi
 
 IMAGE_NAME="${IMAGE_NAME:-spf}" \
-DOCKERFILE_PATH="${DOCKERFILE_PATH:-Dockerfile}" \
+DOCKERFILE_PATH="${DOCKERFILE_PATH:-Dockerfile.spf}" \
 REMOTE_PROJECT_DIR="${REMOTE_PROJECT_DIR:-$HOME/semantic-persistence-filter}" \
 PRIMARY_REMOTE_HOST="${PRIMARY_REMOTE_HOST:-tarunrav@robolidar.csres.utexas.edu}" \
 PROGRAM_NAME="${PROGRAM_NAME:-$(basename "$0")}" \
