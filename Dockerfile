@@ -106,7 +106,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install -U openmim && \
-    pip install "setuptools>=67.0,<70" && \
+    pip install setuptools==69.5.1 && \
+    pip install pkg_resources || true && \
     mim install "mmcv==2.1.0" && \
     mim install "mmdet==3.3.0"
 
