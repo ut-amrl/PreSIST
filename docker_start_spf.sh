@@ -43,15 +43,17 @@ fi
 # Check if the container already exists
 if [ ! "$(podman ps -a -q -f name=^spf_container$)" ]; then
     # The container does not exist --> create and start it
+    XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
+
     if ! podman run -d --gpus all \
         --shm-size=12g \
         -v $(pwd):/workspace/code/semantic-persistence-filter \
-        -v /scratch/aaadkins/data/semantic-persistence-filter:/workspace/data \
+        -v /scratch/tarunrav/data/semantic-persistence-filter:/workspace/data \
         -e DISPLAY=$DISPLAY \
         -v $XAUTHORITY:/tmp/.Xauthority:ro \
         -e XAUTHORITY=/tmp/.Xauthority \
         -v /tmp/.X11-unix:/tmp/.X11-unix  \
-        -v /scratch/aaadkins/hf_cache:/opt/hf \
+        -v /scratch/tarunrav/hf_cache:/opt/hf \
         --net=host  \
         -e NVIDIA_DRIVER_CAPABILITIES=all \
         --device /dev/dri \
