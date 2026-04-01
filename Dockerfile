@@ -105,10 +105,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpng-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install -U pip setuptools wheel && \
-    pip install -U openmim && \
-    mim install "mmcv==2.1.0" && \
-    mim install "mmdet==3.3.0"
+#RUN pip install -U openmim && \
+#    pip install -U pip setuptools wheel && \
+ #   mim install "mmcv==2.1.0" && \
+ #   mim install "mmdet==3.3.0"
 
 # ---------- Detectron2 ----------
 RUN pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git'
