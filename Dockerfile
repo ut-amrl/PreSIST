@@ -121,7 +121,7 @@ RUN pip install --no-build-isolation 'git+https://github.com/facebookresearch/de
 RUN git clone https://github.com/UX-Decoder/Semantic-SAM.git /workspace/semantic-sam && \
     pip install -e /workspace/semantic-sam --no-deps
 
-RUN pip install wandb flash_attn qwen-vl-utils==0.0.14
+#RUN pip install wandb flash_attn qwen-vl-utils==0.0.14
 
 # ---------- OpenAI CLIP ----------
 RUN pip install ftfy regex tqdm && \
