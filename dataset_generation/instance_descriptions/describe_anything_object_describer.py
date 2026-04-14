@@ -23,13 +23,14 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
         prompt_mode: str = "focal_prompt",
         *,
         # --- NEW ---
-        use_server: bool = False,
+        use_server: bool = True,
         # server_url: str = "http://localhost:9002",
         server_base_url: str = "http://localhost",
         server_port: int = 9002,
         server_model: str = "describe_anything_model",
         server_api_key: str = "api_key",
         server_timeout_s: float = 120.0,
+        server_batch_size: int = 32,
         # -----------
         temperature: float = 0.2,
         top_p: float = 0.5,
@@ -59,6 +60,11 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
 
             server_timeout_s:
                 Requests timeout (seconds) for server calls.
+
+            server_batch_size:
+                Max number of masks per /batch/chat/completions call. Must not exceed
+                the server's DAM_MAX_BATCH_SIZE (default 32). Instances are split using
+                SegmentationResults.divideIntoSubsets() for even distribution.
         """
         if name is None:
             raise ValueError("name must be provided for DescribeAnythingObjectDescriber")
@@ -81,6 +87,7 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
         self.server_model = server_model
         self.server_api_key = server_api_key
         self.server_timeout_s = float(server_timeout_s)
+        self.server_batch_size = int(server_batch_size)
 
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.prompt_mode = prompt_mode
@@ -204,6 +211,86 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
         # OpenAI-style response: choices[0].message.content
         return (result["choices"][0]["message"]["content"] or "").strip()
 
+    def _post_batch_chat_completions(self, payload: dict) -> dict:
+        """
+        POST to /batch/chat/completions on the DAM server.
+        The fork exposes this only at the root path (no /v1/ prefix).
+        """
+        headers = {"Content-Type": "application/json"}
+        if self.server_api_key:
+            headers["Authorization"] = f"Bearer {self.server_api_key}"
+
+        url = f"{self.server_url}/batch/chat/completions"
+        try:
+            r = requests.post(url, json=payload, headers=headers, timeout=self.server_timeout_s)
+            if r.status_code == 200:
+                return r.json()
+            raise RuntimeError(f"DAM batch server error {r.status_code} from {url}: {r.text}")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Failed to call DAM batch endpoint at {url}. Error: {e}") from e
+
+    def _describe_objects_batch_server(
+        self,
+        pil_image: Image.Image,
+        instances,
+    ) -> Dict[int, str]:
+        """
+        Describe all instances in batch using /batch/chat/completions.
+        Instances are split into evenly-distributed chunks via divideIntoSubsets().
+        """
+        prompt_text = self._prompt_for_server()
+        descriptions: Dict[int, str] = {}
+
+        chunks = instances.divideIntoSubsets(self.server_batch_size)
+        total = len(instances)
+        processed = 0
+
+        for chunk in chunks:
+            chunk_size = len(chunk)
+            print(f"Describing instances {processed + 1}–{processed + chunk_size} of {total} (batch)...")
+
+            requests_list = []
+            obj_ids = []
+            for i, mask in enumerate(chunk.masks):
+                obj_id = int(chunk.ids[i].item())
+                obj_ids.append(obj_id)
+                data_uri = self._rgba_png_data_url(pil_image, mask_to_pil(mask))
+                requests_list.append({
+                    "model": self.server_model,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": data_uri}},
+                            {"type": "text", "text": prompt_text},
+                        ],
+                    }],
+                    "max_tokens": int(self.gen_kwargs["max_new_tokens"]),
+                    "temperature": float(self.gen_kwargs["temperature"]),
+                    "top_p": float(self.gen_kwargs["top_p"]),
+                    "num_beams": int(self.gen_kwargs["num_beams"]),
+                    "use_cache": True,
+                })
+
+            payload = {
+                "model": self.server_model,
+                "requests": requests_list,
+            }
+
+            result = self._post_batch_chat_completions(payload)
+            for idx, item in enumerate(result.get("results", [])):
+                obj_id = obj_ids[idx]
+                if "error" in item:
+                    print(f"WARNING: DAM batch error for obj_id {obj_id}: {item['error']}")
+                    descriptions[obj_id] = ""
+                else:
+                    descriptions[obj_id] = (item["choices"][0]["message"]["content"] or "").strip()
+
+            processed += chunk_size
+
+        return descriptions
+
     # ---------- main API ----------
 
     def describeObjects(
@@ -218,29 +305,27 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
             self.initialize()
 
         pil_image = tensor_image_to_pil(image)
+
+
+        if self.use_server:
+            return self._describe_objects_batch_server(pil_image, instances)
+
         descriptions: Dict[int, str] = {}
-
-        # Print the number of instances
-        print(f"Describing {len(instances.masks)} instances...")
-
         for i, mask in enumerate(instances.masks):
             obj_id = int(instances.ids[i].item())
             pil_mask = mask_to_pil(mask)
 
             with torch.inference_mode():
-                if self.use_server:
-                    description = self._get_description_server(pil_image, pil_mask)
+                out = self.dam.get_description(
+                    pil_image,
+                    pil_mask,
+                    self.prompt,
+                    **self.gen_kwargs,
+                )
+                if isinstance(out, str):
+                    description = out.strip()
                 else:
-                    out = self.dam.get_description(
-                        pil_image,
-                        pil_mask,
-                        self.prompt,
-                        **self.gen_kwargs,
-                    )
-                    if isinstance(out, str):
-                        description = out.strip()
-                    else:
-                        description = "".join(out).strip()
+                    description = "".join(out).strip()
 
             descriptions[obj_id] = description
 

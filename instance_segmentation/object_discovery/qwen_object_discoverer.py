@@ -198,7 +198,7 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
     ):
         super().__init__(name=name)
 
-        model_name = "Qwen/Qwen3-VL-8B-Instruct"
+        # model_name = "Qwen/Qwen3-VL-8B-Instruct"
         vllm_port = 9011
 
 
