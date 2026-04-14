@@ -33,11 +33,11 @@ class ChainedVLMPersistenceQuerier(AbsLLMPersistenceQuerier):
         Args:
             vlmPromptHandler: Builds per-object prompt text, prepares the per-object image list,
                 and parses single-object response.
-            vlmQuerier: Sends (prompt, images) to the VLM.
+            llmQuerier: Sends (prompt, images) to the VLM.
         """
-        super().__init__(name=f"CQ_VLM_{vlmPromptHandler.name}_{vlmQuerier.name}_errOnFail{error_on_object_failure}")
+        super().__init__(name=f"CQ_VLM_{vlmPromptHandler.name}_{llmQuerier.name}_errOnFail{error_on_object_failure}")
         self.vlm_prompt_handler = vlmPromptHandler
-        self.llm_querier = vlmQuerier
+        self.llm_querier = llmQuerier
         self.error_on_object_failure = error_on_object_failure
 
     def estimatePersistenceParameters(

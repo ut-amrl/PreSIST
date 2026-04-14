@@ -1,0 +1,13 @@
+List all distinct visible physical entities in the image that could be segmented, including objects, people, animals, and structures.
+
+Include both large structures (wall, floor, ground, building) and smaller items (chair, cup, backpack, phone, book, plant, car, bicycle, tree, sign).
+
+Include items on tables, shelves, counters, benches, the ground, or other surfaces.
+
+Only include things that are physically present and visually separable.
+
+Use singular simple everyday object names. When referring to a type of object that may appear multiple times, prefer the singular form of the noun (e.g., chair instead of chairs, person instead of people).
+
+Do not include abstract scene terms such as background, scene, lighting, or atmosphere.
+
+Output short noun phrases, one per line, lowercase, 1–4 words, no extra text.

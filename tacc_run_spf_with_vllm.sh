@@ -218,8 +218,8 @@ CONTAINER_CMD="cd /workspace/code/semantic-persistence-filter && \
 HYDRA_FULL_ERROR=1 python3 run_llm_labeling_pipeline.py \
   --config-name ${CONFIG_NAME} \
   +image_dataset=${DATASET_NAME} \
-  ++dataset_generator.llmPersistenceQuerier.vlmQuerier.use_vllm_server=True \
-  ++dataset_generator.llmPersistenceQuerier.vlmQuerier.vllm_port=${VLLM_PORT}"
+  ++dataset_generator.llmPersistenceQuerier.llmQuerier.use_vllm_server=True \
+  ++dataset_generator.llmPersistenceQuerier.llmQuerier.vllm_port=${VLLM_PORT}"
 
 echo "Running container command on GPUs [$PIPELINE_GPUS]:"
 echo "  $CONTAINER_CMD"

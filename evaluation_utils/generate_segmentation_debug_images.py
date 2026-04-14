@@ -55,6 +55,14 @@ def argument_parser():
         action="store_true",
         help="Whether to exclude files that contain an underscore in their base name.",
     )
+
+    # Add an option to optionally save the debug images to a different directory
+    parser.add_argument(
+        "--output_root_dir",
+        type=str,
+        default="",
+        help="Root directory to save debug images. If not provided, the debug images will be saved in the same directory as the segmentation results.",
+    )
     return parser
 
 if __name__ == "__main__":
@@ -98,7 +106,8 @@ if __name__ == "__main__":
                 masks=instance_masks,
                 image=image,
                 outputDir=dirpath,
-                overwriteExisting=overwriteExisting
+                overwriteExisting=overwriteExisting,
+                scores=segmentationResults.scores,
             )
 
 

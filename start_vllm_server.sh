@@ -9,16 +9,21 @@ set -euo pipefail
 ############################################
 
 # ---- Networking ----
-PORT=9006
+# PORT=9009
+# PORT=9010
+PORT=9011
+# PORT=9008
 HOST="0.0.0.0"
 
 # ---- Model selection (HF repo or local path) ----
 # MODEL="Qwen/Qwen3-30B-A3B-Instruct-2507"
 # MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507"
+MODEL="Qwen/Qwen3-VL-8B-Instruct"
+# MODEL="Qwen/Qwen3-VL-8B-Thinking"
 # MODEL="Qwen/Qwen3-235B-A22B-Instruct-2507"
 # MODEL="Qwen/Qwen3-Next-80B-A3B-Instruct"
 # MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
-MODEL="Qwen/Qwen3-VL-30B-A3B-Thinking"
+# MODEL="Qwen/Qwen3-VL-30B-A3B-Thinking"
 # MODEL="Qwen/Qwen3.5-122B-A10B"
 
 
@@ -184,6 +189,16 @@ if podman container exists "$CONTAINER_NAME"; then
   podman rm -f "$CONTAINER_NAME"
 fi
 
+MODEL_LC="$(echo "$MODEL" | tr '[:upper:]' '[:lower:]')"
+REASONING_PARSER=""
+
+if [[ "$MODEL_LC" == *"qwen3"* || "$MODEL_LC" == *"qwen3.5"* ]]; then
+  if [[ "$MODEL_LC" == *"thinking"* ]]; then
+    # REASONING_PARSER="qwen3"
+    REASONING_PARSER="deepseek_r1"
+  fi
+fi
+
 # Build vLLM args
 VLLM_ARGS=(
   serve
@@ -197,6 +212,10 @@ VLLM_ARGS=(
   --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
   --max-model-len "$MAX_MODEL_LEN"
 )
+
+if [ -n "$REASONING_PARSER" ]; then
+  VLLM_ARGS+=( --reasoning-parser "$REASONING_PARSER" )
+fi
 
 if [ -n "$QUANTIZATION" ]; then
   VLLM_ARGS+=( --quantization "$QUANTIZATION" )

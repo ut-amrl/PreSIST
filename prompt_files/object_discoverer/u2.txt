@@ -1,0 +1,7 @@
+List all distinct visible objects and separate physical items in the image that could be segmented.
+Include large structures and smaller items on tables, shelves, counters, or the ground.
+Only include physical things that are visibly present.
+Include both indoor and outdoor examples (e.g., road, building, tree, chair, laptop, cup).
+Prefer common object names rather than descriptions or attributes.
+Do not include abstract scene terms like background, scene, sky, or lighting.
+Prefer common object names rather than descriptions or attributes.

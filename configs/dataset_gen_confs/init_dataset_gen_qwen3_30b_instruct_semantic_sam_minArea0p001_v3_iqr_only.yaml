@@ -16,7 +16,7 @@ dataset_generator:
       name: qwen3_30b_instruct
     promptHandler:
       prompt_template_file: "prompt_files/llm_querier/v3_iqr_only_time_scaled.txt"
-      name: v2_time_scaled
+      name: v3_iqr_only_time_scaled
   instanceSegmenter:
     min_area_perc: 0.001
     name: semanticsam_granularity3_minArea0p001

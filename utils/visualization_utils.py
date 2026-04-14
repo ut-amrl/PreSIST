@@ -287,9 +287,13 @@ def mask_highlight_image(
     )
 
 
-def saveMasksOnImages(masks, image, outputDir, overlayColor=(0, 0, 255), alphaMask=0.4, alphaImg=0.6, overwriteExisting=True):
+def saveMasksOnImages(masks, image, outputDir, overlayColor=(0, 0, 255), alphaMask=0.4, alphaImg=0.6, overwriteExisting=True, scores=None):
     # Save each mask overlaid on the original image
     for idx, mask in enumerate(masks):
+
+        # Print the confidence score for the mask if it exists
+        if (scores is not None) and (idx < len(scores)):
+            print(f"Mask {idx} confidence score: {scores[idx]:.4f}")
 
         overlay_path = os.path.join(outputDir, f"mask_{idx:03d}.png")
         if (not overwriteExisting) and os.path.exists(overlay_path):

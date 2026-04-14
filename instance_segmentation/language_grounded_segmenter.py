@@ -48,6 +48,9 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
         # Dedupe object descriptions if needed (some discoverers may return duplicates or near-duplicates)
         obj_descriptions = list(set(obj_descriptions))
 
+        # Print the number of object descriptions
+        print(f"Number of object descriptions: {len(obj_descriptions)}")
+
         seg = self.language_segmenter.segment_from_prompts(image, obj_descriptions)
 
         # Convert to your SegmentationResults.
@@ -56,7 +59,7 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
             return SegmentationResults.empty(h=H, w=W)
 
         return SegmentationResults(
-            ids=seg.prompt_ids.to(torch.int64),
+            ids=torch.arange(seg.masks.shape[0], dtype=torch.int64),
             masks=seg.masks.to(torch.bool),
             boxes=seg.boxes.to(torch.float32),
             scores=seg.scores.to(torch.float32) if seg.scores is not None else None,

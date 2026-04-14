@@ -37,7 +37,7 @@ class SAM3LanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
         device: Optional[str] = None,
         checkpoint_path: Optional[str] = None,
 
-        score_thresh: float = -1.0, # optional: keep scores>=thresh (if scores provided)
+        score_thresh: float = 0.5, # optional -- default taken from typical SAM3 confidence threshold; set <=0 to disable
     ):
         super().__init__(name=name)
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -54,7 +54,7 @@ class SAM3LanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
 
         self.model = self.model.to(self.device)
         self.model.eval()
-        self.processor = Sam3Processor(self.model)
+        self.processor = Sam3Processor(self.model, confidence_threshold=self.score_thresh)
 
 
     @torch.no_grad()

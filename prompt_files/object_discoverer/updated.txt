@@ -1,0 +1,6 @@
+List all visible objects and structures in the image that someone might want to segment.
+Include large structures, furniture, vehicles, and smaller items on tables, shelves, or the ground.
+Include partially visible or small objects if identifiable.
+Output short noun phrases, one per line, lowercase, 1–4 words, no extra text.
+Include both foreground and background objects (e.g., road, building, tree, chair, laptop, cup).
+Do not include abstract scene terms like background, scene, sky, or lighting.

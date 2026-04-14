@@ -1,6 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from math import ceil
 from typing import Optional
 import torch
 import numpy as np
@@ -72,6 +73,28 @@ class SegmentationResults:
             )
 
             return segmentationResults, imagePath
+
+    def divideIntoSubsets(self, max_subset_size):
+        """
+        Divides the segmentation results into subsets of at most max_subset_size instances.
+        Returns a list of SegmentationResults objects.
+        """
+
+        numGroups = ceil(len(self) / max_subset_size)
+        targetGroupSize = ceil(len(self) / numGroups)
+
+        subsets = []
+
+        n = len(self)
+        for i in range(0, n, targetGroupSize):
+            subset = SegmentationResults(
+                ids=self.ids[i:i+targetGroupSize],
+                masks=self.masks[i:i+targetGroupSize],
+                boxes=self.boxes[i:i+targetGroupSize],
+                scores=self.scores[i:i+targetGroupSize] if self.scores is not None else None,
+            )
+            subsets.append(subset)
+        return subsets
 
 
 class AbsInstanceSegmenter(ABC):
