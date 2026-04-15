@@ -129,47 +129,69 @@ class QwenLLMQuerier(AbsLLMQuerier):
 
         print("Using QwenLLMQuerier with use_vllm_server =", self.use_vllm_server)
 
-        if self.use_vllm_server:
-            vllm_base_url = f"{vllm_url_root}:{vllm_port}{vllm_url_suffix}"
-            self.vllm_base_url = vllm_base_url.rstrip("/")
-            from openai import OpenAI  # Import here to avoid dependency if not using vLLM mode
-            self.vllm_client = OpenAI(
-                base_url=self.vllm_base_url,
-                api_key=vllm_api_key,
-                timeout=vllm_request_timeout_s,
-            )
+        self.initialized = False
+        self.vllm_url_root = vllm_url_root
+        self.vllm_port = vllm_port
+        self.vllm_url_suffix = vllm_url_suffix
+        self.vllm_api_key = vllm_api_key
+        self.vllm_timeout_request_s = vllm_request_timeout_s
+        self.torch_dtype = torch_dtype
+        self.model_name = model_name
+        self.device_map = device_map
+        self.attn_implementation = attn_implementation
+        self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
+        self.top_p = top_p
+        self.repetition_penalty = repetition_penalty
 
-            # if vllm_verify_on_init:
-                # self._verify_vllm_server_model()
 
-        else:
-            # Initialize local Transformers model+tokenizer
-            resolved_dtype = resolve_torch_dtype(torch_dtype)
-
-            # Try requested attention impl; fall back to sdpa if needed
-            self.model = self._load_local_model_with_fallback(
-                model_name=model_name,
-                device_map=device_map,
-                torch_dtype=resolved_dtype,
-                attn_implementation=attn_implementation,
-            )
-            self.model.eval()
-            self.model.config.use_cache = True
-
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-
-            self.generation_kwargs = {
-                "max_new_tokens": max_new_tokens,
-                "do_sample": True if temperature > 0 else False,
-                "temperature": temperature,
-                "top_p": top_p,
-                "repetition_penalty": repetition_penalty,
-            }
 
     # -------------------------
     # Helpers
     # -------------------------
 
+
+
+    def initialize(self):
+
+        if (self.initialized):
+            return
+
+        if self.use_vllm_server:
+            vllm_base_url = f"{self.vllm_url_root}:{self.vllm_port}{self.vllm_url_suffix}"
+            self.vllm_base_url = vllm_base_url.rstrip("/")
+            from openai import OpenAI  # Import here to avoid dependency if not using vLLM mode
+            self.vllm_client = OpenAI(
+                base_url=self.vllm_base_url,
+                api_key=self.vllm_api_key,
+                timeout=self.vllm_timeout_request_s,
+            )
+
+            self._resolve_served_model_name()
+
+        else:
+            # Initialize local Transformers model+tokenizer
+            resolved_dtype = resolve_torch_dtype(self.torch_dtype)
+
+            # Try requested attention impl; fall back to sdpa if needed
+            self.model = self._load_local_model_with_fallback(
+                model_name=self.model_name,
+                device_map=self.device_map,
+                torch_dtype=resolved_dtype,
+                attn_implementation=self.attn_implementation,
+            )
+            self.model.eval()
+            self.model.config.use_cache = True
+
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+
+            self.generation_kwargs = {
+                "max_new_tokens": self.max_new_tokens,
+                "do_sample": True if self.temperature > 0 else False,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "repetition_penalty": self.repetition_penalty,
+            }
 
 
     def _load_local_model_with_fallback(
@@ -207,6 +229,34 @@ class QwenLLMQuerier(AbsLLMQuerier):
                 print(f"Failed to load with attn_implementation={impl} ({e}); trying fallback...")
 
         raise RuntimeError(f"Could not load model {model_name!r}. Tried attn implementations: {tried}") from last_exc
+
+    def _resolve_served_model_name(self) -> None:
+        """Check the server's model list and fix up vllm_served_model_name.
+
+        vLLM serves models under a derived name (e.g. "qwen3-30b__bfloat16");
+        TRT-LLM uses the raw HF path (e.g. "Qwen/Qwen3-30B-A3B-Thinking-2507").
+        This queries /v1/models at init time and falls back to the HF name if
+        the derived name isn't advertised.
+        """
+        assert self.vllm_client is not None
+        ids = [m.id for m in self.vllm_client.models.list().data]
+        if self.vllm_served_model_name in ids:
+            print(f"Server model resolved: {self.vllm_served_model_name!r}")
+            return
+        if self.model_name in ids:
+            print(
+                f"Derived name {self.vllm_served_model_name!r} not found on server; "
+                f"falling back to HF model name {self.model_name!r}"
+            )
+            self.vllm_served_model_name = self.model_name
+            return
+        raise RuntimeError(
+            f"Could not resolve a served model name.\n"
+            f"Tried derived name: {self.vllm_served_model_name!r}\n"
+            f"Tried HF name:      {self.model_name!r}\n"
+            f"Server advertises:  {ids}\n"
+            f"base_url={self.vllm_base_url!r}"
+        )
 
     def _verify_vllm_server_model(self) -> None:
         assert self.vllm_client is not None
@@ -250,6 +300,8 @@ class QwenLLMQuerier(AbsLLMQuerier):
             seed: optional deterministic sampling seed (vLLM supports it)
         """
         # Start a timer
+
+        self.initialize()  # Ensure initialization before first query
 
         start_time = time()
         if self.use_vllm_server:

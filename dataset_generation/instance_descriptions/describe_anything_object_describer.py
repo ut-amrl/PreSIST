@@ -7,6 +7,7 @@ from typing import Optional, Dict
 from PIL import Image
 from io import BytesIO
 import base64
+import numpy as np
 import requests
 
 from dam import DescribeAnythingModel, disable_torch_init  # from the repo
@@ -136,18 +137,29 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
             text = "\n" + text
         return text or "\nDescribe the masked region in detail."
 
+
+
+    def _rgba_png_data_url_from_numpy(self, rgb_np: np.ndarray, mask_l: Image.Image) -> str:
+        """
+        Encode (RGB numpy array + PIL mask) to a base64 RGBA PNG data URL.
+        Accepts a pre-converted numpy RGB array so the caller can convert once
+        and reuse across many masks.
+        """
+        mask = np.array(mask_l.convert("L"))
+        rgba = np.zeros((*rgb_np.shape[:2], 4), dtype=np.uint8)
+        rgba[..., :3] = rgb_np
+        rgba[..., 3] = (mask > 0).astype(np.uint8) * 255
+        buf = BytesIO()
+        Image.fromarray(rgba, "RGBA").save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
     def _rgba_png_data_url(self, rgb_image: Image.Image, mask_l: Image.Image) -> str:
         """
         Encode (RGB + mask-as-alpha) to a base64 data URL.
+        Converts rgb_image to numpy on each call; prefer _rgba_png_data_url_from_numpy
+        when the same image is reused across many masks.
         """
-        rgb_image = rgb_image.convert("RGB")
-        mask_l = mask_l.convert("L")
-
-        rgba = Image.merge("RGBA", rgb_image.split() + (mask_l,))
-        buf = BytesIO()
-        rgba.save(buf, format="PNG")
-        img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-        return f"data:image/png;base64,{img_b64}"
+        return self._rgba_png_data_url_from_numpy(np.array(rgb_image.convert("RGB")), mask_l)
 
     def _post_chat_completions(self, payload: dict) -> dict:
         """
@@ -243,6 +255,9 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
         prompt_text = self._prompt_for_server()
         descriptions: Dict[int, str] = {}
 
+        # Convert once; reused for every mask instead of converting inside the loop.
+        rgb_np = np.array(pil_image.convert("RGB"))
+
         chunks = instances.divideIntoSubsets(self.server_batch_size)
         total = len(instances)
         processed = 0
@@ -256,7 +271,8 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
             for i, mask in enumerate(chunk.masks):
                 obj_id = int(chunk.ids[i].item())
                 obj_ids.append(obj_id)
-                data_uri = self._rgba_png_data_url(pil_image, mask_to_pil(mask))
+                data_uri = self._rgba_png_data_url_from_numpy(rgb_np, mask_to_pil(mask))
+
                 requests_list.append({
                     "model": self.server_model,
                     "messages": [{
