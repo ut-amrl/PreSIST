@@ -4,6 +4,7 @@ defaults:
   - cross_attn_pooler: mask_downsample_soft
   - _self_
 
+name: obj_conditioned_cross_attn
 _target_: persistence_parameter_networks.models.persistence_output_predictors.PersistenceObjConditionedCrossAttn
 
 # -------------------------

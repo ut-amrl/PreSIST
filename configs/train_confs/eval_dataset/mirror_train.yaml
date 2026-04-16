@@ -1,0 +1,12 @@
+# Mirrors whatever train_dataset is currently selected — no per-dataset file needed.
+# Use this as the default eval_dataset when evaluating on the same dataset used for training.
+# Override individual fields below if eval should differ (e.g., a different split_json).
+name: ${train_dataset.name}
+_target_: ${train_dataset._target_}
+input_root_dir: ${train_dataset.input_root_dir}
+output_root_dir: ${train_dataset.output_root_dir}
+segmentation_config_name: ${train_dataset.segmentation_config_name}
+full_results_config_name: ${train_dataset.full_results_config_name}
+split_id_kind: ${train_dataset.split_id_kind}
+split_granularity: ${train_dataset.split_granularity}
+split_json: ${train_dataset.split_json}

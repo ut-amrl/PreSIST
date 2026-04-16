@@ -17,13 +17,14 @@ from typing import Optional
 
 # Abstract base class for raw parameter predictors
 class PersistenceOutputPredictor(nn.Module, ABC):
-    def __init__(self, baseModel: AbsRawPredictor, confidenceFromLogits: bool = False):
+    def __init__(self, baseModel: AbsRawPredictor, name: str, confidenceFromLogits: bool = False):
         super(PersistenceOutputPredictor, self).__init__()
         self.baseModel = baseModel
         # Assert that the base model's output legnth is 3 (y50, yr, yc)
         if self.baseModel.outputLength != 3:
             raise ValueError(f"Base model outputLength must be 3 (y50, yr, yc). Got {self.baseModel.outputLength}")
         self.confidence_from_logits = confidenceFromLogits
+        self.model_name = name
 
 
     def forward(self, image: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -50,6 +51,7 @@ class PersistenceObjConditionedCrossAttn(PersistenceOutputPredictor):
         num_heads: int = 8,
         ff_hidden: int = 512,
         confidenceFromLogits: bool = False,
+        name: str = "obj_conditioned_cross_attn",
     ):
 
         # Build backbone from config
@@ -58,6 +60,9 @@ class PersistenceObjConditionedCrossAttn(PersistenceOutputPredictor):
         # Build pooler
         if pooler_cfg is not None:
             pooler = build_pooler(pooler_cfg)
+            composed_name = f"{name}__{pooler_cfg.kind}"
+        else:
+            composed_name = name
 
         super().__init__(
             baseModel=MultiMaskObjectConditionedCrossAttnPredictor(
@@ -69,6 +74,7 @@ class PersistenceObjConditionedCrossAttn(PersistenceOutputPredictor):
                 ff_hidden=ff_hidden,
             ),
             confidenceFromLogits=confidenceFromLogits,
+            name=composed_name,
         )
 
 
@@ -92,6 +98,7 @@ class PersistenceOutDetrLikePredictor(PersistenceOutputPredictor):
         max_queries: int = 32,
         eps: float = 1e-6,
         confidenceFromLogits: bool = False,
+        name: str = "detr_based",
     ):
         # Build backbone from config (same class as other predictor)
         backbone = RichOutputSelaEncoder(backbone_cfg)
@@ -113,6 +120,7 @@ class PersistenceOutDetrLikePredictor(PersistenceOutputPredictor):
                 eps=eps,
             ),
             confidenceFromLogits=confidenceFromLogits,
+            name=name,
         )
 
 
@@ -128,6 +136,7 @@ class PersistenceOutDualEncoderModel(PersistenceOutputPredictor):
         downstream_dim: int = 512,
         preprocess_cfg: Optional[InstancePreprocessConfig] = None,
         confidenceFromLogits: bool = False,
+        name: str = "dual_encoder",
     ):
         context_encoder, instance_encoder = self.buildEncoders(context_encoder_args, instance_encoder_args, use_unified_encoder)
         super().__init__(
@@ -140,7 +149,8 @@ class PersistenceOutDualEncoderModel(PersistenceOutputPredictor):
                 downstream_dim=downstream_dim,
                 preprocess_cfg=preprocess_cfg,
             ),
-            confidenceFromLogits=confidenceFromLogits
+            confidenceFromLogits=confidenceFromLogits,
+            name=name,
         )
 
     @staticmethod

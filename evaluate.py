@@ -655,7 +655,7 @@ def _evaluate_split(
     model.eval()
     agg_score, metrics = validator.validate(model, loader)
 
-    split_dir = out_root_epoch / "eval" / split
+    split_dir = out_root_epoch / split
     split_dir.mkdir(parents=True, exist_ok=True)
 
     dist_plots_saved = False
@@ -717,10 +717,10 @@ def _evaluate_split(
 # ----------------------------
 # Hydra entry (mirrors training usage)
 # ----------------------------
-@hydra.main(version_base=None, config_path="configs/train_confs", config_name="train_config.yaml")
+@hydra.main(version_base=None, config_path="configs/train_confs", config_name="config.yaml")
 def main(cfg: DictConfig) -> None:
     hydra_cfg = HydraConfig.get()
-    config_name = cfg.config_name if "config_name" in cfg else hydra_cfg.job.config_name
+    config_name = hydra_cfg.job.config_name
 
     if "ckpt" not in cfg or cfg.ckpt is None:
         raise ValueError("Missing cfg.ckpt. Provide ckpt=/path/to/checkpoints/<file>.pth via Hydra overrides.")
@@ -736,9 +736,9 @@ def main(cfg: DictConfig) -> None:
     print(f"[Config] name:    {config_name}")
 
     # Instantiate config objects exactly like training
-    train_cfg_obj = hydra.utils.instantiate(cfg.train)
+    train_cfg_obj = hydra.utils.instantiate(cfg.trainer.loop)
     registry_cfg: RegistryConfig = hydra.utils.instantiate(cfg.registry_info)
-    distillation_cfg: DistillationDatasetConfig = hydra.utils.instantiate(cfg.dataset)
+    distillation_cfg: DistillationDatasetConfig = hydra.utils.instantiate(cfg.eval_dataset)
 
     # Device similar to training
     device_str = getattr(train_cfg_obj, "device", None)
@@ -747,9 +747,9 @@ def main(cfg: DictConfig) -> None:
 
     # Instantiate model/loss/optimizer/scheduler (like training utilities do)
     model: nn.Module = hydra.utils.instantiate(cfg.model)
-    loss_fn: nn.Module = hydra.utils.instantiate(cfg.loss_function)
-    optimizer = hydra.utils.instantiate(cfg.optimizer, params=model.parameters())
-    lr_scheduler = hydra.utils.instantiate(cfg.lr_scheduler, optimizer=optimizer)
+    loss_fn: nn.Module = hydra.utils.instantiate(cfg.trainer.loss_function)
+    optimizer = hydra.utils.instantiate(cfg.trainer.optimizer, params=model.parameters())
+    lr_scheduler = hydra.utils.instantiate(cfg.trainer.lr_scheduler, optimizer=optimizer)
 
     model.to(device)
     loss_fn.to(device)
@@ -790,8 +790,10 @@ def main(cfg: DictConfig) -> None:
     ckpt_global_step = int(getattr(meta, "global_step", -1))
     print(f"[CKPT] loaded epoch={ckpt_epoch} global_step={ckpt_global_step}")
 
-    # Output root that includes epoch
-    out_root_epoch = run_root / f"epoch_{ckpt_epoch:04d}"
+    # Output root: epoch_<N>/eval/<eval_dataset>/<eval_timestamp>/
+    # A new timestamp per run prevents collision when re-evaluating the same checkpoint.
+    eval_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    out_root_epoch = run_root / f"epoch_{ckpt_epoch:04d}" / "eval" / cfg.eval_dataset.name / eval_timestamp
     out_root_epoch.mkdir(parents=True, exist_ok=True)
 
     # Validator
@@ -832,7 +834,7 @@ def main(cfg: DictConfig) -> None:
         if payload is not None:
             results["splits"][split] = payload
 
-    summary_path = out_root_epoch / "eval" / "summary.json"
+    summary_path = out_root_epoch / "summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
@@ -845,10 +847,32 @@ if __name__ == "__main__":
 
 """
 Example usage
-python evaluate.py ckpt=/path/to/<output_root>/<cfg_name>/<timestamp>/checkpoints/ckpt_best.pth
 
-python evaluate.py \
-  ckpt=/path/to/.../checkpoints/ckpt_best.pth \
-  eval.viz=true eval.viz_max=32 eval.num_workers=8
+Note: ckpt must be passed with a leading + because it is not defined in the config struct.
 
+Evaluate best checkpoint:
+  python evaluate.py \
+    --config-name cross_attn_random_instwise_manlabel_2026_02_11_14_02_80_10_10 \
+    +ckpt=/workspace/data/output/training_outputs/<train_dataset>/<model>/<timestamp>/checkpoints/ckpt_best.pth
+
+Evaluate a specific epoch checkpoint (epoch 0 = pre-training, epoch N = after N epochs):
+  python evaluate.py \
+    --config-name cross_attn_random_instwise_manlabel_2026_02_11_14_02_80_10_10 \
+    +ckpt=.../checkpoints/ckpt_epoch_0_pretrain.pth
+
+  python evaluate.py \
+    --config-name cross_attn_random_instwise_manlabel_2026_02_11_14_02_80_10_10 \
+    +ckpt=.../checkpoints/ckpt_epoch_1.pth
+
+Evaluate on a different dataset than training:
+  python evaluate.py \
+    --config-name cross_attn_random_instwise_manlabel_2026_02_11_14_02_80_10_10 \
+    eval_dataset=ahg_eval \
+    +ckpt=.../checkpoints/ckpt_best.pth
+
+Output is written to:
+  <checkpoint_dir_parent>/epoch_<N>/eval/<eval_dataset>/<eval_timestamp>/
+    train/metrics.json
+    val/metrics.json
+    summary.json
 """

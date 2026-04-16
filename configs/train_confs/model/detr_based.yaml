@@ -3,6 +3,7 @@
 defaults:
   - _self_
 
+name: detr_based
 _target_: persistence_parameter_networks.models.persistence_output_predictors.PersistenceOutDetrLikePredictor
 
 # -----------------------------------------------------------------------------

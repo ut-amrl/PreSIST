@@ -155,14 +155,21 @@ class SAM3BatchedLanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
             raise ValueError("prompts_per_forward must be positive")
 
         self.score_thresh = float(score_thresh)
+        self.checkpoint_path = checkpoint_path
+        self.resize_size = resize_size
+        self.resize_max_size = resize_max_size
 
         # Per-instance query id counter (avoid global mutable state)
         self._query_uid = 1
+        self.initialized = False
+
+    def initialize(self):
+        self.initialized = True
 
         # Build model
         build_kwargs: Dict[str, Any] = {}
-        if checkpoint_path is not None:
-            build_kwargs["checkpoint_path"] = checkpoint_path
+        if self.checkpoint_path is not None:
+            build_kwargs["checkpoint_path"] = self.checkpoint_path
 
         try:
             self.model = build_sam3_image_model(**build_kwargs)
@@ -178,8 +185,8 @@ class SAM3BatchedLanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
         self.transform = ComposeAPI(
             transforms=[
                 RandomResizeAPI(
-                    sizes=resize_size,
-                    max_size=resize_max_size,
+                    sizes=self.resize_size,
+                    max_size=self.resize_max_size,
                     square=True,
                     consistent_transform=False,
                 ),
@@ -285,6 +292,9 @@ class SAM3BatchedLanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
         """
         True multi-prompt batching via SAM3 datapoint API.
         """
+        if not self.initialized:
+            self.initialize()
+
         if not isinstance(image, torch.Tensor):
             raise TypeError("image must be a torch.Tensor")
         if image.ndim != 3 or image.shape[0] not in (3, 4):

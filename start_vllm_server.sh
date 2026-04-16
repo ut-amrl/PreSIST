@@ -11,14 +11,16 @@ set -euo pipefail
 # ---- Networking ----
 # PORT=9009
 # PORT=9010
-PORT=9011
+# PORT=9016
+PORT=9017
 # PORT=9008
 HOST="0.0.0.0"
 
 # ---- Model selection (HF repo or local path) ----
 # MODEL="Qwen/Qwen3-30B-A3B-Instruct-2507"
+# MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507-FP8"
 # MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507"
-MODEL="Qwen/Qwen3-VL-8B-Instruct"
+# MODEL="Qwen/Qwen3-VL-8B-Instruct"
 # MODEL="Qwen/Qwen3-VL-8B-Thinking"
 # MODEL="Qwen/Qwen3-235B-A22B-Instruct-2507"
 # MODEL="Qwen/Qwen3-Next-80B-A3B-Instruct"
@@ -26,13 +28,21 @@ MODEL="Qwen/Qwen3-VL-8B-Instruct"
 # MODEL="Qwen/Qwen3-VL-30B-A3B-Thinking"
 # MODEL="Qwen/Qwen3.5-122B-A10B"
 
+# MODEL="Qwen/Qwen3-Next-80B-A3B-Thinking"
+MODEL="Qwen/Qwen3-Next-80B-A3B-Thinking-FP8"
+
 
 # ---- Engine/runtime params (fixed at server start) ----
-DTYPE="bfloat16"                  # float16 | bfloat16 | float32
+# DTYPE="bfloat16"                  # float16 | bfloat16 | float32
+# Use FP8
+# DTYPE="torch.float8"
+DTYPE="auto"
 QUANTIZATION=""                   # e.g. "awq" or "gptq" or "" for none
 TENSOR_PARALLEL_SIZE=""           # leave empty to auto = number of GPUs passed
 GPU_MEMORY_UTILIZATION="0.90"
 MAX_MODEL_LEN="32768"
+# MAX_MODEL_LEN="16384"
+# MAX_MODEL_LEN="4096"
 
 # ---- Container image ----
 VLLM_IMAGE="docker.io/vllm/vllm-openai:latest"   # strongly recommended: pin to a tag you trust

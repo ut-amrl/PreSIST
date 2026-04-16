@@ -1,0 +1,19 @@
+dataset_root: /datasets
+
+sources:
+  - path: coco/train2017
+    weight: 0.6
+  - path: imagenet/train
+    weight: 0.3
+  - path: cc3m/images
+    weight: 0.1
+
+max_data_slice_size: 100000
+d_slice_indices: [0]
+manifest_output_directory: ./manifests
+data_mix_prefix: train_mix
+
+random_seed: 1234
+recursive: true
+allow_absolute_source_paths: false
+sort_before_shuffle: true

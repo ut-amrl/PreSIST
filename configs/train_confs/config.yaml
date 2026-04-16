@@ -1,0 +1,77 @@
+# config.yaml — default base config for training and evaluation
+#
+# ─── HOW TO USE ────────────────────────────────────────────────────────────────
+#
+# Run a named experiment preset:
+#   HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=1 python3 train.py \
+#     --config-name cross_attn_random_instwise_manlabel_2026_02_11_14_02_80_10_10
+#
+# Run evaluation on a checkpoint (same config name as training):
+#   CUDA_VISIBLE_DEVICES=1 python3 evaluate.py \
+#     --config-name cross_attn_random_instwise_manlabel_2026_02_11_14_02_80_10_10 \
+#     +ckpt=<model_output_root_dir>/<train_dataset.name>/<model.model_name>/<train_ts>/checkpoints/ckpt_best.pth
+#
+#   Note: use +ckpt= (with leading +) because ckpt is not defined in the config struct.
+#   Checkpoint filenames: ckpt_epoch_0_pretrain.pth, ckpt_epoch_1.pth, ..., ckpt_best.pth
+#
+# Evaluate on a different dataset than the one used for training:
+#   python3 evaluate.py \
+#     --config-name cross_attn_random_instwise_manlabel_2026_02_11_14_02_80_10_10 \
+#     eval_dataset=ahg_eval \
+#     +ckpt=<path>/checkpoints/ckpt_best.pth
+#
+# Override individual config groups without a separate file:
+#   python3 train.py model=detr_based
+#   python3 train.py model=detr_based train_dataset=ran_inst_init_dataset_gen_qwen3_30b_instruct_semantic_sam_minA0p001_18_22_21
+#   python3 train.py trainer=high_lr_schedule
+#   python3 train.py trainer.batch_size=32 trainer.max_epochs=50
+#
+# Multirun sweep:
+#   python3 train.py --multirun \
+#     model=obj_conditioned_cross_attn,detr_based \
+#     train_dataset=random_instwise_manlabel_2026_02_11_14_02_80_10_10,ran_inst_init_dataset_gen_qwen3_30b_instruct_semantic_sam_minA0p001_18_22_21
+#
+# ─── OUTPUT PATHS ──────────────────────────────────────────────────────────────
+#
+# Training:
+#   <model_output_root_dir>/<train_dataset.name>/<model.name>/<YYYY-MM-DD_HH-MM-SS>/
+#     checkpoints/ckpt_best.pth
+#     checkpoints/ckpt_epoch_NNNN.pth
+#
+# Evaluation:
+#   <model_output_root_dir>/<train_dataset.name>/<model.name>/<train_ts>/
+#     epoch_<N>/eval/<eval_dataset.name>/<eval_ts>/
+#       train/metrics.json, dist/, viz/
+#       val/metrics.json, dist/
+#       summary.json
+#
+# ─── CREATING REUSABLE NAMED EXPERIMENT PRESETS ────────────────────────────────
+#
+# Create configs/train_confs/<name>.yaml with a full defaults list — the filename
+# becomes the wandb run name. See the existing experiment yamls for examples.
+#
+# To add a new trainer profile:
+#   Create configs/train_confs/trainer/<variant_name>.yaml (add name: <variant_name>)
+#   Reference it with: python3 train.py trainer=<variant_name>
+#
+# To add a new training dataset:
+#   Create configs/train_confs/train_dataset/<name>.yaml with all dataset fields.
+#   eval_dataset: mirror_train (the default) will automatically mirror it.
+#   Reference it with: python3 train.py train_dataset=<name>
+#
+# To evaluate on a held-out dataset (not the training dataset):
+#   Create configs/train_confs/eval_dataset/<name>.yaml as a standalone config.
+#   Then override at runtime: python3 evaluate.py eval_dataset=<name> +ckpt=<path>
+#
+# ───────────────────────────────────────────────────────────────────────────────
+
+defaults:
+  - train_dataset: random_instwise_manlabel_2026_02_11_14_02_80_10_10
+  - eval_dataset: mirror_train
+  - model: obj_conditioned_cross_attn
+  - model/cross_attn_pooler: mask_downsample_soft
+  - registry_info: registry_default
+  - trainer: default
+  - _self_
+
+model_output_root_dir: "/workspace/data/output/training_outputs/"

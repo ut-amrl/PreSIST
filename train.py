@@ -52,7 +52,7 @@ def train(
 
     if resumeFromCheckpoint is not None:
         print(f"Resuming training from checkpoint: {resumeFromCheckpoint}")
-        trainer.load_checkpoint(resumeFromCheckpoint)
+        trainer.resume_from_checkpoint(resumeFromCheckpoint)
 
     trainer.train()
 
@@ -109,17 +109,17 @@ def createDataloaders(distillationDatasetConfig: DistillationDatasetConfig, regi
 
 def loadModelAndBackpropStuff(cfg: DictConfig) -> nn.Module:
     model = hydra.utils.instantiate(cfg.model)
-    loss_fn = hydra.utils.instantiate(cfg.loss_function)
+    loss_fn = hydra.utils.instantiate(cfg.trainer.loss_function)
 
     optimizer = hydra.utils.instantiate(
-        cfg.optimizer,
+        cfg.trainer.optimizer,
         params=model.parameters(),
         _convert_="all",   # Avoid ListConfig objects in optimizer params, convert to plain list/dict
     )
-    lr_scheduler = hydra.utils.instantiate(cfg.lr_scheduler, optimizer=optimizer)
+    lr_scheduler = hydra.utils.instantiate(cfg.trainer.lr_scheduler, optimizer=optimizer)
 
     # Move necessary stuff to device
-    device = torch.device(cfg.train.device if cfg.train.device else ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device(cfg.trainer.loop.device if cfg.trainer.loop.device else ("cuda" if torch.cuda.is_available() else "cpu"))
     model.to(device)
     loss_fn.to(device)
     return model, loss_fn, optimizer, lr_scheduler, device
@@ -131,49 +131,50 @@ def createValidator(validationConfig: ValConfig, loss_fn: nn.Module, device: tor
 
 
 # Use hydra config to load in relevant configuration
-@hydra.main(version_base=None, config_path="configs/train_confs", config_name="train_config.yaml")
+@hydra.main(version_base=None, config_path="configs/train_confs", config_name="config.yaml")
 def main(cfg: DictConfig):
 
     # Access Hydra's own config
     hydra_cfg = HydraConfig.get()
 
-    # This is the name of the top-level config (e.g. "train_config")
-    # config_name = hydra_cfg.job.config_name      # or hydra_cfg.job.name
-    config_name = cfg.config_name if "config_name" in cfg else hydra_cfg.job.config_name
+    # The config filename (e.g. "cross_attn_random_instwise_manlabel_...") is used as the wandb run name
+    config_name = hydra_cfg.job.config_name
 
-    # Output directory from config
-    # Append timestamp to output directory to avoid overwriting previous runs
     date_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    output_dir = os.path.join(cfg.model_output_root_dir, config_name, date_time)
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Read the training config from the hydra config and convert it to our TrainerConfig dataclass
-    trainer_config = hydra.utils.instantiate(cfg.train)
+    # Instantiate the training loop config (TrainerConfig) from the nested loop sub-config
+    trainer_config = hydra.utils.instantiate(cfg.trainer.loop)
 
     registryConfig = hydra.utils.instantiate(cfg.registry_info)
 
-    datasetConfig = hydra.utils.instantiate(cfg.dataset)
-
-
+    datasetConfig = hydra.utils.instantiate(cfg.train_dataset)
 
     print("Creating dataloaders...")
-    # trainLoader, valLoader = createDataloaders(cfg.dataset, trainer_config)
     trainLoader, valLoader = createDataloaders(datasetConfig, registryConfig, trainer_config)
 
     print("Creating model, loss function, optimizer, and lr scheduler...")
     model, loss_fn, optimizer, lr_scheduler, device = loadModelAndBackpropStuff(cfg)
 
-
-    # Check to see if there's a checkpoint to resume from, and if so, load it
+    # Determine output directory. When resuming, reuse the original run's directory so
+    # checkpoints, logs, and metrics stay together. Checkpoint path: <run_dir>/checkpoints/<file>.pth
+    # Fresh runs: <model_output_root_dir>/<train_dataset.name>/<model.model_name>/<timestamp>/
     resumeFromCheckpoint = None
-    # This would be at the top level and have the name resume_ckpt
     if "resume_ckpt" in cfg and cfg.resume_ckpt is not None:
         resumeFromCheckpoint = cfg.resume_ckpt
-        print(f"Found checkpoint to resume from: {resumeFromCheckpoint}")
+        output_dir = str(os.path.dirname(os.path.dirname(resumeFromCheckpoint)))
+        print(f"Resuming from checkpoint: {resumeFromCheckpoint}")
+        print(f"Reusing original output directory: {output_dir}")
     else:
+        output_dir = os.path.join(
+            cfg.model_output_root_dir,
+            cfg.train_dataset.name,
+            model.model_name,
+            cfg.trainer.name,
+            date_time,
+        )
         print("No checkpoint specified to resume from. Starting fresh training run.")
+
+    os.makedirs(output_dir, exist_ok=True)
 
     val_config = trainer_config.validationConfig
 
@@ -193,7 +194,7 @@ def main(cfg: DictConfig):
         wandb.init(
             entity=trainer_config.wandb_entity,
             project=trainer_config.wandb_project,
-            name=f"{config_name}",
+            name=f"{cfg.train_dataset.name}__{model.model_name}__{cfg.trainer.name}",
             config={**cfg},
         )
 

@@ -13,20 +13,22 @@ set -euo pipefail
 # ---- Networking ----
 # PORT=9009
 # PORT=9010
-PORT=9017
+# PORT=9017
+PORT=9011
 # PORT=9008
 HOST="0.0.0.0"
 
 # ---- Model selection (HF repo or local path) ----
 # MODEL="Qwen/Qwen3-30B-A3B-Instruct-2507"
 # MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507"
+# MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507-FP8"
 # MODEL="Qwen/Qwen3-VL-8B-Instruct"
-# MODEL="Qwen/Qwen3-VL-8B-Thinking"
+MODEL="Qwen/Qwen3-VL-8B-Thinking"
 # MODEL="Qwen/Qwen3-235B-A22B-Instruct-2507"
 # MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
 # MODEL="Qwen/Qwen3-VL-30B-A3B-Thinking"
 # MODEL="Qwen/Qwen3.5-122B-A10B"
-MODEL="Qwen/Qwen3-Next-80B-A3B-Thinking"
+# MODEL="Qwen/Qwen3-Next-80B-A3B-Thinking-FP8"
 
 
 # ---- Engine/runtime params (fixed at server start) ----
@@ -35,6 +37,13 @@ MODEL="Qwen/Qwen3-Next-80B-A3B-Thinking"
 TENSOR_PARALLEL_SIZE=""           # leave empty to auto = number of GPUs passed
 KV_CACHE_FREE_GPU_MEM_FRACTION="0.90"   # analogous to vLLM's --gpu-memory-utilization
 MAX_SEQ_LEN="32768"
+# MAX_SEQ_LEN="16384"
+# MAX_SEQ_LEN="8192"
+# MAX_NUM_TOKENS controls the initial KV cache estimation buffer size (proportional to memory
+# needed at startup). Decoupled from MAX_SEQ_LEN so you can keep a large context window
+# without requiring proportionally more GPU memory just to start the server.
+# For single-request research workloads, 4096 is sufficient.
+# MAX_NUM_TOKENS="4096"             # leave empty to use MAX_SEQ_LEN (original behavior)
 MAX_BATCH_SIZE=""                 # leave empty to use model default
 
 # ---- Container image ----
@@ -176,6 +185,7 @@ fi
 
 # Auto-select backend:
 #   - VLMs require pytorch (C++ backend has no multimodal support)
+#   - Qwen3-Next requires pytorch (hybrid Mamba architecture)
 #   - MoE models (a3b, a10b, a22b, moe in name) require pytorch; the C++
 #     backend uses AutoConfig.from_pretrained which fails on architectures
 #     that post-date the container's bundled transformers (e.g. qwen3_moe)
@@ -185,6 +195,9 @@ MODEL_LC="$(echo "$MODEL" | tr '[:upper:]' '[:lower:]')"
 if [[ "$MODEL_LC" == *"-vl"* || "$MODEL_LC" == *"vision"* || "$MODEL_LC" == *"vlm"* ]]; then
   BACKEND="pytorch"
   BACKEND_DISPLAY="pytorch (VLM auto-detected)"
+elif [[ "$MODEL_LC" == *"qwen3-next"* ]]; then
+  BACKEND="pytorch"
+  BACKEND_DISPLAY="pytorch (Qwen3-Next auto-detected)"
 elif [[ "$MODEL_LC" =~ -a[0-9]+b || "$MODEL_LC" == *"moe"* ]]; then
   BACKEND="pytorch"
   BACKEND_DISPLAY="pytorch (MoE auto-detected)"
@@ -240,7 +253,7 @@ TRTLLM_ARGS=(
   --tp_size "$TENSOR_PARALLEL_SIZE"
   --kv_cache_free_gpu_memory_fraction "$KV_CACHE_FREE_GPU_MEM_FRACTION"
   --max_seq_len "$MAX_SEQ_LEN"
-  --max_num_tokens "$MAX_SEQ_LEN"
+  --max_num_tokens "${MAX_NUM_TOKENS:-$MAX_SEQ_LEN}"
   --trust_remote_code
 )
 
@@ -254,6 +267,34 @@ fi
 
 if [ -n "$REASONING_PARSER" ]; then
   TRTLLM_ARGS+=( --reasoning_parser "$REASONING_PARSER" )
+fi
+
+############################################
+# ========== EXTRA TRT-LLM YAML CONFIG =====
+############################################
+
+# Some architectures require overrides that have no trtllm-serve CLI flags.
+# We write a YAML config to a host tempfile, mount it read-only into the
+# container, and pass it via --config.
+EXTRA_CONFIG_FILE=""
+CONTAINER_CONFIG_FILE=""
+NEEDS_CONFIG=0
+
+# Qwen3-Next: hybrid Mamba model — block reuse must be disabled or the
+#   kv_cache_manager asserts on startup.
+# Qwen3-VL: multimodal serving is also incompatible with KV cache block reuse.
+if [[ "$MODEL_LC" == *"qwen3-next"* || "$MODEL_LC" == *"-vl"* || "$MODEL_LC" == *"vision"* || "$MODEL_LC" == *"vlm"* ]]; then
+  NEEDS_CONFIG=1
+fi
+
+if [[ "$NEEDS_CONFIG" -eq 1 ]]; then
+  EXTRA_CONFIG_FILE="$(mktemp /tmp/trtllm-config.XXXXXX.yaml)"
+  CONTAINER_CONFIG_FILE="/tmp/$(basename "$EXTRA_CONFIG_FILE")"
+  cat > "$EXTRA_CONFIG_FILE" <<EOF
+kv_cache_config:
+  enable_block_reuse: false
+EOF
+  TRTLLM_ARGS+=( --config "$CONTAINER_CONFIG_FILE" )
 fi
 
 # Common docker flags (same regardless of entrypoint strategy)
@@ -286,6 +327,9 @@ DOCKER_FLAGS=(
 )
 if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then
   DOCKER_FLAGS+=( -e HUGGING_FACE_HUB_TOKEN="$HUGGING_FACE_HUB_TOKEN" )
+fi
+if [ -n "$EXTRA_CONFIG_FILE" ]; then
+  DOCKER_FLAGS+=( -v "${EXTRA_CONFIG_FILE}:${CONTAINER_CONFIG_FILE}:ro" )
 fi
 
 # Start container

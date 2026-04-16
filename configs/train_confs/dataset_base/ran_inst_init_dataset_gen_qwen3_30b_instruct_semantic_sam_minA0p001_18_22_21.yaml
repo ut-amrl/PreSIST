@@ -1,0 +1,9 @@
+name: ran_inst_init_dataset_gen_qwen3_30b_instruct_semantic_sam_minA0p001_18_22_21
+_target_: training.dataset.distillation_dataset.DistillationDatasetConfig
+input_root_dir: /workspace/data/input/
+output_root_dir: /workspace/data/output/
+segmentation_config_name: semanticsam_granularity3_minArea0p001
+full_results_config_name: init_dataset_gen_qwen3_30b_instruct_semantic_sam_minArea0p001
+split_id_kind: relpath
+split_granularity: image_instance
+split_json: splits/ran_inst_init_dataset_gen_qwen3_30b_instruct_semantic_sam_minA0p001_18_22_21.json

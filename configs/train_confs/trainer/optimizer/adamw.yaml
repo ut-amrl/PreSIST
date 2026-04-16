@@ -1,7 +1,7 @@
 # AdamW: good default for DINOv2/ViT fine-tuning
 _target_: torch.optim.AdamW
 
-# pass model params at instantiation time, e.g. optimizer = instantiate(cfg.optim, params=model.parameters())
+# pass model params at instantiation time, e.g. optimizer = instantiate(cfg.trainer.optimizer, params=model.parameters())
 lr: 1e-4
 betas: [0.9, 0.999]
 eps: 1e-8

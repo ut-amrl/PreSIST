@@ -185,6 +185,8 @@ class DistillationDatasetConfig:
     segmentation_config_name: str # TODO save this in the full results top level directory and then read it dynamically so theres no chance of mismatch
     full_results_config_name: str
 
+    name: str = "unknown"
+
     # Splits contain relpaths or image_ids
     split_id_kind: SplitIdKind = "relpath"
 

@@ -122,6 +122,7 @@ def _as_float(v: Any) -> float:
 # ----------------------------
 @dataclass
 class TrainerConfig:
+    name: str = "default"
     max_epochs: int = 100
 
     # Batch print frequency (stdout only; no W&B logging here)
@@ -394,9 +395,9 @@ class Trainer:
         self.epochs_since_improve = meta.epochs_since_improve
         self.global_step = meta.global_step
 
-        next_epoch = meta.epoch + 1
-        print(f"[CKPT] Resumed: {ckpt_path} (epoch={meta.epoch}) -> next_epoch={next_epoch}")
-        return next_epoch
+        self.start_epoch = meta.epoch + 1
+        print(f"[CKPT] Resumed: {ckpt_path} (epoch={meta.epoch}) -> next_epoch={self.start_epoch}")
+        return self.start_epoch
 
 
 
@@ -437,7 +438,10 @@ class Trainer:
             self.save_checkpoint(epoch=0, filename="ckpt_epoch_0_pretrain.pth")
 
 
-        for epoch in range(self.start_epoch, self.cfg.max_epochs):
+        # Epoch 0 is pretrain-only (saved above). Training epochs start at 1.
+        # When resuming, start_epoch is already the correct next epoch (never 0).
+        loop_start = max(self.start_epoch, 1)
+        for epoch in range(loop_start, self.cfg.max_epochs + 1):
             train_loss_avg, train_loss_dict_avgs = self._train_one_epoch(epoch)
 
             # Epoch-based train logging (step=epoch)
