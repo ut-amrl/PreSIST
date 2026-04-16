@@ -13,8 +13,8 @@ set -euo pipefail
 #
 # Two Apptainer SIFs are required (unlike the vLLM variant which uses one):
 #   TRTLLM_IMAGE    - TRT-LLM Tritonserver SIF. Pull once with:
-#                       apptainer pull docker://nvcr.io/nvidia/tritonserver:25.07-trtllm-python-py3
-#                     This creates tritonserver_25.07-trtllm-python-py3.sif in the current dir.
+#                       apptainer pull docker://nvcr.io/nvidia/tritonserver:26.03-trtllm-python-py3
+#                     This creates tritonserver_26.03-trtllm-python-py3.sif in the current dir.
 #   APPTAINER_IMAGE - SPF project SIF (same as the vLLM variant).
 #
 # Where code and data live (mirrors docker_start_spf.sh volumes):
@@ -33,7 +33,7 @@ set -euo pipefail
 # Example usage:
 #
 #   cd $WORK/semantic-persistence-filter
-#   export TRTLLM_IMAGE=$SCRATCH/tritonserver_25.07-trtllm-python-py3.sif
+#   export TRTLLM_IMAGE=$SCRATCH/tritonserver_26.03-trtllm-python-py3.sif
 #   export APPTAINER_IMAGE=$SCRATCH/spf.sif
 #   export PROJECT_ROOT=$WORK/semantic-persistence-filter
 #   export HF_CACHE=$SCRATCH/hf_cache
@@ -59,7 +59,7 @@ fi
 
 if [[ -z "${TRTLLM_IMAGE:-}" ]]; then
   echo "ERROR: TRTLLM_IMAGE is not set."
-  echo "       apptainer pull docker://nvcr.io/nvidia/tritonserver:25.07-trtllm-python-py3"
+  echo "       apptainer pull docker://nvcr.io/nvidia/tritonserver:26.03-trtllm-python-py3"
   exit 1
 fi
 if [[ ! -f "${TRTLLM_IMAGE}" ]]; then
@@ -112,6 +112,7 @@ echo "TRTLLM_MODEL:         ${TRTLLM_MODEL}"
 echo "TRTLLM_PORT:          ${TRTLLM_PORT}"
 echo "TP_SIZE:              ${TENSOR_PARALLEL_SIZE}"
 echo "BACKEND:              ${TRTLLM_BACKEND:-<default (cpp)>}"
+echo "REASONING_PARSER:     ${TRTLLM_REASONING_PARSER:-<none>}"
 echo "=========================================="
 
 trap cleanup_trtllm EXIT

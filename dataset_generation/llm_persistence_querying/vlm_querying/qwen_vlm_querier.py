@@ -14,7 +14,7 @@ import io
 import os
 from typing import Any, Dict, List, Optional, Type, Union
 
-from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import derive_served_model_name, resolve_torch_dtype
+from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import derive_served_model_name, resolve_served_model_name, resolve_torch_dtype
 import torch
 from PIL import Image
 from transformers import AutoProcessor, AutoTokenizer
@@ -161,7 +161,7 @@ class QwenVLMQuerier(AbsVLMQuerier):
         self.qwen_family = _infer_qwen_family(self.model_name)
         self.vllm_client = None
         self.vllm_base_url = ""
-
+        self._name_resolved = False
 
         print("Using QwenVLMQuerier with use_vllm_server =", self.use_vllm_server)
 
@@ -202,6 +202,14 @@ class QwenVLMQuerier(AbsVLMQuerier):
         """Send images + text to vLLM via OpenAI chat completions (content: image_url + text)."""
         assert self.vllm_client is not None
         assert self.vllm_served_model_name is not None
+        if not self._name_resolved:
+            self.vllm_served_model_name = resolve_served_model_name(
+                self.vllm_client,
+                model_name=self.model_name,
+                derived_name=self.vllm_served_model_name,
+                base_url=self.vllm_base_url,
+            )
+            self._name_resolved = True
         content: List[Dict[str, Any]] = []
         for im in images:
             content.append({

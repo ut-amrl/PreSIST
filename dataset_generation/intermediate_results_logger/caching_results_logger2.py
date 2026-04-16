@@ -153,6 +153,7 @@ class CachingResultsLoggerRevised:
 
         # If the segmentation results already exist, and forceRegen is False, load and return them
         if not self.forceRegen and os.path.exists(segmentationResultsFilePath):
+        # if False:
             # print("Retrieving cached segmentation results from: ", segmentationResultsFilePath)
 
             # Load existing segmentation results
@@ -166,6 +167,8 @@ class CachingResultsLoggerRevised:
                 print("Error message: ", str(e))
                 print("Will attempt to recompute segmentation results.")
 
+        # Throw an error (just for now -- only want to process cached data)
+        # raise ValueError("Segmentation results not found and forceRegen is False.")
         # Otherwise, compute segmentation results
         with timer.time_block(self.segmenterTimerName):
             segmentationResults = segmentationLambda()
@@ -177,7 +180,7 @@ class CachingResultsLoggerRevised:
         if (self.saveDebugImages):
             saveMasksOnImages(
                 segmentationResults.masks,
-                self.image,
+                self.image.get(),
                 segmentationResultsDir)
 
         # Save segmentation results to file

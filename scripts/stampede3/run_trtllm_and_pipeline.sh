@@ -6,7 +6,7 @@
 #
 # Two images are required (unlike the vLLM variant which uses one):
 #   TRTLLM_IMAGE  - Apptainer SIF of the TRT-LLM Tritonserver container
-#                   Build with: apptainer pull docker://nvcr.io/nvidia/tritonserver:25.07-trtllm-python-py3
+#                   Build with: apptainer pull docker://nvcr.io/nvidia/tritonserver:26.03-trtllm-python-py3
 #   APPTAINER_IMAGE - Apptainer SIF of the SPF project container (same as vLLM variant)
 #
 # Where code and data live (mirrors docker_start_spf.sh volumes):
@@ -18,7 +18,7 @@
 # Optional env: SPF_DATA, HF_CACHE, CONFIG_NAME, IMAGE_DATASET, TRTLLM_*, RUN_LOG_DIR, PIPELINE_EXTRA_ARGS.
 #
 # Example (idev, after allocation):
-#   export TRTLLM_IMAGE=$SCRATCH/tritonserver_25.07-trtllm-python-py3.sif
+#   export TRTLLM_IMAGE=$SCRATCH/tritonserver_26.03-trtllm-python-py3.sif
 #   export APPTAINER_IMAGE=$SCRATCH/spf.sif
 #   export PROJECT_ROOT=$WORK/semantic-persistence-filter
 #   export SPF_DATA=$SCRATCH/data/semantic-persistence-filter
@@ -65,6 +65,16 @@ else
   TRTLLM_BACKEND=""
 fi
 
+# Auto-select reasoning parser:
+#   Qwen3/Qwen3.5 thinking models use <think>...</think> tags, same format as
+#   DeepSeek-R1, so deepseek-r1 is the correct parser for both.
+#   Only enabled for *thinking* variants; instruct models don't emit reasoning tags.
+if [[ "${TRTLLM_MODEL_LC}" == *"thinking"* ]]; then
+  TRTLLM_REASONING_PARSER="deepseek-r1"
+else
+  TRTLLM_REASONING_PARSER=""
+fi
+
 CONTAINER_BIND="-B ${PROJECT_ROOT}:/workspace/code/semantic-persistence-filter -B ${HF_CACHE}:/opt/hf"
 [[ -n "${SPF_DATA:-}" ]] && [[ -d "${SPF_DATA}" ]] && CONTAINER_BIND="${CONTAINER_BIND} -B ${SPF_DATA}:/workspace/data"
 CONTAINER_PWD="/workspace/code/semantic-persistence-filter"
@@ -79,7 +89,7 @@ trtllm_pid=""
 start_trtllm_background() {
   if [[ -z "${TRTLLM_IMAGE:-}" ]] || [[ ! -f "${TRTLLM_IMAGE}" ]]; then
     echo "ERROR: TRTLLM_IMAGE must be set and point to an existing SIF." >&2
-    echo "       Build with: apptainer pull docker://nvcr.io/nvidia/tritonserver:25.07-trtllm-python-py3" >&2
+    echo "       Build with: apptainer pull docker://nvcr.io/nvidia/tritonserver:26.03-trtllm-python-py3" >&2
     return 1
   fi
 
@@ -90,31 +100,41 @@ start_trtllm_background() {
     --tp_size ${TENSOR_PARALLEL_SIZE} \
     --kv_cache_free_gpu_memory_fraction ${KV_CACHE_FREE_GPU_MEM_FRACTION} \
     --max_seq_len ${MAX_SEQ_LEN} \
+    --max_num_tokens ${MAX_SEQ_LEN} \
     --trust_remote_code"
 
   if [[ -n "${TRTLLM_BACKEND}" ]]; then
     serve_args="${serve_args} --backend ${TRTLLM_BACKEND}"
   fi
 
+  if [[ -n "${TRTLLM_REASONING_PARSER}" ]]; then
+    serve_args="${serve_args} --reasoning_parser ${TRTLLM_REASONING_PARSER}"
+  fi
+
+  # The 26.03 image ships openai 1.x but TRT-LLM 1.2.0 requires openai 2.x
+  # (imports PartReasoningText). Upgrade at startup before launching the server.
+  local startup_cmd="pip install -q --upgrade openai && trtllm-serve ${serve_args}"
+
   echo "Launching TRT-LLM server..."
-  echo "  Model:           ${TRTLLM_MODEL}"
-  echo "  Port:            ${TRTLLM_PORT}"
-  echo "  TP size:         ${TENSOR_PARALLEL_SIZE}"
-  echo "  Backend:         ${TRTLLM_BACKEND:-<default (cpp)>}"
-  echo "  KV cache mem:    ${KV_CACHE_FREE_GPU_MEM_FRACTION}"
-  echo "  Max seq len:     ${MAX_SEQ_LEN}"
+  echo "  Model:            ${TRTLLM_MODEL}"
+  echo "  Port:             ${TRTLLM_PORT}"
+  echo "  TP size:          ${TENSOR_PARALLEL_SIZE}"
+  echo "  Backend:          ${TRTLLM_BACKEND:-<default (cpp)>}"
+  echo "  Reasoning parser: ${TRTLLM_REASONING_PARSER:-<none>}"
+  echo "  KV cache mem:     ${KV_CACHE_FREE_GPU_MEM_FRACTION}"
+  echo "  Max seq len:      ${MAX_SEQ_LEN}"
 
   if [[ -n "${RUN_LOG_DIR:-}" ]]; then
     apptainer exec --nv \
       -B "${HF_CACHE}:/root/.cache/huggingface" \
       "${TRTLLM_IMAGE}" \
-      bash -lc "trtllm-serve ${serve_args}" \
+      bash -lc "${startup_cmd}" \
       > "${RUN_LOG_DIR}/trtllm.log" 2>&1 &
   else
     apptainer exec --nv \
       -B "${HF_CACHE}:/root/.cache/huggingface" \
       "${TRTLLM_IMAGE}" \
-      bash -lc "trtllm-serve ${serve_args}" &
+      bash -lc "${startup_cmd}" &
   fi
   trtllm_pid=$!
 }
@@ -184,7 +204,7 @@ cleanup_trtllm() {
 main() {
   if [[ -z "${TRTLLM_IMAGE:-}" ]] || [[ ! -f "${TRTLLM_IMAGE}" ]]; then
     echo "ERROR: Set TRTLLM_IMAGE to your TRT-LLM SIF path." >&2
-    echo "       apptainer pull docker://nvcr.io/nvidia/tritonserver:25.07-trtllm-python-py3" >&2
+    echo "       apptainer pull docker://nvcr.io/nvidia/tritonserver:26.03-trtllm-python-py3" >&2
     exit 1
   fi
   if [[ -z "${APPTAINER_IMAGE:-}" ]] || [[ ! -f "${APPTAINER_IMAGE}" ]]; then

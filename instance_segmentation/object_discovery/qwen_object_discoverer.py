@@ -8,7 +8,7 @@ import re
 import torch
 from PIL import Image
 
-from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import derive_served_model_name, resolve_torch_dtype
+from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import derive_served_model_name, resolve_served_model_name, resolve_torch_dtype
 from instance_segmentation.object_discovery.abs_object_discoverer import AbsObjectDiscoverer
 
 from transformers import AutoProcessor, AutoTokenizer
@@ -252,11 +252,18 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
         if self.use_vllm_server:
             self.vllm_served_model_name = derive_served_model_name(self.model_name, torch_dtype)
             base_url = f"{vllm_url_root}:{vllm_port}{vllm_url_suffix}".rstrip("/")
+            self.vllm_base_url = base_url
             from openai import OpenAI
             self.vllm_client = OpenAI(
                 base_url=base_url,
                 api_key=vllm_api_key,
                 timeout=vllm_request_timeout_s,
+            )
+            self.vllm_served_model_name = resolve_served_model_name(
+                self.vllm_client,
+                model_name=self.model_name,
+                derived_name=self.vllm_served_model_name,
+                base_url=self.vllm_base_url,
             )
         else:
             self.processor = AutoProcessor.from_pretrained(self.model_name)
@@ -292,10 +299,15 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
         inject_no_think: bool = False,
     ):
         """
-        Send a request to the vLLM server.
+        Send a request to the vLLM/TRT-LLM server.
 
         inject_no_think:
             Prepends '/no_think' to the first text chunk of the user message.
+
+        Note: enable_thinking and inject_no_think are vLLM-specific features.
+        TRT-LLM ignores the chat_template_kwargs extra_body field, so thinking
+        suppression will not take effect on TRT-LLM — the retry still fires on
+        length truncation, but thinking may not be disabled.
         """
         extra_body = None
 

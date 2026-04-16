@@ -132,6 +132,7 @@ def preprocess_and_build_dataloader(
             id_computer=id_computer,
             strict=strict,
             compute_missing_ids=False,  # important: avoid DB writes in workers
+            lazy_image_loading=True,  # skip disk read; image loaded on demand after cache check
         )
 
         loader = DataLoader(

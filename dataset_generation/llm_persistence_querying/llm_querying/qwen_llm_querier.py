@@ -12,7 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from dataset_generation.llm_persistence_querying.llm_querying.abs_llm_querier import AbsLLMQuerier
 import os
 
-from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import derive_served_model_name, resolve_torch_dtype
+from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import derive_served_model_name, resolve_served_model_name, resolve_torch_dtype
 
 # def _derive_served_model_name(model_name, torch_dtype, quantization=False):
 
@@ -231,31 +231,12 @@ class QwenLLMQuerier(AbsLLMQuerier):
         raise RuntimeError(f"Could not load model {model_name!r}. Tried attn implementations: {tried}") from last_exc
 
     def _resolve_served_model_name(self) -> None:
-        """Check the server's model list and fix up vllm_served_model_name.
-
-        vLLM serves models under a derived name (e.g. "qwen3-30b__bfloat16");
-        TRT-LLM uses the raw HF path (e.g. "Qwen/Qwen3-30B-A3B-Thinking-2507").
-        This queries /v1/models at init time and falls back to the HF name if
-        the derived name isn't advertised.
-        """
         assert self.vllm_client is not None
-        ids = [m.id for m in self.vllm_client.models.list().data]
-        if self.vllm_served_model_name in ids:
-            print(f"Server model resolved: {self.vllm_served_model_name!r}")
-            return
-        if self.model_name in ids:
-            print(
-                f"Derived name {self.vllm_served_model_name!r} not found on server; "
-                f"falling back to HF model name {self.model_name!r}"
-            )
-            self.vllm_served_model_name = self.model_name
-            return
-        raise RuntimeError(
-            f"Could not resolve a served model name.\n"
-            f"Tried derived name: {self.vllm_served_model_name!r}\n"
-            f"Tried HF name:      {self.model_name!r}\n"
-            f"Server advertises:  {ids}\n"
-            f"base_url={self.vllm_base_url!r}"
+        self.vllm_served_model_name = resolve_served_model_name(
+            self.vllm_client,
+            model_name=self.model_name,
+            derived_name=self.vllm_served_model_name,
+            base_url=self.vllm_base_url,
         )
 
     def _verify_vllm_server_model(self) -> None:

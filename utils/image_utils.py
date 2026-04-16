@@ -32,6 +32,26 @@ def loadImageAsTensor(filename):
     return image
 
 
+class LazyImage:
+    """Loads an image from disk on first access and caches the result.
+
+    Pass preloaded=<tensor> when the image is already loaded,
+    or leave it None to defer loading until .get() is first called.
+    loader defaults to loadImageForDatasetGeneration if not provided.
+    """
+
+    def __init__(self, path: str, preloaded=None, loader=None):
+        self._path = path
+        self._image = preloaded
+        self._loader = loader
+
+    def get(self):
+        if self._image is None:
+            loader = self._loader or loadImageForDatasetGeneration
+            self._image = loader(self._path)
+        return self._image
+
+
 def loadImageForDatasetGeneration(image_path: str):
     # ---- load image ----
     img_pil = Image.open(image_path).convert("RGB")

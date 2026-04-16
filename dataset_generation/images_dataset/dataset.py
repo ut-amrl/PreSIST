@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 from .hashing import ImageIdComputer
 from .registry import ImageRegistry
 from .resolver import ResolvedItem, resolve_paths
+from utils.image_utils import LazyImage
 
 
 class RegistryBackedImageDataset(Dataset):
@@ -36,6 +37,7 @@ class RegistryBackedImageDataset(Dataset):
         id_computer: Optional[ImageIdComputer] = None,
         strict: bool = True,
         compute_missing_ids: bool = False,  # recommend False when you preprocess
+        lazy_image_loading: bool = False,  # if True, skip image load in __getitem__; "image" will be None
     ):
         self.root = Path(image_root).resolve()
         self.registry_db_path = str(registry_db_path)
@@ -43,6 +45,7 @@ class RegistryBackedImageDataset(Dataset):
         self.id_computer = id_computer or ImageIdComputer()
         self.strict = strict
         self.compute_missing_ids = compute_missing_ids
+        self.lazy_image_loading = lazy_image_loading
 
         # Registry is created lazily in each worker process
         self._registry: Optional[ImageRegistry] = None
@@ -124,8 +127,11 @@ class RegistryBackedImageDataset(Dataset):
         file_size = int(st.st_size)
         mtime_ns = int(st.st_mtime_ns)
 
-        # Load image tensor
-        image = self.image_loader(str(abspath))
+        # Return a LazyImage: deferred when lazy_image_loading=True, preloaded otherwise
+        if self.lazy_image_loading:
+            image = LazyImage(str(abspath), loader=self.image_loader)
+        else:
+            image = LazyImage(str(abspath), preloaded=self.image_loader(str(abspath)), loader=self.image_loader)
 
         registry = self._get_registry()
 

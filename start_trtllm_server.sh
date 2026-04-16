@@ -13,19 +13,21 @@ set -euo pipefail
 # ---- Networking ----
 # PORT=9009
 # PORT=9010
-PORT=9015
+PORT=9017
 # PORT=9008
 HOST="0.0.0.0"
 
 # ---- Model selection (HF repo or local path) ----
 # MODEL="Qwen/Qwen3-30B-A3B-Instruct-2507"
-MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507"
+# MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507"
 # MODEL="Qwen/Qwen3-VL-8B-Instruct"
 # MODEL="Qwen/Qwen3-VL-8B-Thinking"
 # MODEL="Qwen/Qwen3-235B-A22B-Instruct-2507"
 # MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
 # MODEL="Qwen/Qwen3-VL-30B-A3B-Thinking"
 # MODEL="Qwen/Qwen3.5-122B-A10B"
+MODEL="Qwen/Qwen3-Next-80B-A3B-Thinking"
+
 
 # ---- Engine/runtime params (fixed at server start) ----
 # NOTE: trtllm-serve has no --dtype or --quantization CLI flags.
@@ -41,7 +43,7 @@ MAX_BATCH_SIZE=""                 # leave empty to use model default
 #   format: YY.MM-trtllm-python-py3
 # 25.04 does not support Qwen3MoeForCausalLM (model predates that release).
 # 25.07+ adds Qwen3-MoE support. Bump this tag if you hit unknown-architecture errors.
-TRTLLM_IMAGE="nvcr.io/nvidia/tritonserver:25.07-trtllm-python-py3"
+TRTLLM_IMAGE="nvcr.io/nvidia/tritonserver:26.03-trtllm-python-py3"
 
 # HF cache (host)
 HF_CACHE="${HOME}/.cache/huggingface"
@@ -54,7 +56,7 @@ HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-}"
 # with qwen3_moe support already). Only needed for 25.04 (transformers 4.48.3),
 # but upgrading transformers in 25.04 breaks modelopt's Conv1D import, so
 # the real fix for qwen3_moe on 25.04 is simply to use 25.07+ instead.
-PIP_UPGRADE_PACKAGES=""
+PIP_UPGRADE_PACKAGES="openai"
 
 ############################################
 # ========== ARGUMENT PARSING =============
@@ -191,6 +193,18 @@ else
   BACKEND_DISPLAY="<default (cpp)>"
 fi
 
+# Auto-select reasoning parser:
+#   - Qwen3/Qwen3.5 thinking models use <think>...</think> tags, same format
+#     as DeepSeek-R1, so deepseek-r1 is the correct parser for both.
+#   - Only set for *thinking* variants; instruct models don't emit reasoning tags.
+#   - TRT-LLM flag: --reasoning_parser deepseek-r1 (experimental as of 26.03).
+REASONING_PARSER=""
+REASONING_PARSER_DISPLAY="<none>"
+if [[ "$MODEL_LC" == *"thinking"* ]]; then
+  REASONING_PARSER="deepseek-r1"
+  REASONING_PARSER_DISPLAY="deepseek-r1 (thinking model auto-detected)"
+fi
+
 echo "Starting TRT-LLM server container"
 echo "  Instance ID:          $INSTANCE_ID"
 echo "  Container:            $CONTAINER_NAME"
@@ -203,6 +217,7 @@ echo "  Max seq len:          $MAX_SEQ_LEN"
 echo "  Max batch size:       ${MAX_BATCH_SIZE:-<model default>}"
 echo "  KV cache GPU mem:     $KV_CACHE_FREE_GPU_MEM_FRACTION"
 echo "  Backend:              $BACKEND_DISPLAY"
+echo "  Reasoning parser:     $REASONING_PARSER_DISPLAY"
 echo "  Image:                $TRTLLM_IMAGE"
 echo ""
 
@@ -225,6 +240,7 @@ TRTLLM_ARGS=(
   --tp_size "$TENSOR_PARALLEL_SIZE"
   --kv_cache_free_gpu_memory_fraction "$KV_CACHE_FREE_GPU_MEM_FRACTION"
   --max_seq_len "$MAX_SEQ_LEN"
+  --max_num_tokens "$MAX_SEQ_LEN"
   --trust_remote_code
 )
 
@@ -236,22 +252,31 @@ if [ -n "$MAX_BATCH_SIZE" ]; then
   TRTLLM_ARGS+=( --max_batch_size "$MAX_BATCH_SIZE" )
 fi
 
-# Docker GPU flag: restrict container to the requested GPU IDs
-# Formats accepted by --gpus: "device=0", "device=0,1", etc.
-GPU_DEVICE_FLAG="device=${GPU_IDS}"
+if [ -n "$REASONING_PARSER" ]; then
+  TRTLLM_ARGS+=( --reasoning_parser "$REASONING_PARSER" )
+fi
 
 # Common docker flags (same regardless of entrypoint strategy)
 # We use -p (bridge mode) rather than --network host because this environment
 # runs inside a container (devcontainer/cluster), where --network host binds
 # to an outer network namespace unreachable from the shell. -p publishes the
 # port through Docker's proxy so it's always reachable at localhost:PORT.
+#
+# GPU restriction: use --gpus all + CUDA_VISIBLE_DEVICES instead of
+# --gpus "device=...", because combining --gpus device=X (DeviceIDs) with the
+# image's baked-in NVIDIA_VISIBLE_DEVICES=all (Count) causes Docker to raise
+# "cannot set both Count and DeviceIDs on device request", and --runtime=nvidia
+# is not registered on this daemon.
+# --gpus all injects CUDA libraries (Count only, no conflict) while
+# CUDA_VISIBLE_DEVICES restricts which GPUs trtllm-serve actually uses.
 DOCKER_FLAGS=(
   -d
   --name "$CONTAINER_NAME"
   -p "${PORT}:${PORT}"
   --ipc=host
   --shm-size=8g
-  --gpus "$GPU_DEVICE_FLAG"
+  --gpus all
+  -e CUDA_VISIBLE_DEVICES="${GPU_IDS}"
   -e HF_HOME="/root/.cache/huggingface"
   -v "${HF_CACHE}:/root/.cache/huggingface"
   --label "app=trtllm"
