@@ -1,0 +1,49 @@
+You are generating a scene-level caption to help estimate how long objects are likely to remain in their current location.
+
+Write 3-8 sentences. Focus primarily on the processes in the environment that are likely to move, relocate, remove, clean, store, rearrange, alter object's physical state, including moving part of an object like a door or other articulation/separable part.Mention the likely type of place, whether it is indoor or outdoor, the approximate time of day if inferable, and the current and expected activity level.
+
+The main goal is to identify both the current processes and the likely future processes that govern object turnover in this scene.
+
+First describe any process that appears to be happening right now or imminently. These immediate processes often determine the shortest persistence times. Examples include:
+
+* a person reaching for, carrying, pushing, opening, loading, cleaning, eating, or using something
+* a vehicle stopped temporarily at a stoplight, curb, crosswalk, loading zone, or drive-through
+* carts, trays, tools, luggage, or boxes actively being moved or prepared to move
+* doors opening, machinery operating, items being unpacked, stocked, repaired, or removed
+
+For each current process, briefly indicate what objects it affects and whether it is likely to change them within milliseconds-seconds, seconds-minutes, or minutes-hours.
+
+Then describe likely future processes that may move more stable objects later today, daily, weekly, seasonally, or only occasionally. Include processes that happen infrequently, since even stable objects may eventually move because of them.
+
+For each important future process, briefly indicate:
+
+* what kinds of objects it is likely to affect
+* how often it typically occurs
+* the approximate timescale on which it would move objects
+
+Examples of useful future-process reasoning:
+
+* in a bedroom, clothing or bags may move later today during normal use or cleanup, while furniture may remain until a less frequent deep-cleaning, reorganization, or move weeks to months later
+* in an office, papers, mugs, or chairs may change by the next workday, while desks, shelving, or equipment may move only during occasional reconfiguration every few months
+* in a parking lot, cars may leave within hours as part of commuting or shopping cycles, while cones, barriers, or maintenance equipment may remain until the next work shift or project phase
+* in a restaurant, dishes and trays may be cleared within minutes to hours, tables and movable seating may shift during the day, while fixtures or decor change only during periodic cleaning or renovation
+* in a living room, small objects may move during daily use, while furniture may move during occasional cleaning, hosting guests, or seasonal rearrangement
+
+Use the scene type and time of day to infer likely turnover cycles. For example, a commuter parking lot in the morning implies many vehicles will move within hours, a kitchen in the afternoon will likely be occupied in a few hours for cooking dinner, while a kitchen at night likely won't have any processes until the morning.
+
+When discussing persistence, distinguish among broad categories rather than giving a single estimate for everything:
+
+* actively moving or manipulated objects
+* portable objects temporarily set down or awaiting the next process
+* intentionally arranged but movable objects
+* structural or built-in elements
+
+Use approximate persistence ranges only as supporting context:
+
+* actively manipulated, moving, or currently carried: milliseconds-seconds
+* currently carried or in use: seconds-minutes
+* awaiting the next local process: minutes-hours or hours-days
+* affected mainly by periodic reorganization, cleaning, or routine cycles: days-weeks, weeks-months, or months-a couple years, depending on the frequency of the task
+* structural or installed: years or longer
+
+If the relevant process is uncertain, explicitly describe the ambiguity and the different timescales it would imply. For example, a stack of boxes in a room might move within minutes if someone is currently unpacking, remain until later today if awaiting use, or persist for months until the next major reorganization.

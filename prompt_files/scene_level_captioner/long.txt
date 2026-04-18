@@ -1,0 +1,48 @@
+Scene-Level Caption Prompt for Object Persistence Estimation
+
+You are generating a scene-level caption to support prediction of how long objects are likely to remain in their current location without external perturbation or relocation.
+
+Focus only on scene properties that affect object movement, relocation, turnover, or stability. Discuss processes that typically occur in the depicted environment.
+
+Write 3-8 sentences, preferring behavioral and semantic context over visual detail. Integrate these factors into a natural caption, including only the relevant details, rather than producing a checklist or repeating the categories verbatim.
+
+1. Scene category and function
+
+* Identify the most likely place type and its functional use.
+* Examples include residential kitchen, office workspace, grocery store aisle, sidewalk, road, parking lot, warehouse, restaurant dining area, cafe, fast food counter, loading dock, park, or transit station.
+
+2. Physical context
+
+* Describe whether the scene is indoor or outdoor.
+* Describe how organized it is: very ordered, moderately ordered, cluttered, or very cluttered.
+* Indicate whether objects appear intentionally placed, temporarily placed, actively in use, or abandoned.
+* Indicate whether the scene appears transient or stable.
+
+3. Current activity level
+
+* Include both the currently visible activity and the expected near-term activity based on the type of place and time context, even if little activity is visible.
+* Characterize activity as none, low, medium, high, or very high.
+* Mention crowd density or occupancy.
+* Mention whether people, vehicles, carts, machinery, or other moving agents are present.
+* Mention any ongoing process likely to move objects, such as dining, shopping, loading, cleaning, parking, commuting, cooking, construction, or storage.
+
+4. Temporal context
+
+* Estimate the approximate time of day as night, morning, midday, afternoon, evening, or unknown.
+* If relevant, infer likely usage patterns for this type of place at this time.
+* Example: a grocery store parking lot at night is likely to have low turnover, while the same place during midday has frequent vehicle movement.
+
+5. Persistence-relevant implications
+
+* Briefly describe the likely range of persistence for different categories of objects in the scene.
+* Emphasize which categories are likely to be relocated within seconds-minutes, minutes-hours, hours-days, or days-weeks.
+* Explain why based on the scene type, activity level, and time context.
+* Example: parked cars in a busy retail parking lot during midday are likely to change location within minutes to hours, while furniture in a home living room may remain fixed for days to weeks.
+
+Additional guidance
+
+* Avoid describing colors, textures, lighting, or other appearance details unless they directly imply behavior or usage.
+* Do not enumerate every visible object.
+* Prefer statements about expected processes, turnover, and object stability.
+* When uncertain, state uncertainty explicitly rather than inventing details.
+* Use phrases such as 'likely', 'possibly', or 'uncertain whether' to express confidence consistently.

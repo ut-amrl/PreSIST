@@ -1,0 +1,3 @@
+_target_: dataset_generation.images_dataset.preprocess.DatasetSpecConfig
+image_root: /workspace/data/input/
+spec_path: train_dataset_manifests/train_mix_7.txt

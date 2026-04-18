@@ -1,0 +1,13 @@
+Describe the scene, with a focus on attributes and implied prodcesses that impact movement of objects. Consider the following:
+
+1) Environment
+- Place type. Examples include but are not limited to: home kitchen, office, grocery store, street, parking lot, warehouse, restaurant, fast food, etc.
+- Indoor or outdoor.
+- Overall organization (e.g. very ordered, moderately ordered, cluttered, very cluttered).
+- The current level of activity (current motion, how densely populated).
+
+2) Temporal and activity context
+- Approximate time of day (night, morning, midday, afternoon, evening, unknown).
+- Human traffic level (none, low, medium, high, very high), based on visible people or typical usage of this place.
+
+Do not include flower language. Focus description on behavioral and semantic aspects of the scene rather than appearance.

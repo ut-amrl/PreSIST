@@ -193,6 +193,82 @@ DATASET_NAME=train_mix_0 TRTLLM_PORT=9012 ./tacc_run_spf_trtllm_dam_seg_desc.sh
 
 ---
 
+## TRT-LLM + DAM multi-worker variant (48 h, seg + scene caption + object descriptions)
+
+Runs segmentation, scene captioning, and object descriptions across **multiple datasets in parallel**. GPU resources are split between TRT-LLM (VLM server), DAM (object describer), and N pipeline workers — one worker per remaining GPU. Workers round-robin through all requested datasets, so when a dataset finishes the worker immediately picks up the next one.
+
+**Scripts:**
+- `tacc_run_spf_trtllm_dam_seg_cap_desc_multi_48h.slurm` — sbatch wrapper (48 h wall time)
+- `tacc_run_spf_trtllm_dam_seg_cap_desc_multi.sh` — driver
+- `tacc_run_spf_container.sh` — reusable helper (shared with other variants)
+
+**GPU layout** (controlled by `TRTLLM_TP`, default 2):
+
+| `TRTLLM_TP` | TRT-LLM GPUs | DAM GPU | Pipeline workers |
+|-------------|-------------|---------|-----------------|
+| 1 | GPU 0 | GPU 1 | GPUs 2–7 (6 workers) |
+| **2 (default)** | **GPUs 0–1** | **GPU 2** | **GPUs 3–7 (5 workers)** |
+| 4 | GPUs 0–3 | GPU 4 | GPUs 5–7 (3 workers) |
+
+**Key config (override via `export` in the slurm file or inline on `sbatch`):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRTLLM_TP` | `2` | TRT-LLM tensor parallel size (controls GPU split) |
+| `TOTAL_GPUS` | `8` | Total GPUs on the node |
+| `TRTLLM_MODEL` | `Qwen/Qwen3-VL-8B-Thinking` | VLM model to serve |
+| `TRTLLM_PORT` | `9011` | Port for TRT-LLM server |
+| `DAM_PORT` | `9014` | Port for DAM server |
+| `DATASETS` | `train_mix_0` … `train_mix_10` | Space-separated list of image dataset configs to process |
+| `CONFIG_NAME` | `q3_30bt_lang_q3T_pU3_sam3b_maxOb_30_mConf_0p35_mA0p001_dd0p9_capQ38bTlong_v3_iqr_only_behav` | Hydra config name — must use `QwenVLSceneLevelCaptioner` (not dummy); configs with `cap` in the name have this |
+| `WALL_HOURS` | `48` | Wall time in hours — used to compute the hold-allocation sleep |
+
+> **CONFIG_NAME requirement:** the config must have `sceneCaptioner` set to `QwenVLSceneLevelCaptioner` (not the dummy captioner) since scene captioning is enabled. Configs with `cap` in their name (e.g. `capQ38bTlong`, `capQ38bTmid`) already satisfy this. See `configs/dataset_gen_confs/` for available configs.
+
+> **Hold-allocation sleep:** after all datasets finish the script sleeps until 10 minutes before the wall-time limit, keeping the node allocated so you can inspect logs or rerun a failed dataset interactively via `idev`.
+
+### sbatch submission
+
+```bash
+cd $WORK/workspaces/semantic-persistence-filter
+mkdir -p logs/spf
+sbatch tacc_run_spf_trtllm_dam_seg_cap_desc_multi_48h.slurm
+```
+
+To run only a subset of datasets or change TP, uncomment and edit the relevant `export` lines at the top of the slurm file, or pass inline:
+
+```bash
+TRTLLM_TP=1 DATASETS="train_mix_0 train_mix_1" \
+    sbatch tacc_run_spf_trtllm_dam_seg_cap_desc_multi_48h.slurm
+```
+
+### Monitoring
+
+```bash
+# Main job log
+tail -f logs/spf/spf-multi.<jobid>.out
+
+# Server logs
+tail -f logs/spf/trtllm_<jobid>.out
+tail -f logs/spf/dam_<jobid>.out
+
+# Per-worker per-dataset logs (one file per worker × dataset)
+tail -f logs/spf/pipeline_w0_train_mix_0_<jobid>.out
+tail -f logs/spf/pipeline_w1_train_mix_1_<jobid>.out
+# ...
+```
+
+### idev session (interactive testing)
+
+```bash
+idev -p amd-rtx -N 1 -n 1 -t 02:00:00 -A IRI26004
+
+cd $WORK/workspaces/semantic-persistence-filter
+DATASETS="train_mix_0" WALL_HOURS=2 ./tacc_run_spf_trtllm_dam_seg_cap_desc_multi.sh
+```
+
+---
+
 ## Checking job status
 
 ```bash

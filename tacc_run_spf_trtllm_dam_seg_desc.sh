@@ -33,7 +33,7 @@ MAX_SEQ_LEN="${MAX_SEQ_LEN:-32768}"
 
 DAM_PORT="${DAM_PORT:-9014}"
 
-CONFIG_NAME="${CONFIG_NAME:-qwen3_30b_t_lang_q3T_pU3_sam3batch_maxObj_30_minConf_0p35_mA0p001_dedupe0p9_v3_iqr_only}"
+CONFIG_NAME="${CONFIG_NAME:-q3_30bt_lang_q3T_pU3_sam3b_maxOb_30_mConf_0p35_mA0p001_dd0p9_capQ38bTproc2_v3_iqr_only_behav}"
 DATASET_NAME="${DATASET_NAME:-train_mix_0}"
 
 ############################################
