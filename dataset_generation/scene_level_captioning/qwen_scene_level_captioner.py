@@ -82,7 +82,7 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
         self.model = None
 
         if self.use_vllm_server:
-            self.vllm_served_model_name = derive_served_model_name(self.model_name, torch_dtype)
+            self._vllm_derived_model_name = derive_served_model_name(self.model_name, torch_dtype)
             base_url = f"{vllm_url_root}:{vllm_port}{vllm_url_suffix}".rstrip("/")
             self.vllm_base_url = base_url
             from openai import OpenAI
@@ -91,12 +91,7 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
                 api_key=vllm_api_key,
                 timeout=vllm_request_timeout_s,
             )
-            self.vllm_served_model_name = resolve_served_model_name(
-                self.vllm_client,
-                model_name=self.model_name,
-                derived_name=self.vllm_served_model_name,
-                base_url=self.vllm_base_url,
-            )
+            # resolve_served_model_name is deferred to first inference call
         else:
             from transformers import AutoProcessor
             self.processor = AutoProcessor.from_pretrained(self.model_name)
@@ -106,6 +101,15 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
                 model_cls, self.model_name, self.device_map, resolved_dtype
             )
             self.model.eval()
+
+    def _ensure_vllm_resolved(self) -> None:
+        if self.vllm_served_model_name is None:
+            self.vllm_served_model_name = resolve_served_model_name(
+                self.vllm_client,
+                model_name=self.model_name,
+                derived_name=self._vllm_derived_model_name,
+                base_url=self.vllm_base_url,
+            )
 
     def _make_vllm_request(
         self,
@@ -145,6 +149,7 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
         )
 
     def _caption_vllm(self, pil: Image.Image) -> str:
+        self._ensure_vllm_resolved()
         content = [
             {"type": "image_url", "image_url": {"url": _pil_to_data_url_jpeg(pil)}},
             {"type": "text", "text": self.prompt},
