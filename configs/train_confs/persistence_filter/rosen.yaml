@@ -1,0 +1,5 @@
+# @package persistence_filter
+
+_target_: persistence_eval.methods.filters.rosen_filter.RosenPersistenceFilter
+false_detection_prob: 0.05
+missed_detection_prob: 0.1

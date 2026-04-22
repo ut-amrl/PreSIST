@@ -1,0 +1,20 @@
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: dummy
+  - inferencer: learned_model    # /model: and /model/cross_attn_pooler: are composed inside this file
+  - survival_generator: weibull
+  - persistence_filter: rosen
+  - benchmark: persistence_filter
+  - analysis: basic
+  - _self_
+
+mode: run_all    # infer | evaluate | run_all
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  explicit_inference_run_dir: null    # set to reuse a prior inference run
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null    # auto-set to YYYYMMDD_HHMMSS when null

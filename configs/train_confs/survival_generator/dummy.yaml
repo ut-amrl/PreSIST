@@ -1,0 +1,3 @@
+# @package survival_generator
+
+_target_: persistence_eval.methods.dummy.DummySurvivalFunctionGenerator

@@ -1,0 +1,4 @@
+# @package inferencer
+# No model config — DummyInferencer requires no neural network backend.
+
+_target_: persistence_eval.methods.dummy.DummyInferencer

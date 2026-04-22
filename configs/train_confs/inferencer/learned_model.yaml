@@ -1,0 +1,12 @@
+# @package inferencer
+
+defaults:
+  - /model: obj_conditioned_cross_attn
+  - /model/cross_attn_pooler: mask_downsample_soft
+  - _self_
+
+_target_: persistence_eval.methods.inferencers.learned_model.LearnedModelInferencer
+checkpoint_path: ???    # required — override at runtime: +inferencer.checkpoint_path=<path>
+device: ${runtime.device}
+output_param_keys: [t50, t90]
+# model_cfg is passed from cfg.model by BenchmarkOrchestrator.from_cfg()

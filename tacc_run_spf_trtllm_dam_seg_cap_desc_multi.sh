@@ -97,7 +97,7 @@ kv_cache_config:
   enable_block_reuse: false
 EOF
 
-TRTLLM_SERVE_CMD="pip install -q --upgrade openai && trtllm-serve ${TRTLLM_MODEL} \
+TRTLLM_SERVE_CMD="pip install -q --user --upgrade openai && trtllm-serve ${TRTLLM_MODEL} \
   --host 0.0.0.0 \
   --port ${TRTLLM_PORT} \
   --tp_size ${TRTLLM_TP} \

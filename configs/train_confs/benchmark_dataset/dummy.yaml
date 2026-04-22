@@ -1,0 +1,3 @@
+# @package benchmark_dataset
+
+_target_: persistence_eval.datasets.dummy.DummyBackingDataset

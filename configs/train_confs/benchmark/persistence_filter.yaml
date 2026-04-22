@@ -1,0 +1,10 @@
+# @package benchmark
+
+name: persistence_filter
+
+sampler:
+  anchor_strategy: all_positive
+  query_horizons: [1.0, 3.0, 5.0, 10.0, 30.0, 60.0, 300.0]
+  include_prior_history: true
+  max_prior_observations: null
+  require_disappearance_observed: false

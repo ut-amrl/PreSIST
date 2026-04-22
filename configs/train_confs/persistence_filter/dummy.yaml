@@ -1,0 +1,3 @@
+# @package persistence_filter
+
+_target_: persistence_eval.methods.dummy.DummyPersistenceFilter

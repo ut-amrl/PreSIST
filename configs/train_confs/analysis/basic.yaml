@@ -1,0 +1,4 @@
+# @package analysis
+
+_target_: persistence_eval.analysis.reporting.BasicMetricsAnalyzer
+group_by: [method_name, dataset_name, split]
