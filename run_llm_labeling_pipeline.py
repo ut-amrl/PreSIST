@@ -43,6 +43,7 @@ def main(cfg: DictConfig):
         num_workers=cfg.dataloader.num_workers,
         shuffle=cfg.dataloader.shuffle,
         pin_memory=cfg.dataloader.pin_memory,
+        read_only=registryConfig.read_only,
         **ds_kwargs,
     )
 

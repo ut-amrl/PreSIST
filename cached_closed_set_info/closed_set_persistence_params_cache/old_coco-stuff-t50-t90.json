@@ -1,0 +1,242 @@
+{
+  "0": {
+    "params": {
+      "t50": 1.0,
+      "t90": 10.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "2": {
+    "params": {
+      "t50": 5.0,
+      "t90": 24.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "3": {
+    "params": {
+      "t50": 1.5,
+      "t90": 4.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "4": {
+    "params": {
+      "t50": 12.0,
+      "t90": 48.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "5": {
+    "params": {
+      "t50": 0.5,
+      "t90": 2.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "7": {
+    "params": {
+      "t50": 0.5,
+      "t90": 10.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "9": {
+    "params": {
+      "t50": 48.0,
+      "t90": 168.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "10": {
+    "params": {
+      "t50": 50000.0,
+      "t90": 100000.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "11": {
+    "params": {
+      "t50": 300000.0,
+      "t90": 400000.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "13": {
+    "params": {
+      "t50": 87600.0,
+      "t90": 175200.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "16": {
+    "params": {
+      "t50": 0.01,
+      "t90": 0.1
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "18": {
+    "params": {
+      "t50": 0.1,
+      "t90": 0.5
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "20": {
+    "params": {
+      "t50": 0.5,
+      "t90": 2.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "23": {
+    "params": {
+      "t50": 0.5,
+      "t90": 2.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "24": {
+    "params": {
+      "t50": 0.005,
+      "t90": 0.01
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "26": {
+    "params": {
+      "t50": 0.5,
+      "t90": 2.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "28": {
+    "params": {
+      "t50": 0.5,
+      "t90": 12.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "30": {
+    "params": {
+      "t50": 1.0,
+      "t90": 4.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "31": {
+    "params": {
+      "t50": 0.5,
+      "t90": 2.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "33": {
+    "params": {
+      "t50": 24.0,
+      "t90": 72.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "34": {
+    "params": {
+      "t50": 0.5,
+      "t90": 2.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "37": {
+    "params": {
+      "t50": 0.25,
+      "t90": 1.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "38": {
+    "params": {
+      "t50": 0.1,
+      "t90": 0.5
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "40": {
+    "params": {
+      "t50": 1.0,
+      "t90": 5.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "43": {
+    "params": {
+      "t50": 1.0,
+      "t90": 5.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "46": {
+    "params": {
+      "t50": 1.0,
+      "t90": 4.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "47": {
+    "params": {
+      "t50": 0.5,
+      "t90": 12.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "50": {
+    "params": {
+      "t50": 0.5,
+      "t90": 3.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "51": {
+    "params": {
+      "t50": 1.0,
+      "t90": 12.0
+    },
+    "confidence": null,
+    "metadata": {}
+  },
+  "55": {
+    "params": {
+      "t50": 2.0,
+      "t90": 12.0
+    },
+    "confidence": null,
+    "metadata": {}
+  }
+}

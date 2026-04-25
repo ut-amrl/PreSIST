@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 
+import torch
+
 from persistence_eval.core.domain import BinaryObservationEvent
-from persistence_eval.core.protocols import SurvivalFunction
 from persistence_eval.methods.filters.base import AbsPersistenceFilter
+from persistence_eval.methods.survival.base import AbsSurvivalFunction
 
 _NEG_INF = float("-inf")
 
@@ -57,6 +59,10 @@ class RosenPersistenceFilter(AbsPersistenceFilter):
     filter correctly reduces to S(query_time) — observations only alter the
     result if the survival function assigns non-trivial mass to historical
     intervals.
+
+    predict() accepts a batch of query_times as a tensor. The prior-observation
+    loop runs once per episode (independent of query_times), and the final
+    posterior is computed for all query_times in a single tensor operation.
     """
 
     def __init__(self, false_detection_prob: float, missed_detection_prob: float) -> None:
@@ -65,46 +71,39 @@ class RosenPersistenceFilter(AbsPersistenceFilter):
 
     def predict(
         self,
-        survival_fn: SurvivalFunction,
+        survival_fn: AbsSurvivalFunction,
         prior_observations: list[BinaryObservationEvent],
-        query_time: float,
-    ) -> float:
+        query_times: torch.Tensor,
+    ) -> torch.Tensor:
         if not prior_observations:
-            return survival_fn(query_time)
+            return survival_fn(query_times)
 
-        log_p_det_alive = _safe_log(1.0 - self._p_miss)   # log P(detect | alive)
-        log_p_miss_alive = _safe_log(self._p_miss)         # log P(miss   | alive)
-        log_p_det_dead = _safe_log(self._p_false)          # log P(detect | dead)
-        log_p_miss_dead = _safe_log(1.0 - self._p_false)   # log P(miss   | dead)
+        log_p_det_alive = _safe_log(1.0 - self._p_miss)
+        log_p_miss_alive = _safe_log(self._p_miss)
+        log_p_det_dead = _safe_log(self._p_false)
+        log_p_miss_dead = _safe_log(1.0 - self._p_false)
 
         obs = sorted(prior_observations, key=lambda o: o.timestamp)
-
-        # Use the last observation timestamp as the anchor proxy (dt = 0).
-        # All earlier observations have dt < 0, so survival_fn returns 1.0 for
-        # them; the last observation is at dt = 0, also giving S = 1.0.
         anchor_proxy = obs[-1].timestamp
 
-        def log_S(abs_time: float) -> float:
-            s = survival_fn(abs_time - anchor_proxy)
-            return _safe_log(s)
+        def _log_S_scalar(abs_time: float) -> float:
+            dt = torch.tensor(abs_time - anchor_proxy, dtype=query_times.dtype)
+            return survival_fn.log_survival(dt.unsqueeze(0)).item()
 
-        # --- Rosen filter state ---
-        log_likelihood = 0.0       # log p(Y_{1:k} | alive through all obs)
-        log_lower_sum = _NEG_INF   # log L(Y_{1:k}): sum over epochs where feature died
-        last_log_S = _NEG_INF      # log S at previous observation time
+        # --- Rosen filter state (scalars, observation loop runs once per episode) ---
+        log_likelihood = 0.0
+        log_lower_sum = _NEG_INF
+        last_log_S = _NEG_INF
 
         for idx, o in enumerate(obs):
-            cur_log_S = log_S(o.timestamp)
+            cur_log_S = _log_S_scalar(o.timestamp)
             log_obs_alive = log_p_det_alive if o.is_positive else log_p_miss_alive
             log_obs_dead = log_p_det_dead if o.is_positive else log_p_miss_dead
 
             if idx == 0:
-                # Mass of survival prior that has expired before first observation:
-                # log(1 - S(t_1)).  With S(t_1) = 1 this is log(0) = -inf.
                 log_mass_before_first = _logdiff(_safe_log(1.0), cur_log_S)
                 log_lower_sum = log_obs_dead + log_mass_before_first
             else:
-                # Mass in interval (t_{k-1}, t_k]: log(S(t_{k-1}) - S(t_k))
                 log_interval_mass = _logdiff(last_log_S, cur_log_S)
                 log_lower_sum = _logsum(
                     log_lower_sum,
@@ -114,11 +113,9 @@ class RosenPersistenceFilter(AbsPersistenceFilter):
             log_likelihood += log_obs_alive
             last_log_S = cur_log_S
 
-        # Evidence: P(dies after t_N) + sum of P(dies in each past interval)
         log_evidence = _logsum(log_lower_sum, log_likelihood + last_log_S)
 
-        # Posterior at query_time: P(alive at query) ∝ L * S(query_time)
-        log_query_S = _safe_log(survival_fn(query_time))
-        log_posterior = log_likelihood + log_query_S - log_evidence
-
-        return math.exp(log_posterior)
+        # Vectorized final step: one log_survival call for all query_times at once.
+        log_query_S = survival_fn.log_survival(query_times)   # shape (Q,)
+        log_posteriors = log_likelihood + log_query_S - log_evidence
+        return torch.exp(log_posteriors).clamp(0.0, 1.0)

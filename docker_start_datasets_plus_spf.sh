@@ -56,6 +56,7 @@ if [ ! "$(podman ps -a -q -f name="^${TARGET_CONTAINER}$")" ]; then
         -v /scratch/aaadkins/data/semantic-persistence-filter:/workspace/data \
         -v /robodata/aaadkins/Datasets/semPersFilter/trainCandidates/kitti/dataset/:/workspace/data/input/kitti/ \
         -v /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/pklot/pklot:/workspace/data/input/pklot/ \
+        -v /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/new_pklot:/workspace/data/input/new_pklot/ \
         -v /robodata/aaadkins/Datasets/semPersFilter/trainCandidates/epic-kitchens/downloaded/EPIC-KITCHENS/:/workspace/data/input/EPIC-KITCHENS/ \
         -v /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/exmaps/exmaps_dataset/:/workspace/data/input/exmaps/ \
         -v /robodata/aaadkins/Datasets/semPersFilter/trainCandidates/sku110k/SKU110K_fixed/images:/workspace/data/input/sku110k/ \

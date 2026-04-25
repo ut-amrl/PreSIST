@@ -1,0 +1,2 @@
+# @package survival_generator
+_target_: persistence_eval.methods.survival.general_purpose.GeneralPurposeSurvivalFunctionGenerator

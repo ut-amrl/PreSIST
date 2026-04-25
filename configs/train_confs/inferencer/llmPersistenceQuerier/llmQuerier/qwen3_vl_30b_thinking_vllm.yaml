@@ -1,0 +1,14 @@
+# @package inferencer.llmPersistenceQuerier.llmQuerier
+name: lQ_q3VLT
+_target_: dataset_generation.llm_persistence_querying.llm_querying.qwen_llm_querier.QwenLLMQuerier
+model_name: "Qwen/Qwen3-VL-30B-A3B-Thinking"
+use_vllm_server: true
+vllm_url_root: "http://localhost"
+vllm_port: 9013
+vllm_url_suffix: "/v1"
+vllm_api_key: "EMPTY"
+vllm_request_timeout_s: 600.0
+max_new_tokens: 16384
+temperature: 0.2
+top_p: 0.9
+repetition_penalty: 1.05

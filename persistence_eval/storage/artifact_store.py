@@ -14,19 +14,26 @@ class ArtifactStore(ABC):
     def save(self, artifacts: list[InferenceArtifact], run_dir: Path) -> None: ...
 
     @abstractmethod
+    def append(self, artifacts: list[InferenceArtifact], run_dir: Path) -> None: ...
+
+    @abstractmethod
     def load(self, run_dir: Path) -> list[InferenceArtifact]: ...
 
 
 class JsonArtifactStore(ArtifactStore):
-    """
-    Saves/loads InferenceArtifacts as a JSON file.
-    Mirrors the pattern of spf_io/persistence_io.py.
-    """
+    """Saves/loads InferenceArtifacts as a JSON file keyed by (track_id, anchor_time)."""
 
     def save(self, artifacts: list[InferenceArtifact], run_dir: Path) -> None:
         path = run_dir / _ARTIFACTS_FILENAME
         data = [self._serialize(a) for a in artifacts]
         path.write_text(json.dumps(data, indent=2))
+
+    def append(self, artifacts: list[InferenceArtifact], run_dir: Path) -> None:
+        path = run_dir / _ARTIFACTS_FILENAME
+        run_dir.mkdir(parents=True, exist_ok=True)
+        existing: list[dict] = json.loads(path.read_text()) if path.exists() else []
+        existing.extend(self._serialize(a) for a in artifacts)
+        path.write_text(json.dumps(existing, indent=2))
 
     def load(self, run_dir: Path) -> list[InferenceArtifact]:
         path = run_dir / _ARTIFACTS_FILENAME
@@ -36,7 +43,8 @@ class JsonArtifactStore(ArtifactStore):
     @staticmethod
     def _serialize(a: InferenceArtifact) -> dict:
         return {
-            "episode_id": a.episode_id,
+            "track_id": a.track_id,
+            "anchor_time": a.anchor_time,
             "inference_latency_ms": a.inference_latency_ms,
             "estimate": {
                 "params": a.estimate.params,
@@ -49,7 +57,8 @@ class JsonArtifactStore(ArtifactStore):
     def _deserialize(d: dict) -> InferenceArtifact:
         est = d["estimate"]
         return InferenceArtifact(
-            episode_id=d["episode_id"],
+            track_id=d["track_id"],
+            anchor_time=float(d["anchor_time"]),
             inference_latency_ms=float(d["inference_latency_ms"]),
             estimate=PersistenceParameterEstimate(
                 params={k: float(v) for k, v in est["params"].items()},

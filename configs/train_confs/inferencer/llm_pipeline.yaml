@@ -1,0 +1,72 @@
+# @package inferencer
+#
+# LLMPipelineInferencer: runs the dataset-generation pipeline at inference time
+# (scene captioning → object description → VLM querying) using the anchor mask
+# directly, with no segmentation step.
+#
+# Defaults below match the VLM-based dataset-generation configs.
+# Override any field at runtime, e.g.:
+#   inferencer=llm_pipeline
+#   ++inferencer.llmPersistenceQuerier.llmQuerier.model_name=Qwen/Qwen3-VL-30B-A3B-Thinking
+
+_target_: persistence_eval.methods.inferencers.llm_pipeline.LLMPipelineInferencer
+
+# Keys to extract from the querier's parsed JSON into PersistenceParameterEstimate.params.
+# Set to null to keep all numeric keys.
+param_keys: [t50, t90]
+
+sceneCaptioner:
+  _target_: dataset_generation.scene_level_captioning.qwen_scene_level_captioner.QwenVLSceneLevelCaptioner
+  name: qwen_vl_vllm_default
+  model_name: "Qwen/Qwen3-VL-8B-Thinking"
+  use_vllm_server: true
+  vllm_url_root: "http://localhost"
+  vllm_port: 9011
+  vllm_url_suffix: "/v1"
+  vllm_api_key: "EMPTY"
+  vllm_request_timeout_s: 240.0
+  prompt_file: "prompt_files/scene_level_captioner/detailed_scene_prompt.txt"
+  max_new_tokens: 512
+
+objectDescriber:
+  _target_: dataset_generation.instance_descriptions.describe_anything_object_describer.DescribeAnythingObjectDescriber
+  model_path: "nvidia/DAM-3B"
+  prompt_file: "prompt_files/instance_describer/detailed_description_prompt.txt"
+  conv_mode: "v1"
+  prompt_mode: "focal_prompt"
+  temperature: 0.2
+  max_new_tokens: 512
+  name: dam_3b
+
+# VLM-based querier (one VLM call per object, image + masked image).
+# To switch to the LLM (text-only) path, replace this block with:
+#   llmPersistenceQuerier:
+#     _target_: dataset_generation.llm_persistence_querying.chained_prompt_query_persistence_querier.ChainedPromptQueryPersistenceQuerier
+#     promptHandler:
+#       _target_: dataset_generation.llm_persistence_querying.prompt_handler.verbose_prompt_handler.VerbosePersistencePromptHandler
+#       prompt_template_file: "prompt_files/llm_querier/v3_iqr_only_behav.txt"
+#       name: v3_iqr_only_behav
+#     llmQuerier:
+#       _target_: dataset_generation.llm_persistence_querying.llm_querying.qwen_llm_querier.QwenLLMQuerier
+#       model_name: "Qwen/Qwen3-30B-A3B-Thinking"
+#       name: qwen3_30b_thinking
+llmPersistenceQuerier:
+  _target_: dataset_generation.llm_persistence_querying.chained_vlm_persistence_querier.ChainedVLMPersistenceQuerier
+  error_on_object_failure: false
+  vlmPromptHandler:
+    _target_: dataset_generation.llm_persistence_querying.prompt_handler.verbose_vlm_prompt_handler.VerboseVLMPersistencePromptHandler
+    name: vp_sing_obj_v2_a
+    prompt_template_file: "prompt_files/vlm_querier/sing_obj_v2_a.txt"
+    mask_style: blur_bg_outline_fg
+    mask_highlight_color: [0, 255, 0]
+    include_other_descriptions: false
+  llmQuerier:
+    _target_: dataset_generation.llm_persistence_querying.vlm_querying.qwen_vlm_querier.QwenVLMQuerier
+    model_name: "Qwen/Qwen3-VL-30B-A3B-Instruct"
+    name: qwen_vl_30b_instruct
+    torch_dtype: torch.bfloat16
+    device_map: "auto"
+    max_new_tokens: 16384
+    temperature: 0.2
+    top_p: 0.9
+    repetition_penalty: 1.05

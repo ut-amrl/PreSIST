@@ -21,6 +21,7 @@ class RegistryConfig:
     registry_db_name: str = "registry.sqlite3"
     strict: bool = True
     export_human_readable: bool = True
+    read_only: bool = False
 
 
 
@@ -66,12 +67,14 @@ class ImageRegistry:
 
     def __init__(self, config: RegistryConfig, *, read_only: bool = False):
         self.config = config
+        self.read_only = read_only
         self.registry_root = Path(config.registry_root)
         _ensure_dir(self.registry_root)
 
         self.db_path = self.registry_root / self.DEFAULT_DB_NAME
         self._conn = self._connect(self.db_path, read_only=read_only)
-        self._init_schema()
+        if not read_only:
+            self._init_schema()
 
     @classmethod
     def from_db_path(cls, db_path: str | Path, *, read_only: bool = False) -> "ImageRegistry":
@@ -84,8 +87,10 @@ class ImageRegistry:
         obj.config = cfg
         obj.registry_root = cfg.registry_root
         obj.db_path = db_path
+        obj.read_only = read_only
         obj._conn = obj._connect(db_path, read_only=read_only)
-        obj._init_schema()  # safe even for RO; only reads schema if present
+        if not read_only:
+            obj._init_schema()
         return obj
 
     def close(self) -> None:
@@ -99,21 +104,20 @@ class ImageRegistry:
     # -----------------------
 
     def _connect(self, db_path: Path, *, read_only: bool) -> sqlite3.Connection:
-        # For read-only, use sqlite URI mode to enforce it.
         if read_only:
-            uri = f"file:{db_path.as_posix()}?mode=ro"
+            # immutable=1 disables all locking, which is required on network filesystems
+            # (e.g. Lustre) that don't support POSIX advisory locks. Safe here because
+            # the DB is fully written by precache_registry.py before any reader opens it.
+            uri = f"file:{db_path.as_posix()}?immutable=1"
             conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
         else:
             conn = sqlite3.connect(str(db_path), check_same_thread=False)
-
-        conn.row_factory = sqlite3.Row
-
-        # Reasonable defaults
-        with conn:
+            # Must run outside a transaction; WAL also requires write access.
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA synchronous=NORMAL;")
-            conn.execute("PRAGMA foreign_keys=ON;")
 
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON;")
         return conn
 
     def _init_schema(self) -> None:

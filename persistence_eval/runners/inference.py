@@ -1,96 +1,72 @@
 from __future__ import annotations
 
 import time
-from collections import defaultdict
 from pathlib import Path
 
-import numpy as np
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
-from persistence_eval.core.domain import (
-    AnchorObservation,
-    InferenceArtifact,
-    PersistenceFilterInput,
-)
-from persistence_eval.core.protocols import PersistenceParameterInferencer
+from persistence_eval.core.domain import InferenceArtifact
+from persistence_eval.core.protocols import ArtifactStore, PersistenceParameterInferencer
+from persistence_eval.datasets.inference_dataset import InferenceDataset
 
 
 class InferenceRunner:
     """
-    Runs the persistence parameter inferencer over a list of episodes.
-    Groups episodes sharing the same anchor image to exploit infer_batch() when possible,
-    reducing per-image preprocessing overhead for multi-object frames.
+    Iterates an InferenceDataset via a DataLoader, calls the inferencer once per
+    ImageMaskGroup, and checkpoints artifacts to disk every save_every_n groups.
+    Returns the full list of artifacts after all groups are processed.
     """
+
+    def __init__(
+        self,
+        inferencer: PersistenceParameterInferencer,
+        artifact_store: ArtifactStore,
+        save_every_n: int = 100,
+    ) -> None:
+        self._inferencer = inferencer
+        self._store = artifact_store
+        self._save_every_n = save_every_n
 
     def run(
         self,
-        episodes: list[PersistenceFilterInput],
-        inferencer: PersistenceParameterInferencer,
+        dataset: InferenceDataset,
+        run_dir: Path,
+        *,
+        num_workers: int = 0,
     ) -> list[InferenceArtifact]:
-        # Group by (anchor_time, track_id) — same image implies same track+time here.
-        # For real datasets that provide pre-loaded images, group by image identity.
-        # Fallback: call infer() per episode when image data is unavailable for batching.
-        artifacts: list[InferenceArtifact] = []
-
-        # Group episodes whose anchor has an actual image array (not None) by array id,
-        # so multi-mask batching can be applied when the same image appears more than once.
-        by_image: dict[int, list[PersistenceFilterInput]] = defaultdict(list)
-        no_image: list[PersistenceFilterInput] = []
-
-        for ep in episodes:
-            if ep.anchor.image is not None:
-                by_image[id(ep.anchor.image)].append(ep)
-            else:
-                no_image.append(ep)
-
-        for group in by_image.values():
-            if len(group) == 1:
-                artifacts.append(self._infer_single(group[0], inferencer))
-            else:
-                artifacts.extend(self._infer_batch(group, inferencer))
-
-        for ep in no_image:
-            artifacts.append(self._infer_single(ep, inferencer))
-
-        return artifacts
-
-    @staticmethod
-    def _infer_single(
-        episode: PersistenceFilterInput,
-        inferencer: PersistenceParameterInferencer,
-    ) -> InferenceArtifact:
-        t0 = time.perf_counter()
-        estimate = inferencer.infer(episode.anchor)
-        latency_ms = (time.perf_counter() - t0) * 1000.0
-        return InferenceArtifact(
-            episode_id=episode.episode_id,
-            estimate=estimate,
-            inference_latency_ms=latency_ms,
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self._inferencer.set_run_dir(run_dir)
+        loader = DataLoader(
+            dataset,
+            batch_size=None,
+            collate_fn=lambda x: x,
+            num_workers=num_workers,
         )
 
-    @staticmethod
-    def _infer_batch(
-        group: list[PersistenceFilterInput],
-        inferencer: PersistenceParameterInferencer,
-    ) -> list[InferenceArtifact]:
-        anchor0 = group[0].anchor
-        masks = [ep.anchor.mask for ep in group]
-        track_ids = [ep.anchor.track_id for ep in group]
+        buffer: list[InferenceArtifact] = []
+        all_artifacts: list[InferenceArtifact] = []
 
-        t0 = time.perf_counter()
-        estimates = inferencer.infer_batch(
-            image=anchor0.image,
-            masks=masks,
-            anchor_time=anchor0.anchor_time,
-            track_ids=track_ids,
-        )
-        total_ms = (time.perf_counter() - t0) * 1000.0
-        per_ms = total_ms / len(group)
+        for group in tqdm(loader, desc="Inference", unit="group"):
+            t0 = time.perf_counter()
+            estimates = self._inferencer.infer(group)
+            latency_ms = (time.perf_counter() - t0) * 1000.0 / max(len(estimates), 1)
 
-        return [
-            InferenceArtifact(
-                episode_id=ep.episode_id,
-                estimate=est,
-                inference_latency_ms=per_ms,
-            )
-            for ep, est in zip(group, estimates)
-        ]
+            for track_id, estimate in zip(group.track_ids, estimates):
+                artifact = InferenceArtifact(
+                    track_id=track_id,
+                    anchor_time=group.anchor_time,
+                    estimate=estimate,
+                    inference_latency_ms=latency_ms,
+                )
+                buffer.append(artifact)
+                all_artifacts.append(artifact)
+
+            if len(buffer) >= self._save_every_n:
+                self._store.append(buffer, run_dir)
+                buffer.clear()
+
+        if buffer:
+            self._store.append(buffer, run_dir)
+
+        return all_artifacts

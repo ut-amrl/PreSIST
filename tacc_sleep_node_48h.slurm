@@ -4,7 +4,7 @@
 #SBATCH -e logs/spf/sleep-node.%j.err           # Stderr
 #SBATCH -p amd-rtx                               # Partition / queue
 #SBATCH -N 1                                     # Number of nodes
-#SBATCH -n 1                                     # Number of tasks
+#SBATCH -n 8                                     # Number of tasks (= GPUs per amd-rtx node)
 #SBATCH -t 48:00:00                              # Wall time
 #SBATCH -A IRI26004                              # Allocation
 

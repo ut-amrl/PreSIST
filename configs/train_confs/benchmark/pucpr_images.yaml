@@ -1,0 +1,5 @@
+# @package benchmark
+name: pucpr_grouped_images
+dataset_mode: grouped
+save_every_n: 100
+num_workers: 0

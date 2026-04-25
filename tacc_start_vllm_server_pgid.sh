@@ -94,17 +94,34 @@ if [[ -n "${VLLM_QUANT:-}" ]]; then
     VLLM_SERVED_NAME="${VLLM_SERVED_NAME}__${VLLM_QUANT}"
 fi
 
+############################################
+# Reasoning parser
+############################################
+
+if [[ -n "${VLLM_REASONING_PARSER+x}" ]]; then
+    : # use caller-supplied value (including empty string to disable)
+else
+    VLLM_REASONING_PARSER=""
+    MODEL_LC="$(echo "$VLLM_MODEL" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$MODEL_LC" == *"qwen3"* || "$MODEL_LC" == *"qwen3.5"* ]]; then
+        if [[ "$MODEL_LC" == *"thinking"* ]]; then
+            VLLM_REASONING_PARSER="deepseek_r1"
+        fi
+    fi
+fi
+
 echo "Starting vLLM on GPU(s) [${VLLM_GPUS}]"
-echo "  model:        $VLLM_MODEL"
-echo "  model source: $MODEL_SOURCE"
-echo "  served name:  $VLLM_SERVED_NAME"
-echo "  port:         $VLLM_PORT"
-echo "  tp:           $VLLM_TP"
-echo "  dtype:        $VLLM_DTYPE"
-echo "  quant:        ${VLLM_QUANT:-<none>}"
-echo "  log:          $VLLM_LOG"
-echo "  pid:          $VLLM_PID_FILE"
-echo "  pgid:         $VLLM_PGID_FILE"
+echo "  model:           $VLLM_MODEL"
+echo "  model source:    $MODEL_SOURCE"
+echo "  served name:     $VLLM_SERVED_NAME"
+echo "  port:            $VLLM_PORT"
+echo "  tp:              $VLLM_TP"
+echo "  dtype:           $VLLM_DTYPE"
+echo "  quant:           ${VLLM_QUANT:-<none>}"
+echo "  reasoning parser:${VLLM_REASONING_PARSER:-<none>}"
+echo "  log:             $VLLM_LOG"
+echo "  pid:             $VLLM_PID_FILE"
+echo "  pgid:            $VLLM_PGID_FILE"
 
 export HF_HOME="${HF_CACHE_DIR}"
 if [[ -n "${HF_TOKEN:-}" ]]; then
@@ -120,7 +137,8 @@ VLLM_SERVE_ARGS="$VLLM_MODEL \
   --max-model-len $MAX_SEQ_LEN \
   --served-model-name $VLLM_SERVED_NAME \
   --trust-remote-code \
-  ${VLLM_QUANT:+--quantization $VLLM_QUANT}"
+  ${VLLM_QUANT:+--quantization $VLLM_QUANT} \
+  ${VLLM_REASONING_PARSER:+--reasoning-parser $VLLM_REASONING_PARSER}"
 
 CUDA_VISIBLE_DEVICES="$VLLM_GPUS" \
 setsid bash -lc "exec vllm serve $VLLM_SERVE_ARGS" \

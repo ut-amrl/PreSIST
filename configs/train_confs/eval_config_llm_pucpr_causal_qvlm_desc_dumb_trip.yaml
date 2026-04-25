@@ -1,0 +1,37 @@
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: annotation_tool_pucpr
+  - inferencer: llm_pipeline_qwen3_vllm_qvlm_desc
+  - survival_generator: weibull_pucpr_llm
+  - persistence_filter: rosen
+  - benchmark: pucpr_images
+  - eval_scenario: dynamic_anchor_only
+  - analysis: basic
+  - _self_
+
+mode: run_all
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  explicit_inference_run_dir: null
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null
+  seed: null
+
+inferencer:
+  objectDescriber:
+    name: qwenVLMDescCausalDumbTrip
+    # prompt_file: "prompt_files/instance_describer/isthisspot.txt"
+    # prompt: "Make sure to locate the target object in the full image. Is this car in a parking spot? Explain why or why not based on visual cues. If there are particular visual cues you are looking for, please state exactly where they are. If you find parking spot lines, explain where exactly they are"
+    prompt: "Is this car driving or in a parking spot? Explain why or why not based on visual cues. "
+    prefix_file: "prompt_files/instance_describer/qwen_triple_image_preamble_arrow.txt"
+    mask_dilation_px: 10
+    include_zoomed_crop: true
+    include_arrow_image: true
+
+
+
+

@@ -67,6 +67,7 @@ DAM_PORT="${DAM_PORT:-9014}"
 DAM_WORKERS="${DAM_WORKERS:-3}"
 
 CONFIG_NAME="${CONFIG_NAME:-q3_30bt_lang_q3T_pU3_sam3b_maxOb_30_mConf_0p35_mA0p001_dd0p9_capQ38bTproc2_v3_iqr_only_behav}"
+RUN_PHASES="${RUN_PHASES:-segmentation,scene_caption,object_descriptions}"
 
 DATASETS="${DATASETS:-train_mix_0 train_mix_1 train_mix_2 train_mix_3 train_mix_4 train_mix_5 train_mix_6 train_mix_7 train_mix_8 train_mix_9 train_mix_10}"
 
@@ -90,11 +91,21 @@ VLLM_QUANT="${VLLM_QUANT:-}"
 ############################################
 
 TRTLLM_GPUS=$(seq -s, 0 $((TRTLLM_TP - 1)))
-DAM_GPU_IDX=$TRTLLM_TP
-DAM_GPUS="$DAM_GPU_IDX"
+
+if [[ "$RUN_PHASES" == *"object_descriptions"* ]]; then
+    USE_DAM=1
+    DAM_GPU_IDX=$TRTLLM_TP
+    DAM_GPUS="$DAM_GPU_IDX"
+    PIPELINE_GPU_START=$((DAM_GPU_IDX + 1))
+else
+    USE_DAM=
+    DAM_GPU_IDX=
+    DAM_GPUS=
+    PIPELINE_GPU_START=$TRTLLM_TP
+fi
 
 PIPELINE_GPU_LIST=()
-for i in $(seq $((DAM_GPU_IDX + 1)) $((TOTAL_GPUS - 1))); do
+for i in $(seq "$PIPELINE_GPU_START" $((TOTAL_GPUS - 1))); do
     PIPELINE_GPU_LIST+=("$i")
 done
 NUM_WORKERS=${#PIPELINE_GPU_LIST[@]}
@@ -162,9 +173,14 @@ LLM_SERVER="${USE_VLLM:+vLLM}"
 LLM_SERVER="${LLM_SERVER:-TRT-LLM}"
 echo "GPU layout (TP=$TRTLLM_TP, $TOTAL_GPUS total GPUs):"
 echo "  $LLM_SERVER:  GPUs $TRTLLM_GPUS  (model: $TRTLLM_MODEL, port: $TRTLLM_PORT)"
-echo "  DAM:      GPU  $DAM_GPUS  (port: $DAM_PORT, workers $DAM_WORKERS)"
+if [[ -n "$USE_DAM" ]]; then
+    echo "  DAM:      GPU  $DAM_GPUS  (port: $DAM_PORT, workers $DAM_WORKERS)"
+else
+    echo "  DAM:      disabled (object_descriptions not in RUN_PHASES)"
+fi
 echo "  Workers:  GPUs ${PIPELINE_GPU_LIST[*]}  ($NUM_WORKERS workers)"
 echo "  Config:   $CONFIG_NAME"
+echo "  Phases:   $RUN_PHASES"
 echo "  Datasets: $DATASETS"
 echo "  Wall:     ${WALL_HOURS}h"
 echo "  Job root: $JOB_ROOT"
@@ -232,17 +248,21 @@ fi
 ############################################
 
 DAM_LOG="${LOG_DIR}/dam_${JOB_ID_TAG}.out"
+DAM_PID=
 
-
-echo "Starting DAM server on GPU [$DAM_GPUS] (logs: $DAM_LOG)..."
-CUDA_VISIBLE_DEVICES="$DAM_GPUS" \
-apptainer exec --nv \
-  -B "${HF_CACHE_DIR}:/workspace/hf_home" \
-  -B "${JOB_TMP_DIR}:${JOB_TMP_DIR}" \
-  "$DAM_IMAGE" \
-  bash -lc "python /workspace/project/dam_server.py --host 0.0.0.0 --port ${DAM_PORT} --workers ${DAM_WORKERS:-1}" \
-  >"$DAM_LOG" 2>&1 &
-DAM_PID=$!
+if [[ -n "$USE_DAM" ]]; then
+    echo "Starting DAM server on GPU [$DAM_GPUS] (logs: $DAM_LOG)..."
+    CUDA_VISIBLE_DEVICES="$DAM_GPUS" \
+    apptainer exec --nv \
+      -B "${HF_CACHE_DIR}:/workspace/hf_home" \
+      -B "${JOB_TMP_DIR}:${JOB_TMP_DIR}" \
+      "$DAM_IMAGE" \
+      bash -lc "python /workspace/project/dam_server.py --host 0.0.0.0 --port ${DAM_PORT} --workers ${DAM_WORKERS:-1}" \
+      >"$DAM_LOG" 2>&1 &
+    DAM_PID=$!
+else
+    echo "Skipping DAM server (object_descriptions not in RUN_PHASES)."
+fi
 
 ############################################
 # Cleanup trap
@@ -287,25 +307,27 @@ trap cleanup EXIT
 # Wait for DAM
 ############################################
 
-echo "Waiting for DAM on port $DAM_PORT..."
-READY=0
-for i in $(seq 1 60); do
-    if curl -s "http://localhost:${DAM_PORT}/health" >/dev/null 2>&1 || \
-       curl -s "http://localhost:${DAM_PORT}/" >/dev/null 2>&1; then
-        echo "DAM ready (waited ~$((i * 5))s)"
-        READY=1
-        break
-    fi
-    if ! kill -0 "$DAM_PID" 2>/dev/null; then
-        echo "ERROR: DAM exited unexpectedly. Check: $DAM_LOG"
-        exit 1
-    fi
-    sleep 5
-done
-[ "$READY" -eq 1 ] || { echo "ERROR: DAM did not become ready in time. Check: $DAM_LOG"; exit 1; }
+if [[ -n "$USE_DAM" ]]; then
+    echo "Waiting for DAM on port $DAM_PORT..."
+    READY=0
+    for i in $(seq 1 60); do
+        if curl -s "http://localhost:${DAM_PORT}/health" >/dev/null 2>&1 || \
+           curl -s "http://localhost:${DAM_PORT}/" >/dev/null 2>&1; then
+            echo "DAM ready (waited ~$((i * 5))s)"
+            READY=1
+            break
+        fi
+        if ! kill -0 "$DAM_PID" 2>/dev/null; then
+            echo "ERROR: DAM exited unexpectedly. Check: $DAM_LOG"
+            exit 1
+        fi
+        sleep 5
+    done
+    [ "$READY" -eq 1 ] || { echo "ERROR: DAM did not become ready in time. Check: $DAM_LOG"; exit 1; }
+fi
 
 echo
-echo "Both servers up. Launching $NUM_WORKERS pipeline workers..."
+echo "LLM server up$([ -n "$USE_DAM" ] && echo " + DAM up"). Launching $NUM_WORKERS pipeline workers..."
 echo
 
 run_worker() {
@@ -322,18 +344,23 @@ run_worker() {
 	echo "[worker $worker_id / GPU $gpu] Starting $dataset  →  $log"
 
         local container_cmd
+        local dam_arg=""
+        if [[ -n "$USE_DAM" ]]; then
+            dam_arg=" ++dataset_generator.objectDescriber.server_port=${DAM_PORT}"
+        fi
         container_cmd="cd /workspace/code/semantic-persistence-filter && \
 HYDRA_FULL_ERROR=1 python3 run_llm_labeling_pipeline.py \
   --config-name ${CONFIG_NAME} \
   +image_dataset=${dataset} \
-  ++dataset_generator.run_phases=[segmentation,scene_caption,object_descriptions] \
+  ++dataset_generator.run_phases=[${RUN_PHASES}] \
   ++dataset_generator.instanceSegmenter.object_discoverer.use_vllm_server=True \
   ++dataset_generator.instanceSegmenter.object_discoverer.vllm_url_root=http://localhost \
   ++dataset_generator.instanceSegmenter.object_discoverer.vllm_port=${TRTLLM_PORT} \
   ++dataset_generator.sceneCaptioner.use_vllm_server=True \
   ++dataset_generator.sceneCaptioner.vllm_url_root=http://localhost \
-  ++dataset_generator.sceneCaptioner.vllm_port=${TRTLLM_PORT} \
-  ++dataset_generator.objectDescriber.server_port=${DAM_PORT}"
+  ++dataset_generator.sceneCaptioner.vllm_port=${TRTLLM_PORT}${dam_arg}"
+
+# add \ ++registry_info.read_only=true to the labeler command if running into sql errors with the registry
 
         CUDA_VISIBLE_DEVICES="$gpu" \
         IMAGE="$IMAGE" \

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 
-import numpy as np
+import torch
 
 
 @dataclass
@@ -48,25 +47,40 @@ class AnchorObservation:
     visual snapshot, the inferencer predicts how long the object is likely to persist.
     anchor_time is the reference point from which query_times (dt) are measured.
     """
-    image: np.ndarray   # H×W×3, uint8
-    mask: np.ndarray    # H×W, bool
+    image: torch.Tensor  # C×H×W, uint8
+    mask: torch.Tensor   # H×W, bool
     anchor_time: float  # absolute seconds
     track_id: str       # back-reference to the source track
 
 
 @dataclass
-class PersistenceFilterInput:
+class ImageMaskGroup:
     """
-    Inputs needed to run the persistence filter for one (track, anchor, query-set) tuple.
-    Constructed from track data + a sampled anchor; one track may yield multiple inputs.
-    Contains only filter inputs — ground truth (TrackTemporalBounds) is kept separate
-    and paired with this object by the sampler so filter logic stays decoupled from labels.
+    A single image frame paired with all object masks visible in that frame.
+    Enables batch inference: one forward pass for all objects in a frame rather
+    than one pass per object. masks is (K, H, W) bool — stacked so the batch
+    is fully tensor-native and compatible with (B, K, 1, H, W) model inputs via
+    group.masks.unsqueeze(0).unsqueeze(2).
     """
-    episode_id: str                                        # "{dataset.name}:{track_id}:{anchor_idx}"
-    anchor: AnchorObservation
-    prior_observations: list[BinaryObservationEvent]       # history before anchor_time
-    query_times: list[float]                               # dt from anchor_time (seconds)
-    metadata: dict = field(default_factory=dict)           # dataset_name, split, etc.
+    image: torch.Tensor    # C×H×W, uint8
+    masks: torch.Tensor    # K×H×W bool, one slice per tracked object
+    track_ids: list[str]
+    anchor_time: float     # absolute seconds (same for all masks — same frame)
+    image_path: str | None = None
+
+
+@dataclass
+class EvaluationContext:
+    """
+    Everything needed to run the persistence filter for one (artifact, query-set) pair.
+    Produced by EpisodeProvider.get_contexts() from an InferenceArtifact's track_id and
+    anchor_time. Ground truth (bounds) is carried here but never passed to the filter —
+    it is only used to compute labels after prediction.
+    """
+    prior_observations: list[BinaryObservationEvent]   # history strictly before anchor_time
+    query_times: list[float]                           # dt from anchor_time (seconds)
+    bounds: TrackTemporalBounds
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -86,29 +100,16 @@ class PersistenceParameterEstimate:
 @dataclass
 class InferenceArtifact:
     """
-    Persisted output of one inferencer call for one episode.
+    Persisted output of one inferencer call for one anchor observation.
     Stored to disk so evaluation can be re-run without re-running inference.
-    Indexed by episode_id; a dict[episode_id, InferenceArtifact] is passed to EvaluationRunner.
+    Keyed by (track_id, anchor_time); a dict[(track_id, anchor_time), InferenceArtifact]
+    is passed to EvaluationRunner.
     """
-    episode_id: str
+    track_id: str
+    anchor_time: float
     estimate: PersistenceParameterEstimate
     inference_latency_ms: float
 
-
-@dataclass
-class PredictionRecord:
-    """
-    One filter prediction for one (episode, query_time) pair.
-    Links filter output to ground truth for metric computation.
-    ground_truth=None means the label is unknown; this record is skipped in metrics.
-    """
-    episode_id: str
-    query_time: float          # dt from anchor_time
-    predicted_prob: float
-    ground_truth: bool | None  # derived from TrackTemporalBounds.exists_at(); not a filter input
-    inference_latency_ms: float
-    filter_latency_ms: float
-    metadata: dict = field(default_factory=dict)  # method_name, dataset_name, split, horizon, etc.
 
 
 @dataclass
@@ -117,3 +118,27 @@ class MetricResult:
     value: float
     count: int
     group: dict = field(default_factory=dict)
+
+
+@dataclass
+class EvaluationBatch:
+    """
+    Flat tensor representation of all prediction records from one evaluation run.
+    All tensor fields have shape (N,) and are float64.
+    ground_truth is NaN where the label was unknown (TrackTemporalBounds.exists_at returned None).
+    metadata is a parallel list of per-record dicts for grouping / reporting.
+    """
+    episode_ids: list[str]
+    query_times: torch.Tensor        # dt from anchor_time (seconds)
+    predicted_probs: torch.Tensor
+    ground_truth: torch.Tensor       # 0.0 / 1.0; NaN = unknown
+    inference_latency_ms: torch.Tensor
+    filter_latency_ms: torch.Tensor
+    metadata: list[dict]
+
+    def __len__(self) -> int:
+        return len(self.episode_ids)
+
+    def labeled_mask(self) -> torch.Tensor:
+        """Boolean mask selecting records with known ground truth."""
+        return ~torch.isnan(self.ground_truth)

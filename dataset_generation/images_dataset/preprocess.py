@@ -42,6 +42,7 @@ def preprocess_and_build_dataloader(
     pin_memory: bool = True,
     strict: bool = True,
     export_human_readable: bool = True,
+    read_only: bool = False,
 ) -> Tuple[RegistryBackedImageDataset, DataLoader, Path, Dict[str, Any]]:
     """
     spec_path:
@@ -67,7 +68,7 @@ def preprocess_and_build_dataloader(
         raise ValueError(f"Unknown dedupe policy: {dedupe}")
 
     # 2) Build / open registry
-    registry = ImageRegistry(RegistryConfig(registry_root=Path(registry_root)))
+    registry = ImageRegistry(RegistryConfig(registry_root=Path(registry_root)), read_only=read_only)
 
     print("registry_root arg:", registry_root)
     print("resolved registry root:", Path(registry_root).resolve())
@@ -77,31 +78,50 @@ def preprocess_and_build_dataloader(
     id_computer = ImageIdComputer(HashSpec(alg="sha256"))
 
     try:
-        # 3) Bulk index pass (compute missing/stale IDs)
-        now_ns = time.time_ns()
-        to_upsert = []
         computed_ids: Dict[str, str] = {}  # relpath -> image_id
 
-        for it in items:
-            abspath = (root / it.relpath).resolve()
-            if strict and (not abspath.exists() or not abspath.is_file()):
-                raise FileNotFoundError(f"Missing file: {it.relpath}")
-
-            st = abspath.stat()
-            file_size = int(st.st_size)
-            mtime_ns = int(st.st_mtime_ns)
-
-            row = registry.get_record(root, it.relpath)
-            if row and int(row["file_size"]) == file_size and int(row["mtime_ns"]) == mtime_ns:
+        if read_only:
+            # 3a) Validation pass — check files are present and registry entries are current.
+            for it in items:
+                abspath = (root / it.relpath).resolve()
+                if strict and (not abspath.exists() or not abspath.is_file()):
+                    raise FileNotFoundError(f"Missing file: {it.relpath}")
+                st = abspath.stat()
+                row = registry.get_record(root, it.relpath)
+                if row is None:
+                    raise RuntimeError(
+                        f"No registry entry for {it.relpath} — run precache_registry.py first"
+                    )
+                if int(row["file_size"]) != int(st.st_size) or int(row["mtime_ns"]) != int(st.st_mtime_ns):
+                    raise RuntimeError(
+                        f"Stale registry entry for {it.relpath} — run precache_registry.py first"
+                    )
                 computed_ids[it.relpath] = row["image_id"]
-                continue
+        else:
+            # 3b) Bulk index pass (compute missing/stale IDs)
+            now_ns = time.time_ns()
+            to_upsert = []
 
-            image_id = id_computer.compute(abspath)
-            computed_ids[it.relpath] = image_id
-            to_upsert.append((str(root), it.relpath, str(abspath), image_id, file_size, mtime_ns, now_ns))
+            for it in items:
+                abspath = (root / it.relpath).resolve()
+                if strict and (not abspath.exists() or not abspath.is_file()):
+                    raise FileNotFoundError(f"Missing file: {it.relpath}")
 
-        if to_upsert:
-            registry.bulk_upsert(to_upsert)
+                st = abspath.stat()
+                file_size = int(st.st_size)
+                mtime_ns = int(st.st_mtime_ns)
+
+                row = registry.get_record(root, it.relpath)
+                if row and int(row["file_size"]) == file_size and int(row["mtime_ns"]) == mtime_ns:
+                    computed_ids[it.relpath] = row["image_id"]
+                    continue
+
+                image_id = id_computer.compute(abspath)
+                computed_ids[it.relpath] = image_id
+                to_upsert.append((str(root), it.relpath, str(abspath), image_id, file_size, mtime_ns, now_ns))
+
+            if to_upsert:
+                registry.bulk_upsert(to_upsert)
 
         # 4) If dedupe by_image_id, reduce items now that ids are known
         if dedupe == "by_image_id":

@@ -1,0 +1,4 @@
+# @package inferencer
+_target_: persistence_eval.methods.inferencers.constant_param.ConstantParamInferencer
+lambda_l: 3.171e-8   # 1 / (1 year in seconds)
+lambda_u: 100.0      # 1 / (0.01 seconds)

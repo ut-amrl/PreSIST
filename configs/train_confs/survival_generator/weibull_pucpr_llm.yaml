@@ -1,0 +1,6 @@
+# @package survival_generator
+_target_: persistence_eval.methods.survival.weibull.WeibullSurvivalFunctionGenerator
+low_key: p25_persistence_hours
+high_key: p75_persistence_hours
+time_scale_factor: 3600.0
+name: weibull_p2575_hrs

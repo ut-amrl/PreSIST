@@ -1,0 +1,37 @@
+# @package inferencer
+#
+# ClosedSetCLIPInferencer: matches each object mask to the closest COCO-Stuff
+# semantic class via CLIP embeddings, then returns pre-computed persistence
+# parameters for that class.
+#
+# Prep steps required before running:
+#   1. CLIP embeddings cache (already exists at the path below).
+#   2. Persistence params cache — run the precomputer if the JSON is empty:
+#      python -m persistence_eval.methods.inferencers.closed_set_semantics.semantic_class_persistence_precomputer \
+#          --class_list_file cached_closed_set_info/closed_set_lists/coco-stuff.txt \
+#          --output_file cached_closed_set_info/closed_set_persistence_params_cache/coco-stuff-t50-t90.json \
+#          --prompt_template_file prompt_files/persistence_precomputer/class_persistence_query.txt \
+#          --param_keys p50_persistence_hours p90_persistence_hours \
+#          --output_param_keys t50 t90 \
+#          --use_vllm --vllm_port 9001
+
+_target_: persistence_eval.methods.inferencers.closed_set_clip_inferencer.ClosedSetCLIPInferencer
+
+clipAligner:
+  _target_: persistence_eval.methods.inferencers.closed_set_clip_align.closed_set_clip_embedder.CLIPAligner
+  clip_embedder:
+    _target_: persistence_eval.methods.inferencers.closed_set_clip_align.closed_set_clip_embedder.CLIPEmbedder
+    model_name: "openai/clip-vit-large-patch14"
+    device: "cuda"
+  cache:
+    _target_: persistence_eval.methods.inferencers.closed_set_clip_align.closed_set_clip_embedder.CachedCLIPAlignment
+    cache_file: "cached_closed_set_info/closed_set_clip_embeddings/coco-stuff.pt"
+  class_list:
+    _target_: persistence_eval.methods.inferencers.closed_set_semantics.closed_set_semantics.ClosedSetSemanticClassList
+    class_text_file: "cached_closed_set_info/closed_set_lists/coco-stuff.txt"
+    classes_list: null
+  zero_out_background: false
+
+semanticClassPersistenceParamLookup:
+  _target_: persistence_eval.methods.inferencers.closed_set_semantics.semantic_class_persistence_param_lookup.SemanticClassPersistenceParamLookup
+  params_file: "cached_closed_set_info/closed_set_persistence_params_cache/coco-stuff-t50-t90.json"

@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+import torch
+import torch.nn as nn
+
 from persistence_eval.core.domain import PersistenceParameterEstimate
 
 
-class AbsSurvivalFunction(ABC):
+class AbsSurvivalFunction(nn.Module, ABC):
     @abstractmethod
-    def __call__(self, dt: float) -> float:
+    def forward(self, dt: torch.Tensor) -> torch.Tensor:
         """Return P(object survives past dt seconds from anchor)."""
+        ...
+
+    @abstractmethod
+    def log_survival(self, dt: torch.Tensor) -> torch.Tensor:
+        """Return log(P(object survives past dt seconds from anchor))."""
         ...
 
 

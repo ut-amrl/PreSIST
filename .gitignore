@@ -4,3 +4,6 @@ __pycache__/
 *.pyd
 pretrained_models/
 agent_handoff_plans/
+old/
+wandb/
+.cursor/

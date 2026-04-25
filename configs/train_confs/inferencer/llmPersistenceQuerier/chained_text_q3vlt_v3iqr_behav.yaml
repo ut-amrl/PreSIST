@@ -1,0 +1,6 @@
+# @package inferencer.llmPersistenceQuerier
+defaults:
+  - llmQuerier: qwen3_vl_30b_thinking_vllm
+  - promptHandler: v3_iqr_only_behav
+
+_target_: dataset_generation.llm_persistence_querying.chained_prompt_query_persistence_querier.ChainedPromptQueryPersistenceQuerier

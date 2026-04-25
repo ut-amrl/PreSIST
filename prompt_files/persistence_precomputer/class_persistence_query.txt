@@ -1,0 +1,14 @@
+You are an expert on how long objects remain in fixed physical locations in the real world.
+Consider object category: "{class_name}"
+
+Estimate how long a TYPICAL instance of this object category remains in the exact same physical location without being moved or disappearing.
+
+Return ONLY a valid JSON object with these keys:
+- "p50_persistence_hours":  float   (median - 50% of instances persist longer than this)
+- "p90_persistence_hours":  float   (90th percentile - only 10% of instances persist longer than this). Must be larger than p50_persistence_hours
+  "reasoning": string  (one sentence explanation)
+
+Reference ranges to calibrate your estimates:
+- Structural or immovable objects such as walls or countertops should have very large persistence values (20000 to 500000 hours).
+- Actively moving objects such as vehicles, people, or objects being carried by people should have very short persistence (0.005 hours). Any movement of any part of person or other highly dynamic entity should be considered movement of the person.
+- For objects that appear currently stationary but are capable of moving, estimate persistence based on typical patterns for the object. For example, minutes for a chair at an occupied desk, several hours for a chair at an office desk at night, minutes for utensils at an occupied kitchen counter, 3–24 hours for items in an unoccupied kitchen, 1 hour for a car at a grocery store, 4 hours for a car at an office building, etc. Consider the breadth of situations in which the object category can occur and estimate persistence accordingly.

@@ -3,3 +3,4 @@
 _target_: persistence_eval.methods.survival.weibull.WeibullSurvivalFunctionGenerator
 low_key: t50
 high_key: t90
+time_scale_factor: 3600.0  # params are in hours; framework uses seconds

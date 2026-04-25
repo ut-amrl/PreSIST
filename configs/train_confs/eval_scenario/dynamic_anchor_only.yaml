@@ -1,0 +1,4 @@
+# @package eval_scenario
+_target_: persistence_eval.sampling.dynamic_horizon_episode_provider.DynamicHorizonEpisodeProvider
+name: dynamic_horizons_anchor_only
+require_disappearance_observed: false

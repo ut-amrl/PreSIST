@@ -3,7 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Iterable
 
-from persistence_eval.core.domain import AnchorObservation
+import torch
+
+from persistence_eval.core.domain import AnchorObservation, ImageMaskGroup
 from persistence_eval.datasets.backing import AbsBackingDataset
 
 
@@ -19,6 +21,19 @@ class AbsImageMaskDataset(ABC):
 
     @abstractmethod
     def iter_anchor_observations(self) -> Iterable[AnchorObservation]: ...
+
+    def iter_image_groups(self) -> Iterable[ImageMaskGroup]:
+        """Iterate observations grouped by image frame.
+        Default wraps each AnchorObservation into a single-mask group.
+        Override for datasets where multiple objects share frames.
+        """
+        for obs in self.iter_anchor_observations():
+            yield ImageMaskGroup(
+                image=obs.image,
+                masks=obs.mask.unsqueeze(0),  # (1, H, W)
+                track_ids=[obs.track_id],
+                anchor_time=obs.anchor_time,
+            )
 
 
 class ImageMaskView(AbsImageMaskDataset):

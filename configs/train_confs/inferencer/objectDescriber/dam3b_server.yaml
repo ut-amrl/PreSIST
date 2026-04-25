@@ -1,0 +1,16 @@
+# @package inferencer.objectDescriber
+name: dam3bSrv
+_target_: dataset_generation.instance_descriptions.describe_anything_object_describer.DescribeAnythingObjectDescriber
+model_path: "nvidia/DAM-3B"
+prompt_file: "prompt_files/instance_describer/detailed_description_prompt.txt"
+conv_mode: "v1"
+prompt_mode: "focal_prompt"
+use_server: true
+server_base_url: "http://localhost"
+server_port: 9014
+server_model: "describe_anything_model"
+server_api_key: "api_key"
+server_timeout_s: 240.0
+server_batch_size: 32
+temperature: 0.2
+max_new_tokens: 512
