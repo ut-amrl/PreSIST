@@ -1,0 +1,10 @@
+# @package inferencer
+defaults:
+  - /inferencer/sceneCaptioner: qwen_vl_30b_thinking_proc_long2
+  - /inferencer/objectDescriber: gemma_vlm_object_describer
+  - /inferencer/llmPersistenceQuerier: chained_text_q3vlt_v3iqr_behav
+
+_target_: persistence_eval.methods.inferencers.llm_pipeline.LLMPipelineInferencer
+param_keys: [p25_persistence_hours, p75_persistence_hours]
+debug_log: false
+debug_visualizations: true

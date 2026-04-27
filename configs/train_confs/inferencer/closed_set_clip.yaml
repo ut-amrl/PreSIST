@@ -16,6 +16,7 @@
 #          --use_vllm --vllm_port 9001
 
 _target_: persistence_eval.methods.inferencers.closed_set_clip_inferencer.ClosedSetCLIPInferencer
+name: closed_set_clip_coco_stuff
 
 clipAligner:
   _target_: persistence_eval.methods.inferencers.closed_set_clip_align.closed_set_clip_embedder.CLIPAligner

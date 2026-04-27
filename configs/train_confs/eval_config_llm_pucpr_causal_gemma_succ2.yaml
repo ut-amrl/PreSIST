@@ -1,0 +1,29 @@
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: annotation_tool_pucpr
+  - inferencer: llm_pipeline_gemma_desc
+  - survival_generator: weibull_pucpr_llm
+  - persistence_filter: rosen
+  - benchmark: pucpr_images
+  - eval_scenario: dynamic_anchor_only
+  - analysis: basic
+  - _self_
+
+mode: run_all
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  explicit_inference_run_dir: null
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null
+  seed: null
+
+inferencer:
+  objectDescriber:
+    name: gemmaVLMDescCausal
+    prompt_file: "prompt_files/instance_describer/succinct_causal_no_img_tag2.txt"
+    prefix_file: "prompt_files/instance_describer/qwen_double_image_preamble.txt"
+
