@@ -1,0 +1,233 @@
+nohup: ignoring input
+Auto-discovered 9 participant(s): ['P01', 'P02', 'P03', 'P04', 'P05', 'P06', 'P07', 'P08', 'P09']
+
+=== P01 ===
+  Found 27 sequence folder(s)
+  f=612.20  cx=698.87  cy=706.37
+  Detected mask size: 1408x1408
+  Rectified RGB frame size: 1294x1294
+  Derived crop: (57,57)→(1351,1351)  =  1294x1294 px
+  Building rectification maps (1408x1408)...
+    → 0 rectified, 127 already done  [P01-20240202-110250]
+    → 0 rectified, 88 already done  [P01-20240202-161354]
+    → 0 rectified, 171 already done  [P01-20240202-161948]
+    → 0 rectified, 109 already done  [P01-20240202-171220]
+    → 0 rectified, 47 already done  [P01-20240202-175627]
+    → 0 rectified, 162 already done  [P01-20240202-195538]
+    → 0 rectified, 39 already done  [P01-20240203-093333]
+    → 0 rectified, 203 already done  [P01-20240203-121517]
+    → 0 rectified, 324 already done  [P01-20240203-123350]
+    → 0 rectified, 271 already done  [P01-20240203-130505]
+    → 0 rectified, 256 already done  [P01-20240203-132119]
+    → 0 rectified, 460 already done  [P01-20240203-135502]
+    → 0 rectified, 196 already done  [P01-20240203-150506]
+    → 0 rectified, 39 already done  [P01-20240203-152323]
+    → 0 rectified, 44 already done  [P01-20240203-152956]
+    → 0 rectified, 121 already done  [P01-20240203-161757]
+    → 0 rectified, 18 already done  [P01-20240203-184045]
+    → 0 rectified, 401 already done  [P01-20240203-184214]
+    → 0 rectified, 33 already done  [P01-20240204-095114]
+    → 0 rectified, 59 already done  [P01-20240204-120411]
+    → 0 rectified, 507 already done  [P01-20240204-121042]
+    → 0 rectified, 16 already done  [P01-20240204-124504]
+    → 0 rectified, 57 already done  [P01-20240204-130448]
+    → 0 rectified, 381 already done  [P01-20240204-142301]
+    → 0 rectified, 278 already done  [P01-20240204-145458]
+    → 0 rectified, 86 already done  [P01-20240204-152537]
+    → 0 rectified, 31 already done  [P01-20240204-160230]
+
+=== P02 ===
+  Found 19 sequence folder(s)
+  f=610.96  cx=703.34  cy=707.20
+  Detected mask size: 1408x1408
+  Rectified RGB frame size: 1408x1408
+  Derived crop: (0,0)→(1408,1408)  =  1408x1408 px
+  Building rectification maps (1408x1408)...
+    → 757 rectified, 0 already done  [P02-20240209-184316]
+    → 222 rectified, 0 already done  [P02-20240209-194141]
+    → 6 rectified, 0 already done  [P02-20240209-231412]
+    → 8 rectified, 0 already done  [P02-20240210-092616]
+    → 122 rectified, 0 already done  [P02-20240210-100308]
+    → 2 rectified, 0 already done  [P02-20240210-100930]
+    → 229 rectified, 0 already done  [P02-20240210-113925]
+    → 134 rectified, 0 already done  [P02-20240210-122334]
+    → 49 rectified, 0 already done  [P02-20240210-195833]
+    → 14 rectified, 0 already done  [P02-20240210-220650]
+    → 51 rectified, 0 already done  [P02-20240211-100250]
+    → 134 rectified, 0 already done  [P02-20240211-104948]
+    → 71 rectified, 0 already done  [P02-20240211-111219]
+    → 454 rectified, 0 already done  [P02-20240211-111822]
+    → 103 rectified, 0 already done  [P02-20240211-115653]
+    → 580 rectified, 0 already done  [P02-20240211-120927]
+    → 419 rectified, 0 already done  [P02-20240211-141313]
+    → 484 rectified, 0 already done  [P02-20240211-175138]
+    → 305 rectified, 0 already done  [P02-20240211-182630]
+
+=== P03 ===
+  Found 21 sequence folder(s)
+  f=610.10  cx=699.11  cy=710.25
+  Detected mask size: 1408x1408
+  Rectified RGB frame size: 1408x1408
+  Derived crop: (0,0)→(1408,1408)  =  1408x1408 px
+  Building rectification maps (1408x1408)...
+    → 295 rectified, 0 already done  [P03-20240216-084005]
+    → 151 rectified, 0 already done  [P03-20240216-090759]
+    → 962 rectified, 0 already done  [P03-20240216-185832]
+    → 367 rectified, 0 already done  [P03-20240216-205923]
+    → 31 rectified, 0 already done  [P03-20240216-223126]
+    → 249 rectified, 0 already done  [P03-20240217-091657]
+    → 34 rectified, 0 already done  [P03-20240217-094713]
+    → 92 rectified, 0 already done  [P03-20240217-100448]
+    → 48 rectified, 0 already done  [P03-20240217-130208]
+    → 736 rectified, 0 already done  [P03-20240217-131219]
+    → 179 rectified, 0 already done  [P03-20240217-150310]
+    → 21 rectified, 0 already done  [P03-20240217-152152]
+    → 613 rectified, 0 already done  [P03-20240217-192543]
+    → 58 rectified, 0 already done  [P03-20240217-210126]
+    → 167 rectified, 0 already done  [P03-20240217-210958]
+    → 356 rectified, 0 already done  [P03-20240218-094452]
+    → 77 rectified, 0 already done  [P03-20240218-101509]
+    → 248 rectified, 0 already done  [P03-20240218-140054]
+    → 200 rectified, 0 already done  [P03-20240218-144430]
+    → 652 rectified, 0 already done  [P03-20240218-190556]
+    → 169 rectified, 0 already done  [P03-20240218-202148]
+
+=== P04 ===
+  Found 18 sequence folder(s)
+  f=607.21  cx=702.65  cy=713.21
+  Detected mask size: 1408x1408
+  Rectified RGB frame size: 1408x1408
+  Derived crop: (0,0)→(1408,1408)  =  1408x1408 px
+  Building rectification maps (1408x1408)...
+    → 386 rectified, 0 already done  [P04-20240413-142619]
+    → 133 rectified, 0 already done  [P04-20240413-145245]
+    → 335 rectified, 0 already done  [P04-20240413-151722]
+    → 54 rectified, 0 already done  [P04-20240414-064514]
+    → 401 rectified, 0 already done  [P04-20240414-065311]
+    → 201 rectified, 0 already done  [P04-20240414-072251]
+    → 63 rectified, 0 already done  [P04-20240414-162242]
+    → 272 rectified, 0 already done  [P04-20240414-162750]
+    → 56 rectified, 0 already done  [P04-20240414-164751]
+    → 68 rectified, 0 already done  [P04-20240414-165333]
+    → 148 rectified, 0 already done  [P04-20240414-170520]
+    → 45 rectified, 0 already done  [P04-20240414-172534]
+    → 262 rectified, 0 already done  [P04-20240414-173337]
+    → 128 rectified, 0 already done  [P04-20240414-175337]
+    → 296 rectified, 0 already done  [P04-20240414-181030]
+    → 172 rectified, 0 already done  [P04-20240415-175615]
+    → 341 rectified, 0 already done  [P04-20240415-181212]
+    → 180 rectified, 0 already done  [P04-20240415-184003]
+
+=== P05 ===
+  Found 26 sequence folder(s)
+  f=607.78  cx=703.11  cy=715.88
+  Detected mask size: 1408x1408
+  Rectified RGB frame size: 1408x1408
+  Derived crop: (0,0)→(1408,1408)  =  1408x1408 px
+  Building rectification maps (1408x1408)...
+    → 337 rectified, 0 already done  [P05-20240423-170021]
+    → 73 rectified, 0 already done  [P05-20240423-172243]
+    → 14 rectified, 0 already done  [P05-20240423-175745]
+    → 261 rectified, 0 already done  [P05-20240423-180529]
+    → 25 rectified, 0 already done  [P05-20240423-183358]
+    → 38 rectified, 0 already done  [P05-20240424-085204]
+    → 28 rectified, 0 already done  [P05-20240424-090812]
+    → 64 rectified, 0 already done  [P05-20240424-130119]
+    → 5 rectified, 0 already done  [P05-20240424-131231]
+    → 295 rectified, 0 already done  [P05-20240424-171038]
+    → 160 rectified, 0 already done  [P05-20240424-175101]
+    → 79 rectified, 0 already done  [P05-20240425-082420]
+    → 31 rectified, 0 already done  [P05-20240425-083515]
+    → 40 rectified, 0 already done  [P05-20240425-124420]
+    → 8 rectified, 0 already done  [P05-20240425-125459]
+    → 266 rectified, 0 already done  [P05-20240425-171455]
+    → 178 rectified, 0 already done  [P05-20240425-173353]
+    → 66 rectified, 0 already done  [P05-20240425-180658]
+    → 363 rectified, 0 already done  [P05-20240425-201444]
+    → 97 rectified, 0 already done  [P05-20240426-085333]
+    → 12 rectified, 0 already done  [P05-20240426-091011]
+    → 23 rectified, 0 already done  [P05-20240426-092000]
+    → 247 rectified, 0 already done  [P05-20240427-143353]
+    → 123 rectified, 0 already done  [P05-20240427-145526]
+    → 65 rectified, 0 already done  [P05-20240427-150402]
+    → 42 rectified, 0 already done  [P05-20240427-151808]
+
+=== P06 ===
+  Found 11 sequence folder(s)
+  f=607.78  cx=703.11  cy=715.88
+  Detected mask size: 1408x1408
+  Rectified RGB frame size: 1408x1408
+  Derived crop: (0,0)→(1408,1408)  =  1408x1408 px
+  Building rectification maps (1408x1408)...
+    → 488 rectified, 0 already done  [P06-20240510-090328]
+    → 38 rectified, 0 already done  [P06-20240510-094438]
+    → 354 rectified, 0 already done  [P06-20240510-100047]
+    → 890 rectified, 0 already done  [P06-20240510-104642]
+    → 236 rectified, 0 already done  [P06-20240510-115307]
+    → 229 rectified, 0 already done  [P06-20240510-121619]
+    → 123 rectified, 0 already done  [P06-20240510-135423]
+    → 365 rectified, 0 already done  [P06-20240510-140459]
+    → 701 rectified, 0 already done  [P06-20240511-102207]
+    → 134 rectified, 0 already done  [P06-20240511-121048]
+    → 38 rectified, 0 already done  [P06-20240511-122221]
+
+=== P07 ===
+  Found 9 sequence folder(s)
+  f=609.18  cx=700.11  cy=709.23
+  Detected mask size: 1408x1408
+  Rectified RGB frame size: 1408x1408
+  Derived crop: (0,0)→(1408,1408)  =  1408x1408 px
+  Building rectification maps (1408x1408)...
+    → 265 rectified, 0 already done  [P07-20240529-102652]
+    → 134 rectified, 0 already done  [P07-20240529-131737]
+    → 308 rectified, 0 already done  [P07-20240529-134410]
+    → 387 rectified, 0 already done  [P07-20240529-191007]
+    → 284 rectified, 0 already done  [P07-20240529-194518]
+    → 438 rectified, 0 already done  [P07-20240530-102543]
+    → 41 rectified, 0 already done  [P07-20240530-111344]
+    → 506 rectified, 0 already done  [P07-20240531-101357]
+    → 434 rectified, 0 already done  [P07-20240531-201703]
+
+=== P08 ===
+  Found 12 sequence folder(s)
+  f=609.18  cx=700.11  cy=709.23
+  Detected mask size: 1408x1408
+  Rectified RGB frame size: 1408x1408
+  Derived crop: (0,0)→(1408,1408)  =  1408x1408 px
+  Building rectification maps (1408x1408)...
+    → 58 rectified, 0 already done  [P08-20240613-122900]
+    → 337 rectified, 0 already done  [P08-20240613-123547]
+    → 358 rectified, 0 already done  [P08-20240614-085000]
+    → 423 rectified, 0 already done  [P08-20240614-125650]
+    → 57 rectified, 0 already done  [P08-20240614-132938]
+    → 345 rectified, 0 already done  [P08-20240614-184945]
+    → 794 rectified, 0 already done  [P08-20240617-130401]
+    → 669 rectified, 0 already done  [P08-20240617-184909]
+    → 712 rectified, 0 already done  [P08-20240618-163547]
+    → 274 rectified, 0 already done  [P08-20240618-171546]
+    → 749 rectified, 0 already done  [P08-20240620-180825]
+    → 393 rectified, 0 already done  [P08-20240622-141902]
+
+=== P09 ===
+  Found 13 sequence folder(s)
+  f=611.06  cx=697.40  cy=708.79
+  Detected mask size: 1408x1408
+  Rectified RGB frame size: 1408x1408
+  Derived crop: (0,0)→(1408,1408)  =  1408x1408 px
+  Building rectification maps (1408x1408)...
+    → 822 rectified, 0 already done  [P09-20240621-093545]
+    → 251 rectified, 0 already done  [P09-20240621-153208]
+    → 552 rectified, 0 already done  [P09-20240622-150155]
+    → 261 rectified, 0 already done  [P09-20240622-154652]
+    → 262 rectified, 0 already done  [P09-20240622-162302]
+    → 102 rectified, 0 already done  [P09-20240622-194642]
+    → 1184 rectified, 0 already done  [P09-20240623-120359]
+    → 62 rectified, 0 already done  [P09-20240623-153253]
+    → 93 rectified, 0 already done  [P09-20240623-153748]
+    → 10 rectified, 0 already done  [P09-20240623-154547]
+    → 709 rectified, 0 already done  [P09-20240624-160737]
+    → 326 rectified, 0 already done  [P09-20240624-165332]
+    → 94 rectified, 0 already done  [P09-20240625-103827]
+
+All done.
+Rectified masks saved under: /robodata/aaadkins/semantic-persistence-filter/external_annotated_data/extracted_data/rectified_masks
