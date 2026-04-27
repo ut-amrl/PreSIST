@@ -1,48 +1,14 @@
 #!/usr/bin/env python3
 """
-hd_epic_lookup.py
+hd_epic_lookup.py - Look up any mask by ID and get all details
 
-Lookup library for HD-EPIC dataset mappings. Reads directly from source files
-(mask_info.json and mp4_to_vrs_time_ns.csv) rather than derived data.
-
-Supports:
-  - participant + video + frame_number  ->  unix_us timestamp
-  - participant + video + unix_us       ->  frame_number
-  - participant + video + mask_id       ->  frame_number, timestamp, fixture, bbox
-  - participant + video + fixture       ->  all matching masks
-  - participant + fixture               ->  all matching masks across all videos
-
-Usage as a library:
-  from hd_epic_lookup import HDEpicLookup
-  lookup = HDEpicLookup()
-
-  # frame number -> timestamp
-  unix_us = lookup.frame_to_timestamp('P01', 'P01-20240202-110250', 3831)
-
-  # timestamp -> nearest frame number
-  frame_number = lookup.timestamp_to_frame('P01', 'P01-20240202-110250', 1706871897724417)
-
-  # mask id -> full info including paths
-  info = lookup.mask_info('P01', 'P01-20240202-110250', '8b139c81bb56c874')
-
-  # fixture -> all masks across dataset
-  masks = lookup.find_by_fixture('P01_counter.007')
-
-Usage from command line:
-  # frame -> timestamp
-  python3 hd_epic_lookup.py frame_to_timestamp P01 P01-20240202-110250 3831
-
-  # timestamp -> frame
-  python3 hd_epic_lookup.py timestamp_to_frame P01 P01-20240202-110250 1706871897724417
-
-  # mask info
-  python3 hd_epic_lookup.py mask_info P01 P01-20240202-110250 8b139c81bb56c874
-
-  # find by fixture
-  python3 hd_epic_lookup.py find_by_fixture P01_counter.007
-
-  # find by fixture for one participant
-  python3 hd_epic_lookup.py find_by_fixture P01_counter.007 --participant P01
+Usage:
+  python3 hd_epic_lookup.py <mask_id>
+  python3 hd_epic_lookup.py frame_to_timestamp P01-20240202-110250 3831
+  python3 hd_epic_lookup.py timestamp_to_frame P01-20240202-110250 1706871897724417
+  python3 hd_epic_lookup.py masks_at_frame P01 P01-20240202-110250 3831
+  python3 hd_epic_lookup.py find_by_fixture P01_counter.007 [--participant P01]
+  python3 hd_epic_lookup.py all_fixtures
 """
 
 import csv
@@ -54,16 +20,13 @@ from pathlib import Path
 
 import pytz
 
-# ---------------------------------------------------------------------------
-# Default paths — edit these if your layout differs
-# ---------------------------------------------------------------------------
 DEFAULT_MASK_JSON   = "/robodata/aaadkins/Datasets/semPersFilter/evalCandidates/hd-epic/HD-EPIC/mask_info.json"
 DEFAULT_VIDEOS_ROOT = "/robodata/aaadkins/Datasets/semPersFilter/evalCandidates/hd-epic/HD-EPIC/Videos"
 DEFAULT_FRAMES_ROOT = "/robodata/aaadkins/semantic-persistence-filter/external_annotated_data/extracted_data/hd-epic"
 DEFAULT_MASKS_ROOT  = "/robodata/aaadkins/semantic-persistence-filter/external_annotated_data/extracted_data/rectified_masks"
 
-RECORDING_TIMEZONE  = pytz.timezone("Europe/London")
-CROP_OFFSET         = 57  # (1408 - 1294) // 2
+RECORDING_TIMEZONE = pytz.timezone("Europe/London")
+CROP_OFFSET        = 57  # (1408 - 1294) // 2
 
 
 class HDEpicLookup:
@@ -80,281 +43,239 @@ class HDEpicLookup:
         with open(mask_json) as f:
             self._mask_data = json.load(f)
 
-        # Build fixture -> [(video_id, mask_id, info)] index at init time
-        self._fixture_index = {}
+        # Build all indexes in one pass
+        self._mask_index    = {}   # mask_id    -> (video_id, info)
+        self._fixture_index = {}   # fixture    -> [(video_id, mask_id, info)]
+        self._frame_index   = {}   # (video_id, frame_number) -> [mask_id]
+
         for video_id, masks in self._mask_data.items():
             for mask_id, info in masks.items():
+                self._mask_index[mask_id] = (video_id, info)
+
                 fixture = info.get("fixture", "")
-                if fixture not in self._fixture_index:
-                    self._fixture_index[fixture] = []
-                self._fixture_index[fixture].append((video_id, mask_id, info))
+                self._fixture_index.setdefault(fixture, []).append(
+                    (video_id, mask_id, info)
+                )
+
+                frame_number = info["frame_number"]
+                key = (video_id, frame_number)
+                self._frame_index.setdefault(key, []).append(mask_id)
 
     # -----------------------------------------------------------------------
-    # CSV loading — cached per video_id so we only read each file once
+    # CSV / timestamp helpers
     # -----------------------------------------------------------------------
 
     @lru_cache(maxsize=256)
     def _load_csv(self, video_id: str):
-        """Load mp4_to_vrs_time_ns.csv for a video. Cached after first load."""
         participant = video_id.split("-")[0]
         csv_path = self.videos_root / participant / f"{video_id}_mp4_to_vrs_time_ns.csv"
         if not csv_path.exists():
             raise FileNotFoundError(f"CSV not found: {csv_path}")
-        rows = []
         with open(csv_path) as f:
-            for row in csv.DictReader(f):
-                rows.append(float(row["vrs_device_time_ns"]))
-        return rows
+            return [float(row["vrs_device_time_ns"]) for row in csv.DictReader(f)]
 
     @lru_cache(maxsize=256)
     def _vrs_offset(self, video_id: str) -> int:
-        """VRS device clock offset to convert to Unix epoch nanoseconds."""
         parts    = video_id.split("-")
         dt_naive = datetime.strptime(parts[1] + parts[2], "%Y%m%d%H%M%S")
-        dt_local = RECORDING_TIMEZONE.localize(dt_naive)
-        start_us = int(dt_local.astimezone(timezone.utc).timestamp() * 1e6)
-        rows = self._load_csv(video_id)
-        return int(start_us * 1000) - int(rows[0])
+        start_us = int(RECORDING_TIMEZONE.localize(dt_naive)
+                       .astimezone(timezone.utc).timestamp() * 1e6)
+        return int(start_us * 1000) - int(self._load_csv(video_id)[0])
 
     def _vrs_to_unix_us(self, video_id: str, vrs_ns: float) -> int:
         return int((vrs_ns + self._vrs_offset(video_id)) / 1000)
 
     # -----------------------------------------------------------------------
-    # Public API
+    # Core lookups
     # -----------------------------------------------------------------------
 
-    def frame_to_timestamp(self, participant: str, video_id: str,
-                            frame_number: int) -> int:
-        """
-        Convert a frame number to Unix epoch microseconds.
-
-        Args:
-            participant:  e.g. 'P01'
-            video_id:     e.g. 'P01-20240202-110250'
-            frame_number: MP4 frame index (0-based, 30fps)
-
-        Returns:
-            Unix epoch microseconds (int) — matches the RGB filename stem
-        """
+    def frame_to_timestamp(self, video_id: str, frame_number: int) -> int:
+        """Convert a frame number to Unix epoch microseconds."""
         rows = self._load_csv(video_id)
         if frame_number >= len(rows):
-            raise ValueError(f"frame_number {frame_number} out of range "
-                             f"(video has {len(rows)} frames)")
+            raise ValueError(f"frame {frame_number} out of range ({len(rows)} frames)")
         return self._vrs_to_unix_us(video_id, rows[frame_number])
 
-
-    def timestamp_to_frame(self, participant: str, video_id: str,
-                           unix_us: int) -> dict:
+    def timestamp_to_frame(self, video_id: str, unix_us: int) -> dict:
         """
         Find the frame number closest to a Unix epoch microsecond timestamp.
 
-        Args:
-            participant: e.g. 'P01'
-            video_id:    e.g. 'P01-20240202-110250'
-            unix_us:     Unix epoch microseconds
-
         Returns:
-            dict with keys:
-              frame_number  - closest frame index
-              unix_us       - actual timestamp of that frame
-              offset_us     - how far off from the requested timestamp
+            frame_number  - closest frame index
+            unix_us       - actual timestamp of that frame
+            offset_us     - how far off from the requested timestamp (microseconds)
         """
-        rows   = self._load_csv(video_id)
-        offset = self._vrs_offset(video_id)
-
+        rows       = self._load_csv(video_id)
+        offset     = self._vrs_offset(video_id)
         target_vrs = unix_us * 1000 - offset
         best_idx   = min(range(len(rows)), key=lambda i: abs(rows[i] - target_vrs))
         actual_us  = self._vrs_to_unix_us(video_id, rows[best_idx])
-
         return {
             "frame_number": best_idx,
             "unix_us":      actual_us,
             "offset_us":    abs(actual_us - unix_us),
         }
 
-
-    def mask_info(self, participant: str, video_id: str, mask_id: str) -> dict:
+    def lookup(self, mask_id: str) -> dict:
         """
-        Get full info for a mask including file paths.
-
-        Args:
-            participant: e.g. 'P01'
-            video_id:    e.g. 'P01-20240202-110250'
-            mask_id:     hash e.g. '8b139c81bb56c874'
-
-        Returns:
-            dict with keys:
-              mask_id, frame_number, unix_us, fixture, bbox_rectified,
-              rgb_path, mask_path, rgb_exists, mask_exists
+        Give a mask_id, get everything back.
+        This is the main entry point for most use cases.
         """
-        if video_id not in self._mask_data:
-            raise KeyError(f"video_id {video_id} not found in mask_info.json")
-        if mask_id not in self._mask_data[video_id]:
-            raise KeyError(f"mask_id {mask_id} not found in {video_id}")
+        if mask_id not in self._mask_index:
+            raise KeyError(f"mask_id '{mask_id}' not found in dataset")
 
-        info         = self._mask_data[video_id][mask_id]
-        frame_number = info["frame_number"]
-        unix_us      = self.frame_to_timestamp(participant, video_id, frame_number)
+        video_id, info = self._mask_index[mask_id]
+        participant    = video_id.split("-")[0]
+        frame_number   = info["frame_number"]
+        unix_us        = self.frame_to_timestamp(video_id, frame_number)
 
         rgb_path  = self.frames_root / participant / video_id / "rgb" / f"{unix_us}.png"
         mask_path = self.masks_root  / participant / video_id / f"{mask_id}.png"
 
         bbox = info.get("bbox", [None]*4)
-        bbox_rectified = {
-            "x1": int(bbox[0]) - CROP_OFFSET if bbox[0] is not None else None,
-            "y1": int(bbox[1]) - CROP_OFFSET if bbox[1] is not None else None,
-            "x2": int(bbox[2]) - CROP_OFFSET if bbox[2] is not None else None,
-            "y2": int(bbox[3]) - CROP_OFFSET if bbox[3] is not None else None,
-        }
+        bbox_rectified = [
+            int(bbox[0]) - CROP_OFFSET,
+            int(bbox[1]) - CROP_OFFSET,
+            int(bbox[2]) - CROP_OFFSET,
+            int(bbox[3]) - CROP_OFFSET,
+        ] if None not in bbox else None
 
         return {
             "mask_id":        mask_id,
+            "participant":    participant,
+            "video_id":       video_id,
             "frame_number":   frame_number,
             "unix_us":        unix_us,
             "fixture":        info.get("fixture", ""),
+            "3d_location":    info.get("3d_location"),
+            "bbox_original":  bbox,
             "bbox_rectified": bbox_rectified,
-            "rgb_path":       rgb_path,
-            "mask_path":      mask_path,
+            "rgb_path":       str(rgb_path),
+            "mask_path":      str(mask_path),
             "rgb_exists":     rgb_path.exists(),
             "mask_exists":    mask_path.exists(),
         }
 
-
-    def find_by_fixture(self, fixture: str, participant: str = None) -> list:
+    def masks_at_frame(self, participant: str, video_id: str,
+                       frame_number: int) -> list:
         """
-        Find all masks for a given fixture label across the dataset.
-
-        Args:
-            fixture:     e.g. 'P01_counter.007'
-            participant: optional filter e.g. 'P01'
+        Given participant + video + frame_number, return all masks on that frame.
 
         Returns:
-            list of dicts, each with:
-              participant, video_id, mask_id, frame_number, unix_us,
-              rgb_path, mask_path, rgb_exists, mask_exists
+            list of dicts (same format as lookup()), sorted by fixture name
         """
-        matches = self._fixture_index.get(fixture, [])
+        mask_ids = self._frame_index.get((video_id, frame_number), [])
+        if not mask_ids:
+            return []
         results = []
-        for video_id, mask_id, info in matches:
+        for mask_id in mask_ids:
+            try:
+                results.append(self.lookup(mask_id))
+            except Exception as e:
+                results.append({"mask_id": mask_id, "error": str(e)})
+        return sorted(results, key=lambda x: x.get("fixture", ""))
+
+    def find_by_fixture(self, fixture: str, participant: str = None) -> list:
+        """Get all masks for a fixture label, optionally filtered by participant."""
+        results = []
+        for video_id, mask_id, info in self._fixture_index.get(fixture, []):
             p = video_id.split("-")[0]
             if participant and p != participant:
                 continue
             try:
-                frame_number = info["frame_number"]
-                unix_us      = self.frame_to_timestamp(p, video_id, frame_number)
-                rgb_path     = self.frames_root / p / video_id / "rgb" / f"{unix_us}.png"
-                mask_path    = self.masks_root  / p / video_id / f"{mask_id}.png"
-                results.append({
-                    "participant": p,
-                    "video_id":    video_id,
-                    "mask_id":     mask_id,
-                    "frame_number": frame_number,
-                    "unix_us":     unix_us,
-                    "rgb_path":    rgb_path,
-                    "mask_path":   mask_path,
-                    "rgb_exists":  rgb_path.exists(),
-                    "mask_exists": mask_path.exists(),
-                })
+                results.append(self.lookup(mask_id))
             except Exception as e:
-                results.append({
-                    "participant": p,
-                    "video_id":    video_id,
-                    "mask_id":     mask_id,
-                    "error":       str(e),
-                })
-        return results
+                results.append({"mask_id": mask_id, "video_id": video_id, "error": str(e)})
+        return sorted(results, key=lambda x: (x.get("video_id", ""), x.get("frame_number", 0)))
 
-
-    def all_masks_for_video(self, participant: str, video_id: str) -> list:
-        """
-        Get info for every mask in a video, sorted by frame number.
-
-        Returns:
-            list of dicts (same format as mask_info())
-        """
-        if video_id not in self._mask_data:
-            return []
-        results = []
-        for mask_id in self._mask_data[video_id]:
-            try:
-                results.append(self.mask_info(participant, video_id, mask_id))
-            except Exception as e:
-                results.append({"mask_id": mask_id, "error": str(e)})
-        return sorted(results, key=lambda x: x.get("frame_number", 0))
+    def all_fixtures(self) -> list:
+        """List all unique fixture labels in the dataset."""
+        return sorted(self._fixture_index.keys())
 
 
 # ---------------------------------------------------------------------------
-# Command-line interface
+# CLI
 # ---------------------------------------------------------------------------
+
+def _print_mask(result: dict):
+    print()
+    for k, v in result.items():
+        print(f"  {k:<16} {v}")
+    print()
+
 
 def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(description="HD-EPIC dataset lookup tool.")
-    subparsers = parser.add_subparsers(dest="command")
-
-    # frame_to_timestamp
-    p1 = subparsers.add_parser("frame_to_timestamp",
-                                help="Convert frame number to Unix timestamp")
-    p1.add_argument("participant")
-    p1.add_argument("video_id")
-    p1.add_argument("frame_number", type=int)
-
-    # timestamp_to_frame
-    p2 = subparsers.add_parser("timestamp_to_frame",
-                                help="Find frame number closest to timestamp")
-    p2.add_argument("participant")
-    p2.add_argument("video_id")
-    p2.add_argument("unix_us", type=int)
-
-    # mask_info
-    p3 = subparsers.add_parser("mask_info",
-                                help="Get full info for a mask")
-    p3.add_argument("participant")
-    p3.add_argument("video_id")
-    p3.add_argument("mask_id")
-
-    # find_by_fixture
-    p4 = subparsers.add_parser("find_by_fixture",
-                                help="Find all masks for a fixture label")
-    p4.add_argument("fixture")
-    p4.add_argument("--participant", default=None)
-
-    args = parser.parse_args()
-
-    if not args.command:
-        parser.print_help()
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  python3 hd_epic_lookup.py <mask_id>")
+        print("  python3 hd_epic_lookup.py frame_to_timestamp <video_id> <frame_number>")
+        print("  python3 hd_epic_lookup.py timestamp_to_frame <video_id> <unix_us>")
+        print("  python3 hd_epic_lookup.py masks_at_frame <participant> <video_id> <frame_number>")
+        print("  python3 hd_epic_lookup.py find_by_fixture <fixture> [--participant P01]")
+        print("  python3 hd_epic_lookup.py all_fixtures")
         sys.exit(1)
 
     lookup = HDEpicLookup()
+    cmd    = sys.argv[1]
 
-    if args.command == "frame_to_timestamp":
-        unix_us = lookup.frame_to_timestamp(args.participant, args.video_id,
-                                             args.frame_number)
-        print(f"unix_us:      {unix_us}")
-        print(f"rgb_filename: {unix_us}.png")
+    # Plain mask_id lookup
+    if cmd not in ("frame_to_timestamp", "timestamp_to_frame",
+                   "masks_at_frame", "find_by_fixture", "all_fixtures"):
+        try:
+            _print_mask(lookup.lookup(cmd))
+        except KeyError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
 
-    elif args.command == "timestamp_to_frame":
-        result = lookup.timestamp_to_frame(args.participant, args.video_id,
-                                            args.unix_us)
+    elif cmd == "frame_to_timestamp":
+        video_id     = sys.argv[2]
+        frame_number = int(sys.argv[3])
+        unix_us      = lookup.frame_to_timestamp(video_id, frame_number)
+        print(f"\n  frame_number  {frame_number}")
+        print(f"  unix_us       {unix_us}")
+        print(f"  rgb_filename  {unix_us}.png\n")
+
+    elif cmd == "timestamp_to_frame":
+        video_id = sys.argv[2]
+        unix_us  = int(sys.argv[3])
+        result   = lookup.timestamp_to_frame(video_id, unix_us)
+        print()
         for k, v in result.items():
-            print(f"{k}: {v}")
+            print(f"  {k:<16} {v}")
+        print()
 
-    elif args.command == "mask_info":
-        result = lookup.mask_info(args.participant, args.video_id, args.mask_id)
-        for k, v in result.items():
-            print(f"{k}: {v}")
+    elif cmd == "masks_at_frame":
+        participant  = sys.argv[2]
+        video_id     = sys.argv[3]
+        frame_number = int(sys.argv[4])
+        results      = lookup.masks_at_frame(participant, video_id, frame_number)
+        if not results:
+            print(f"\n  No masks found for frame {frame_number} in {video_id}\n")
+        else:
+            print(f"\n  {len(results)} mask(s) on frame {frame_number} in {video_id}")
+            for r in results:
+                _print_mask(r)
 
-    elif args.command == "find_by_fixture":
-        results = lookup.find_by_fixture(args.fixture, args.participant)
-        print(f"Found {len(results)} masks for fixture '{args.fixture}'")
+    elif cmd == "find_by_fixture":
+        fixture     = sys.argv[2]
+        participant = sys.argv[4] if len(sys.argv) > 4 and sys.argv[3] == "--participant" else None
+        results     = lookup.find_by_fixture(fixture, participant)
+        print(f"\n  Found {len(results)} masks for '{fixture}'\n")
         for r in results:
             if "error" in r:
-                print(f"  ERROR {r['video_id']} {r['mask_id']}: {r['error']}")
+                print(f"  ERROR {r['mask_id']}: {r['error']}")
             else:
                 print(f"  {r['participant']}  {r['video_id']}  "
-                      f"frame={r['frame_number']}  mask={r['mask_id']}  "
+                      f"frame={r['frame_number']}  fixture={r['fixture']}  "
                       f"rgb_exists={r['rgb_exists']}  mask_exists={r['mask_exists']}")
+        print()
+
+    elif cmd == "all_fixtures":
+        fixtures = lookup.all_fixtures()
+        print(f"\n  {len(fixtures)} fixtures:\n")
+        for f in fixtures:
+            print(f"  {f}")
+        print()
 
 
 if __name__ == "__main__":
