@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import random
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -11,6 +12,10 @@ import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 from tqdm import tqdm
+
+# Allow importing exmaps_rewrites.py from the parent (train_dataset_manifests) dir.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from exmaps_rewrites import EXMAPS_PREFIX, NEW_TO_OLD, SUBDIR_REWRITES  # noqa: E402
 
 
 IMAGE_EXTENSIONS = {
@@ -203,6 +208,77 @@ def weighted_fair_mix(
     return mixed
 
 
+def filter_exmaps_correct_rot(
+    files: List[Path],
+    dataset_root: Path,
+) -> List[Path]:
+    """
+    For each file under one of the SUBDIR_REWRITES (old -> new) pairs:
+      - If both exmaps/<old>/F and exmaps/<new>/F are in `files`, drop the old.
+      - If only the old is present, keep it.
+      - If only the new is present (no original counterpart), drop it.
+
+    Files that don't fall under any mapped (old or new) subdirectory are passed
+    through unchanged.
+    """
+    exmaps_root = (dataset_root / "exmaps").resolve()
+
+    # Index discovered exmaps files by their path relative to exmaps/ for O(1) lookup.
+    discovered_rel: set = set()
+    for f in files:
+        try:
+            rel = f.resolve().relative_to(exmaps_root).as_posix()
+        except ValueError:
+            continue
+        discovered_rel.add(rel)
+
+    dropped_old = 0
+    dropped_orphan_new = 0
+    kept: List[Path] = []
+
+    for f in files:
+        try:
+            rel = f.resolve().relative_to(exmaps_root).as_posix()
+        except ValueError:
+            kept.append(f)
+            continue
+
+        last_slash = rel.rfind("/")
+        if last_slash == -1:
+            kept.append(f)
+            continue
+
+        dir_part = rel[:last_slash]
+        basename = rel[last_slash + 1:]
+
+        if dir_part in SUBDIR_REWRITES:
+            new_rel = f"{SUBDIR_REWRITES[dir_part]}/{basename}"
+            if new_rel in discovered_rel:
+                dropped_old += 1
+                continue
+            kept.append(f)
+            continue
+
+        if dir_part in NEW_TO_OLD:
+            old_rel = f"{NEW_TO_OLD[dir_part]}/{basename}"
+            if old_rel not in discovered_rel:
+                dropped_orphan_new += 1
+                continue
+            kept.append(f)
+            continue
+
+        kept.append(f)
+
+    if dropped_old or dropped_orphan_new:
+        print(
+            f"  exmaps correct_rot filter: dropped {dropped_old} old file(s) "
+            f"superseded by _correct_rot, dropped {dropped_orphan_new} "
+            f"orphan _correct_rot file(s) with no original."
+        )
+
+    return kept
+
+
 def to_relative_paths(dataset_root: Path, files: List[Path]) -> List[str]:
     rels = []
     for path in tqdm(files, desc="Resolving paths", unit="file", leave=False):
@@ -256,6 +332,7 @@ def main(cfg: ManifestConfig) -> None:
             recursive=cfg.recursive,
             sort_before_shuffle=cfg.sort_before_shuffle,
         )
+        files = filter_exmaps_correct_rot(files, dataset_root)
         rng.shuffle(files)
         per_source_files.append(files)
         print(f"Found {len(files)} images under source='{src_cfg.path}' weight={src_cfg.weight}")
