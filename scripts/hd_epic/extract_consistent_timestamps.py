@@ -13,6 +13,8 @@ with three pieces per sequence:
                                  calibration (fixes the latent bug in rectify_masks_hd_epic.py
                                  that uses the FIRST per-participant calibration for ALL sequences).
   frame_index_to_unix_us.csv   — self-describing source_frame_number → unix_us map.
+  intrinsics.json              — pinhole intrinsics (fx,fy,cx,cy,width,height,K)
+                                 for the rectified+cropped RGB images in this sequence.
 
 Plus one CSV per participant at
   /robodata/aaadkins/.../extracted_data/hd-epic-consistent-timestamps/<P>/mapping.csv
@@ -195,6 +197,34 @@ def process_sequence(participant: str,
     seq_out_dir = output_root / participant / video_id
     rgb_dir = seq_out_dir / "rgb"
     rgb_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pinhole intrinsics for the rectified+cropped RGB images.
+    # build_rectify_maps places the principal point at the 1408x1408 center
+    # using params[0] as focal length; cropping shifts cx,cy by (x0,y0).
+    intrinsics_path = seq_out_dir / "intrinsics.json"
+    if force or not intrinsics_path.exists():
+        fx = float(params[0])
+        cx_rect = (RECTIFIED_SIZE / 2.0) - x0
+        cy_rect = (RECTIFIED_SIZE / 2.0) - y0
+        intrinsics = {
+            "model": "PINHOLE",
+            "width":  rgb_w_actual,
+            "height": rgb_h_actual,
+            "fx": fx,
+            "fy": fx,
+            "cx": cx_rect,
+            "cy": cy_rect,
+            "K": [[fx, 0.0, cx_rect],
+                  [0.0, fx, cy_rect],
+                  [0.0, 0.0, 1.0]],
+            "source_calibration": str(calib_file),
+            "rectified_size_pre_crop": RECTIFIED_SIZE,
+            "crop_xyxy_in_rectified": [x0, y0, x1, y1],
+        }
+        with open(intrinsics_path, "w") as f:
+            json.dump(intrinsics, f, indent=2)
+        print(f"  intrinsics: fx={fx:.3f} cx={cx_rect:.3f} cy={cy_rect:.3f} "
+              f"({rgb_w_actual}x{rgb_h_actual}) -> {intrinsics_path.name}")
 
     fn_to_unix = {}
     frame_source = {}
@@ -440,6 +470,105 @@ def process_participant(participant: str,
 
 
 # ---------------------------------------------------------------------------
+# Intrinsics-only mode
+# ---------------------------------------------------------------------------
+
+def write_intrinsics_for_sequence(participant: str,
+                                  video_id: str,
+                                  calib_root: Path,
+                                  output_root: Path,
+                                  force: bool) -> bool:
+    """Write intrinsics.json for one sequence using the per-sequence calibration
+    and the crop inferred from any already-extracted RGB frame on disk. Does
+    NOT rebuild rectify maps or touch RGB/mask files."""
+
+    seq_out_dir = output_root / participant / video_id
+    intrinsics_path = seq_out_dir / "intrinsics.json"
+    if intrinsics_path.exists() and not force:
+        print(f"  [{video_id}] intrinsics.json exists; skipping (use --force)")
+        return True
+
+    calib_file = get_calib_json(calib_root, participant, video_id)
+    if calib_file is None:
+        print(f"  [{video_id}] [SKIP] no device_calibration.json")
+        return False
+    params, cx_src, cy_src, valid_radius = load_rgb_calib_meta(str(calib_file))
+
+    # Fast path: derive crop from any extracted RGB frame already on disk.
+    # Fall back: rebuild rectify maps and compute the strict crop ourselves.
+    rgb_dir = seq_out_dir / "rgb"
+    sample = None
+    if rgb_dir.exists():
+        sample = next(iter(sorted(rgb_dir.glob("*.png"))), None)
+
+    crop_source = None
+    if sample is not None:
+        img = cv2.imread(str(sample), cv2.IMREAD_UNCHANGED)
+        if img is not None:
+            h, w = img.shape[:2]
+            x0 = (RECTIFIED_SIZE // 2) - w // 2
+            y0 = (RECTIFIED_SIZE // 2) - h // 2
+            x1 = x0 + w
+            y1 = y0 + h
+            crop_source = f"existing_rgb:{sample.name}"
+
+    if crop_source is None:
+        # No frames yet — compute the same strict crop the extractor uses.
+        print(f"  [{video_id}] no RGB on disk yet; computing crop from calibration")
+        map1_rgb, map2_rgb = build_rectify_maps(params, RECTIFIED_SIZE, RECTIFIED_SIZE)
+        x0, y0, x1, y1 = compute_crop_strict(
+            map1_rgb, map2_rgb, cx_src, cy_src, valid_radius,
+            RECTIFIED_SIZE, RECTIFIED_SIZE)
+        w = x1 - x0
+        h = y1 - y0
+        crop_source = "computed_from_calibration"
+
+    fx = float(params[0])
+    cx_rect = (RECTIFIED_SIZE / 2.0) - x0
+    cy_rect = (RECTIFIED_SIZE / 2.0) - y0
+    intrinsics = {
+        "model": "PINHOLE",
+        "width":  w,
+        "height": h,
+        "fx": fx,
+        "fy": fx,
+        "cx": cx_rect,
+        "cy": cy_rect,
+        "K": [[fx, 0.0, cx_rect],
+              [0.0, fx, cy_rect],
+              [0.0, 0.0, 1.0]],
+        "source_calibration": str(calib_file),
+        "rectified_size_pre_crop": RECTIFIED_SIZE,
+        "crop_xyxy_in_rectified": [x0, y0, x1, y1],
+        "crop_source": crop_source,
+    }
+    seq_out_dir.mkdir(parents=True, exist_ok=True)
+    with open(intrinsics_path, "w") as f:
+        json.dump(intrinsics, f, indent=2)
+    print(f"  [{video_id}] fx={fx:.3f} cx={cx_rect:.3f} cy={cy_rect:.3f} "
+          f"({w}x{h}) -> {intrinsics_path}")
+    return True
+
+
+def run_intrinsics_only(participants_to_videos: dict,
+                        calib_root: Path,
+                        output_root: Path,
+                        force: bool):
+    total_ok = 0
+    total_skip = 0
+    for participant, video_ids in sorted(participants_to_videos.items()):
+        print(f"\n--- {participant}: {len(video_ids)} sequence(s) ---")
+        for video_id in sorted(video_ids):
+            ok = write_intrinsics_for_sequence(
+                participant, video_id, calib_root, output_root, force)
+            if ok:
+                total_ok += 1
+            else:
+                total_skip += 1
+    print(f"\nIntrinsics: {total_ok} ok, {total_skip} skipped")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -466,6 +595,10 @@ def main():
                         help="Process every participant and sequence.")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing PNGs and mapping.csv (default: skip).")
+    parser.add_argument("--intrinsics_only", action="store_true",
+                        help="Only (re)write intrinsics.json per sequence, using the "
+                             "crop inferred from already-extracted RGB frames. Does not "
+                             "touch RGB or masks. Safe to run alongside extraction.")
     args = parser.parse_args()
 
     for p, name in [(Path(args.mask_json),   "mask_json"),
@@ -487,6 +620,20 @@ def main():
 
     if args.all:
         participants = sorted(set(k.split("-")[0] for k in mask_data.keys()))
+    else:
+        participants = [args.participant]
+
+    if args.intrinsics_only:
+        only_video = None if args.all else (args.video if args.video else None)
+        p_to_vids = {}
+        for p in participants:
+            vids = sorted([k for k in mask_data.keys() if k.startswith(p + "-")])
+            if only_video:
+                vids = [only_video] if only_video in vids else (
+                    [only_video] if (videos_root / p / f"{only_video}.mp4").exists() else [])
+            p_to_vids[p] = vids
+        run_intrinsics_only(p_to_vids, calib_root, output_root, args.force)
+    elif args.all:
         print(f"Processing all participants: {participants}")
         for participant in participants:
             process_participant(participant, mask_data, videos_root, calib_root,
