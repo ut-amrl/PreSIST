@@ -1107,7 +1107,7 @@ kitti/sequences/02/image_2/004352.png
 kitti/sequences/15/image_3/000781.png
 CODa/2d_rect/cam0/22/2d_rect_cam0_22_9030.png
 exmaps/2020-06-17/morning/run_3/only_jpgs/frame_1592381217683.jpg
-openloris_location/home/003/004.png
+openloris_location/home/003_correct_rot/004.png
 pklot/test/2013-03-12_08_20_02_jpg.rf.10330d9ba73a56bfbe6d92743fc608b6.jpg
 kitti/sequences/08/image_3/001242.png
 CODa/2d_rect/cam0/15/2d_rect_cam0_15_7458.png

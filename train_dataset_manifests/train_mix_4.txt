@@ -86,7 +86,7 @@ kitti/sequences/02/image_3/001668.png
 kitti/sequences/05/image_3/000231.png
 CODa/2d_rect/cam0/15/2d_rect_cam0_15_8884.png
 exmaps/2020-06-19/evening/run_1/only_jpgs/frame_1592580126697.jpg
-openloris_location/home/002/010.png
+openloris_location/home/002_correct_rot/010.png
 pklot/valid/2013-03-20_07_50_02_jpg.rf.62ea5a91da3e88ec2d1c819dae6549c7.jpg
 kitti/sequences/19/image_2/004946.png
 EPIC-KITCHENS/P05/rgb_frames/P05_01/frame_0000002486.jpg
@@ -434,7 +434,7 @@ kitti/sequences/14/image_2/000256.png
 kitti/sequences/00/image_2/001531.png
 CODa/2d_rect/cam1/22/2d_rect_cam1_22_15118.png
 exmaps/2020-04-26/only_jpgs/frame_1587920664808.jpg
-openloris_location/home/002/007.png
+openloris_location/home/002_correct_rot/007.png
 pklot/train/2012-09-18_07_44_51_jpg.rf.9b5ae77ba9fd221cd77ecb8584a85ed0.jpg
 kitti/sequences/06/image_3/000145.png
 EPIC-KITCHENS/P05/rgb_frames/P05_04/frame_0000017176.jpg
@@ -642,7 +642,7 @@ kitti/sequences/09/image_3/001129.png
 kitti/sequences/00/image_2/001677.png
 CODa/2d_rect/cam0/22/2d_rect_cam0_22_7238.png
 exmaps/2020-06-13/run_1/only_jpgs/frame_1592032968703.jpg
-openloris_location/home/002/009.png
+openloris_location/home/002_correct_rot/009.png
 pklot/train/2012-10-30_13_57_16_jpg.rf.27a38c18e25eb0da096daa95743b4c70.jpg
 kitti/sequences/10/image_3/000283.png
 CODa/2d_rect/cam1/22/2d_rect_cam1_22_12477.png
@@ -1101,7 +1101,7 @@ kitti/sequences/08/image_2/002200.png
 kitti/sequences/01/image_2/000361.png
 CODa/2d_rect/cam1/8/2d_rect_cam1_8_10065.png
 exmaps/2020-06-18/morning/run_2/only_jpgs/frame_1592471444447.jpg
-openloris_location/home/003/002.png
+openloris_location/home/003_correct_rot/002.png
 pklot/train/2013-01-20_11_00_06_jpg.rf.2ea1a517d82bca431b881a64be8df6d5.jpg
 kitti/sequences/01/image_2/001089.png
 CODa/2d_rect/cam0/14/2d_rect_cam0_14_11775.png
@@ -1156,7 +1156,7 @@ kitti/sequences/19/image_3/001794.png
 CODa/2d_raw/cam0/1/2d_raw_cam0_1_3278.png
 coco/train2017/000000059740.jpg
 exmaps/2020-06-22/morning/run_1/only_jpgs/frame_1592815555597.jpg
-openloris_location/home/002/008.png
+openloris_location/home/002_correct_rot/008.png
 pklot/train/2012-12-13_20_15_17_jpg.rf.06e173ad0ca4823984664d7e2b440e6d.jpg
 sun397/295/84681.jpg
 kitti/sequences/07/image_2/000924.png

@@ -1290,7 +1290,7 @@ kitti/sequences/12/image_3/000110.png
 CODa/2d_rect/cam0/22/2d_rect_cam0_22_12379.png
 coco/train2017/000000031748.jpg
 exmaps/2020-06-21/morning/run_1/only_jpgs/frame_1592729552292.jpg
-openloris_location/home/002/005.png
+openloris_location/home/002_correct_rot/005.png
 pklot/train/2013-03-12_08_10_02_jpg.rf.24eccca2bd121cc29aaa15cff36f4ddd.jpg
 sun397/193/56369.jpg
 kitti/sequences/21/image_2/001186.png

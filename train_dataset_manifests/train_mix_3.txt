@@ -43,7 +43,7 @@ kitti/sequences/00/image_3/002859.png
 kitti/sequences/07/image_2/000309.png
 CODa/2d_rect/cam0/15/2d_rect_cam0_15_9096.png
 exmaps/2020-03-22/only_jpgs/frame_1584866304818.jpg
-openloris_location/home/002/006.png
+openloris_location/home/002_correct_rot/006.png
 pklot/test/2012-10-14_05_59_35_jpg.rf.715c12876416871c9360b6095378a2c4.jpg
 kitti/sequences/19/image_3/001213.png
 CODa/2d_rect/cam1/22/2d_rect_cam1_22_4672.png
@@ -885,7 +885,7 @@ kitti/sequences/00/image_2/002235.png
 CODa/2d_raw/cam0/1/2d_raw_cam0_1_1415.png
 coco/train2017/000000105515.jpg
 exmaps/2020-04-09/only_jpgs/frame_1586453634570.jpg
-openloris_location/home/002/002.png
+openloris_location/home/002_correct_rot/002.png
 pklot/train/2013-03-06_09_00_03_jpg.rf.e2ebe82b00611d3e7d1710765c640507.jpg
 sun397/95/30075.jpg
 kitti/sequences/18/image_2/001647.png
@@ -1216,7 +1216,7 @@ kitti/sequences/19/image_3/002671.png
 CODa/2d_rect/cam1/15/2d_rect_cam1_15_5763.png
 coco/train2017/000000478835.jpg
 exmaps/2020-05-02/run_1_correct_rot/frame_1588429700892.jpg
-openloris_location/home/003/001.png
+openloris_location/home/003_correct_rot/001.png
 pklot/train/2013-03-05_11_25_06_jpg.rf.c6e2de70df8501fd7540172efce85e77.jpg
 sun397/341/96114.jpg
 kitti/sequences/07/image_2/000299.png
@@ -1485,7 +1485,7 @@ pklot/train/2013-03-03_16_05_11_jpg.rf.7e5091f9b129e19f1ff4fcab4ca4ee57.jpg
 kitti/sequences/21/image_3/001713.png
 CODa/2d_rect/cam0/8/2d_rect_cam0_8_8678.png
 exmaps/2020-06-19/evening/run_1/only_jpgs/frame_1592580082122.jpg
-openloris_location/home/003/005.png
+openloris_location/home/003_correct_rot/005.png
 pklot/train/2012-12-20_13_35_08_jpg.rf.b65d49e26c0bcf54d80429cdeaec4ba0.jpg
 kitti/sequences/15/image_3/001893.png
 sku110k/train_814.jpg
@@ -1802,7 +1802,7 @@ kitti/sequences/10/image_2/000034.png
 CODa/2d_rect/cam1/22/2d_rect_cam1_22_11982.png
 coco/train2017/000000261458.jpg
 exmaps/2020-05-16/only_jpgs/frame_1589635087458.jpg
-openloris_location/home/003/000.png
+openloris_location/home/003_correct_rot/000.png
 pklot/train/2013-03-21_14_10_09_jpg.rf.c8c695303746ffe54fd525ae53c94b8b.jpg
 sun397/330/92607.jpg
 kitti/sequences/18/image_2/001633.png
@@ -1893,7 +1893,7 @@ kitti/sequences/19/image_2/003449.png
 kitti/sequences/18/image_3/000638.png
 CODa/2d_rect/cam0/15/2d_rect_cam0_15_8101.png
 exmaps/2020-03-23/coop_local/run_2/ar_core_data_correct_rot/frame_1584951216120.jpg
-openloris_location/home/003/003.png
+openloris_location/home/003_correct_rot/003.png
 pklot/valid/2012-10-31_14_23_20_jpg.rf.110ba465736f116549248c2fc86baa9c.jpg
 kitti/sequences/08/image_3/003710.png
 CODa/2d_rect/cam0/22/2d_rect_cam0_22_9649.png

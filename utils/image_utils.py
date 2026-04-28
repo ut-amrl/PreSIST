@@ -1,5 +1,5 @@
 
-from PIL import Image
+from PIL import Image, ImageOps
 import torchvision.transforms as transforms
 import torch
 import numpy as np
@@ -54,7 +54,10 @@ class LazyImage:
 
 def loadImageForDatasetGeneration(image_path: str):
     # ---- load image ----
-    img_pil = Image.open(image_path).convert("RGB")
+    # exif_transpose handles EXIF Orientation so files with non-trivial
+    # orientation tags are decoded upright instead of fed sideways to
+    # downstream models.
+    img_pil = ImageOps.exif_transpose(Image.open(image_path)).convert("RGB")
     img_np = np.array(img_pil)  # (H, W, 3), uint8
     img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)  # (3, H, W), uint8
 

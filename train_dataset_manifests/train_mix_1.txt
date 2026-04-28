@@ -823,7 +823,7 @@ kitti/sequences/02/image_2/000374.png
 kitti/sequences/02/image_2/000298.png
 CODa/2d_rect/cam1/15/2d_rect_cam1_15_1078.png
 exmaps/2020-06-18/evening/run_1/only_jpgs/frame_1592495547097.jpg
-openloris_location/home/002/003.png
+openloris_location/home/002_correct_rot/003.png
 pklot/train/2013-01-22_15_10_10_jpg.rf.e2f432fe64e2a3eb8f4952323007f401.jpg
 kitti/sequences/21/image_3/000418.png
 CODa/2d_rect/cam1/22/2d_rect_cam1_22_14341.png
@@ -869,7 +869,7 @@ kitti/sequences/12/image_3/000940.png
 kitti/sequences/13/image_2/001399.png
 CODa/2d_rect/cam0/22/2d_rect_cam0_22_14601.png
 exmaps/2020-06-17/morning/run_3/only_jpgs/frame_1592381252113.jpg
-openloris_location/home/002/001.png
+openloris_location/home/002_correct_rot/001.png
 pklot/train/2012-12-08_18_30_15_jpg.rf.4f4a3d59720b5445ae2da27aec4bbe0f.jpg
 kitti/sequences/15/image_2/000663.png
 EPIC-KITCHENS/P03/rgb_frames/P03_108/frame_0000001933.jpg
@@ -1576,7 +1576,7 @@ EPIC-KITCHENS/P02/rgb_frames/P02_128/frame_0000004793.jpg
 EPIC-KITCHENS/P02/rgb_frames/P02_101/frame_0000004372.jpg
 CODa/2d_rect/cam1/8/2d_rect_cam1_8_6023.png
 exmaps/2020-06-19/morning/run_1/only_jpgs/frame_1592556135022.jpg
-openloris_location/home/002/000.png
+openloris_location/home/002_correct_rot/000.png
 pklot/train/2013-03-21_13_40_09_jpg.rf.735dffc8b74c8c6efe1ebbec91f500a3.jpg
 kitti/sequences/08/image_2/001022.png
 sku110k/train_67.jpg

@@ -13,9 +13,17 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-# Allow importing exmaps_rewrites.py from the parent (train_dataset_manifests) dir.
+# Allow importing rewrites modules from the parent (train_dataset_manifests) dir.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from exmaps_rewrites import EXMAPS_PREFIX, NEW_TO_OLD, SUBDIR_REWRITES  # noqa: E402
+import exmaps_rewrites  # noqa: E402
+import openloris_rewrites  # noqa: E402
+
+# Each entry: (prefix, subdir_rewrites, new_to_old). Drives filter_correct_rot.
+CORRECT_ROT_GROUPS = [
+    (exmaps_rewrites.PREFIX, exmaps_rewrites.SUBDIR_REWRITES, exmaps_rewrites.NEW_TO_OLD),
+    (openloris_rewrites.PREFIX, openloris_rewrites.SUBDIR_REWRITES, openloris_rewrites.NEW_TO_OLD),
+]
 
 
 IMAGE_EXTENSIONS = {
@@ -208,26 +216,30 @@ def weighted_fair_mix(
     return mixed
 
 
-def filter_exmaps_correct_rot(
+def filter_correct_rot_group(
     files: List[Path],
     dataset_root: Path,
+    prefix: str,
+    subdir_rewrites: dict,
+    new_to_old: dict,
 ) -> List[Path]:
     """
-    For each file under one of the SUBDIR_REWRITES (old -> new) pairs:
-      - If both exmaps/<old>/F and exmaps/<new>/F are in `files`, drop the old.
+    For each file under one of the SUBDIR_REWRITES (old -> new) pairs (rooted
+    at <dataset_root>/<prefix>):
+      - If both <prefix><old>/F and <prefix><new>/F are in `files`, drop the old.
       - If only the old is present, keep it.
       - If only the new is present (no original counterpart), drop it.
 
     Files that don't fall under any mapped (old or new) subdirectory are passed
     through unchanged.
     """
-    exmaps_root = (dataset_root / "exmaps").resolve()
+    # `prefix` is like "exmaps/" -- strip trailing slash for path joining.
+    group_root = (dataset_root / prefix.rstrip("/")).resolve()
 
-    # Index discovered exmaps files by their path relative to exmaps/ for O(1) lookup.
     discovered_rel: set = set()
     for f in files:
         try:
-            rel = f.resolve().relative_to(exmaps_root).as_posix()
+            rel = f.resolve().relative_to(group_root).as_posix()
         except ValueError:
             continue
         discovered_rel.add(rel)
@@ -238,7 +250,7 @@ def filter_exmaps_correct_rot(
 
     for f in files:
         try:
-            rel = f.resolve().relative_to(exmaps_root).as_posix()
+            rel = f.resolve().relative_to(group_root).as_posix()
         except ValueError:
             kept.append(f)
             continue
@@ -251,16 +263,16 @@ def filter_exmaps_correct_rot(
         dir_part = rel[:last_slash]
         basename = rel[last_slash + 1:]
 
-        if dir_part in SUBDIR_REWRITES:
-            new_rel = f"{SUBDIR_REWRITES[dir_part]}/{basename}"
+        if dir_part in subdir_rewrites:
+            new_rel = f"{subdir_rewrites[dir_part]}/{basename}"
             if new_rel in discovered_rel:
                 dropped_old += 1
                 continue
             kept.append(f)
             continue
 
-        if dir_part in NEW_TO_OLD:
-            old_rel = f"{NEW_TO_OLD[dir_part]}/{basename}"
+        if dir_part in new_to_old:
+            old_rel = f"{new_to_old[dir_part]}/{basename}"
             if old_rel not in discovered_rel:
                 dropped_orphan_new += 1
                 continue
@@ -271,12 +283,29 @@ def filter_exmaps_correct_rot(
 
     if dropped_old or dropped_orphan_new:
         print(
-            f"  exmaps correct_rot filter: dropped {dropped_old} old file(s) "
+            f"  {prefix} correct_rot filter: dropped {dropped_old} old file(s) "
             f"superseded by _correct_rot, dropped {dropped_orphan_new} "
             f"orphan _correct_rot file(s) with no original."
         )
 
     return kept
+
+
+def filter_correct_rot(files: List[Path], dataset_root: Path) -> List[Path]:
+    """Apply every CORRECT_ROT_GROUPS filter in sequence."""
+    out = files
+    for prefix, subdir_rewrites, new_to_old in CORRECT_ROT_GROUPS:
+        out = filter_correct_rot_group(
+            out, dataset_root, prefix, subdir_rewrites, new_to_old
+        )
+    return out
+
+
+# Backwards-compatible alias for the original (exmaps-only) entry point.
+def filter_exmaps_correct_rot(files: List[Path], dataset_root: Path) -> List[Path]:
+    return filter_correct_rot_group(
+        files, dataset_root, EXMAPS_PREFIX, SUBDIR_REWRITES, NEW_TO_OLD
+    )
 
 
 def to_relative_paths(dataset_root: Path, files: List[Path]) -> List[str]:
@@ -332,7 +361,7 @@ def main(cfg: ManifestConfig) -> None:
             recursive=cfg.recursive,
             sort_before_shuffle=cfg.sort_before_shuffle,
         )
-        files = filter_exmaps_correct_rot(files, dataset_root)
+        files = filter_correct_rot(files, dataset_root)
         rng.shuffle(files)
         per_source_files.append(files)
         print(f"Found {len(files)} images under source='{src_cfg.path}' weight={src_cfg.weight}")

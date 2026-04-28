@@ -13,6 +13,10 @@ from typing import Dict
 
 EXMAPS_PREFIX = "exmaps/"
 
+# Alias so generic correct_rot tooling can read the prefix uniformly across
+# rewrites modules (see openloris_rewrites.py).
+PREFIX = EXMAPS_PREFIX
+
 
 # old_subdir (relative to exmaps/) -> new_subdir (relative to exmaps/)
 SUBDIR_REWRITES: Dict[str, str] = {
