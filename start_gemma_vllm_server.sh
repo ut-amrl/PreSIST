@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Start a vLLM server for Gemma 4 (OpenAI-compatible) via Podman.
+# Start a vLLM server for Gemma 4 (OpenAI-compatible) via Podman or Docker.
 # Gemma 4 is natively multimodal; use google/gemma-4-27b-it for the 27B model
 # or google/gemma-4-9b-it for the smaller variant.
 #
@@ -27,6 +27,11 @@ TENSOR_PARALLEL_SIZE=""           # leave empty to auto = number of GPUs passed
 GPU_MEMORY_UTILIZATION="0.90"
 MAX_MODEL_LEN="32768"
 
+# ---- Container runtime ----
+# "podman" or "docker". Note: the NVIDIA hook flags below are podman-specific;
+# for docker you'd typically swap them for `--gpus '"device=$GPU_IDS"'`.
+CONTAINER_RUNTIME="docker"
+
 # ---- Container image ----
 VLLM_IMAGE="docker.io/vllm/vllm-openai:nightly"
 
@@ -47,12 +52,21 @@ PIP_UPGRADE_PACKAGES="transformers mistral_common"
 
 usage() {
   cat <<EOF
-Usage: $0 <GPU_IDS> [--port N] [--model HF_ID] [--dtype DTYPE] [--quant Q] [--max-len N] [--name INSTANCE]
+Usage: $0 <GPU_IDS> [--port N] [--model HF_ID] [--dtype DTYPE] [--quant Q] [--max-len N] [--name INSTANCE] [--no-thinking]
+
+Flags:
+  --no-thinking   Skip --reasoning-parser gemma4. By default the server is
+                  started with the gemma4 reasoning parser so that clients
+                  passing chat_template_kwargs={"enable_thinking": true} get
+                  the thought trace split into message.reasoning. Verified
+                  empirically that enable_thinking=false requests are
+                  unaffected by the parser, so default-on is safe.
 
 Examples:
   $0 0
   $0 0 --port 9014 --model google/gemma-4-9b-it
   $0 0,1 --port 9013 --dtype bfloat16
+  $0 0 --no-thinking
 EOF
 }
 
@@ -70,6 +84,7 @@ if [[ ! "$GPU_IDS" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
 fi
 
 INSTANCE_NAME=""
+ENABLE_THINKING=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -79,6 +94,7 @@ while [[ $# -gt 0 ]]; do
     --quant) QUANTIZATION="$2"; shift 2 ;;
     --max-len) MAX_MODEL_LEN="$2"; shift 2 ;;
     --name)  INSTANCE_NAME="$2"; shift 2 ;;
+    --no-thinking) ENABLE_THINKING=0; shift 1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1"; usage; exit 1 ;;
   esac
@@ -156,11 +172,16 @@ echo "  Quantization:        ${QUANTIZATION:-<none>}"
 echo "  Max model len:       $MAX_MODEL_LEN"
 echo "  GPU mem util:        $GPU_MEMORY_UTILIZATION"
 echo "  Image:               $VLLM_IMAGE"
+if [ "$ENABLE_THINKING" -eq 1 ]; then
+  echo "  Thinking:            enabled (--reasoning-parser gemma4)"
+else
+  echo "  Thinking:            disabled"
+fi
 echo ""
 
-if podman container exists "$CONTAINER_NAME"; then
+if "$CONTAINER_RUNTIME" container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
   echo "Removing existing container: $CONTAINER_NAME"
-  podman rm -f "$CONTAINER_NAME"
+  "$CONTAINER_RUNTIME" rm -f "$CONTAINER_NAME"
 fi
 
 # Gemma 4 is instruct-only — no reasoning parser needed.
@@ -182,23 +203,40 @@ if [ -n "$QUANTIZATION" ]; then
   VLLM_ARGS+=( --quantization "$QUANTIZATION" )
 fi
 
-GPU_FLAGS=()
-if [ -d /usr/share/containers/oci/hooks.d ] && ls /usr/share/containers/oci/hooks.d/*nvidia* >/dev/null 2>&1; then
-  GPU_FLAGS+=( --hooks-dir=/usr/share/containers/oci/hooks.d )
-  GPU_FLAGS+=( -e NVIDIA_VISIBLE_DEVICES="${GPU_IDS}" )
-  GPU_FLAGS+=( -e NVIDIA_DRIVER_CAPABILITIES=compute,utility )
-else
-  echo "ERROR: NVIDIA Podman hook not found at /usr/share/containers/oci/hooks.d."
-  echo "Install/configure nvidia-container-toolkit for Podman, or configure CDI, then retry."
-  exit 1
+if [ "$ENABLE_THINKING" -eq 1 ]; then
+  VLLM_ARGS+=( --reasoning-parser gemma4 )
 fi
+
+GPU_FLAGS=()
+case "$CONTAINER_RUNTIME" in
+  podman)
+    if [ -d /usr/share/containers/oci/hooks.d ] && ls /usr/share/containers/oci/hooks.d/*nvidia* >/dev/null 2>&1; then
+      GPU_FLAGS+=( --hooks-dir=/usr/share/containers/oci/hooks.d )
+      GPU_FLAGS+=( -e NVIDIA_VISIBLE_DEVICES="${GPU_IDS}" )
+      GPU_FLAGS+=( -e NVIDIA_DRIVER_CAPABILITIES=compute,utility )
+    else
+      echo "ERROR: NVIDIA Podman hook not found at /usr/share/containers/oci/hooks.d."
+      echo "Install/configure nvidia-container-toolkit for Podman, or configure CDI, then retry."
+      exit 1
+    fi
+    ;;
+  docker)
+    # Embedded quotes are required: docker's --gpus parser treats commas as
+    # field separators, so `device=0,1` would be misparsed without them.
+    GPU_FLAGS+=( --gpus "\"device=${GPU_IDS}\"" )
+    ;;
+  *)
+    echo "ERROR: Unknown CONTAINER_RUNTIME '$CONTAINER_RUNTIME' (expected 'podman' or 'docker')."
+    exit 1
+    ;;
+esac
 
 # $PIP_UPGRADE_PACKAGES is intentionally unquoted so bash word-splits it into
 # separate package names for pip (quoting it would pass the whole string as one
 # invalid package name).
 VLLM_CMD="pip install -q --upgrade $PIP_UPGRADE_PACKAGES && exec vllm$(printf ' %q' "${VLLM_ARGS[@]}")"
 
-podman run -d \
+"$CONTAINER_RUNTIME" run -d \
   --name "$CONTAINER_NAME" \
   --network host \
   --ipc=host \
@@ -221,7 +259,7 @@ echo "  Endpoint: http://localhost:${PORT}/v1"
 echo "  Model ID (use this in client): ${SERVED_MODEL_NAME}"
 echo ""
 echo "Logs:"
-echo "  podman logs -f ${CONTAINER_NAME}"
+echo "  ${CONTAINER_RUNTIME} logs -f ${CONTAINER_NAME}"
 echo ""
 echo "List running vLLM instances:"
-echo "  podman ps --filter label=app=vllm --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Labels}}'"
+echo "  ${CONTAINER_RUNTIME} ps --filter label=app=vllm --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Labels}}'"

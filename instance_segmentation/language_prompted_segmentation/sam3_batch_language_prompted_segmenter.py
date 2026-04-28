@@ -398,9 +398,10 @@ class SAM3BatchedLanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
                 for k in range(K):
                     m = masks_t[k]
 
-                    # Defensive resize/reshape handling
-                    if m.shape == (W, H):
-                        m = m.T
+                    # SAM3 returns masks in (H, W) order. The previous defensive
+                    # `if m.shape == (W, H): m = m.T` mistakenly fired for square
+                    # images (where (W, H) == (H, W)) and silently transposed
+                    # them. Just assert.
                     if m.shape != (H, W):
                         raise RuntimeError(
                             f"Mask shape mismatch for qid={qid}, det={k}: got {tuple(m.shape)}, expected {(H, W)}"
