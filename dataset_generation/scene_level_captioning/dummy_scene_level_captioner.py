@@ -1,7 +1,8 @@
 from dataset_generation.scene_level_captioning.abs_scene_level_captioner import AbstractSceneLevelCaptioner
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from transformers import InstructBlipProcessor, InstructBlipForConditionalGeneration
 import torch
-from typing import Optional
+from typing import Optional, Tuple
 
 
 # class InstructBLIPSceneLevelCaptioner(AbstractSceneLevelCaptioner):
@@ -47,5 +48,5 @@ class DummySceneLevelCaptioner(AbstractSceneLevelCaptioner):
         super().__init__("DummySceneLevelCaptioner")
 
     @torch.no_grad()
-    def generateCaption(self, image: torch.Tensor) -> str:
-        return ""
+    def generateCaption(self, image: torch.Tensor) -> Tuple[str, DebugPayload]:
+        return "", DebugPayload.empty()

@@ -1,4 +1,5 @@
 from dataset_generation.llm_persistence_querying.abs_llm_persistence_querier import AbsLLMPersistenceQuerier
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 
 
 class DummyPersistenceQuerier(AbsLLMPersistenceQuerier):
@@ -32,4 +33,4 @@ class DummyPersistenceQuerier(AbsLLMPersistenceQuerier):
         prompt = ""
         response = ""
         persistence_parameter_estimates = {}
-        return [prompt], response, persistence_parameter_estimates
+        return [prompt], response, persistence_parameter_estimates, DebugPayload.empty()

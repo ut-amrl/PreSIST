@@ -22,9 +22,11 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import binary_dilation
 
 from dataset_generation.instance_descriptions.abs_object_describer import AbstractObjectDescriber
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from dataset_generation.llm_persistence_querying.vlm_querying.qwen_vlm_querier import QwenVLMQuerier
 from instance_segmentation.abs_instance_segmenter import SegmentationResults
 from utils.image_utils import image_tensor_to_pil
+from utils.timing import querier_timer_suffix, timer
 from utils.visualization_utils import mask_highlight_image
 
 
@@ -122,6 +124,11 @@ class QwenVLMObjectDescriber(AbstractObjectDescriber):
         self.box_margin = int(box_margin)
         self._debug_dir: Optional[Path] = None
 
+        self._per_query_timer_name = (
+            "Timer::qwen_vlm_obj_describer_vlm_query"
+            + querier_timer_suffix(use_vllm_server=use_vllm_server)
+        )
+
         self._querier = QwenVLMQuerier(
             name=f"{name}__querier",
             model_name=model_name,
@@ -148,7 +155,7 @@ class QwenVLMObjectDescriber(AbstractObjectDescriber):
         self,
         image: torch.Tensor,
         instances: SegmentationResults,
-    ) -> Dict[int, str]:
+    ) -> Tuple[Dict[int, str], DebugPayload]:
         """
         Describe each segmented object by sending two images to the Qwen VL model:
         the raw scene and the scene with the object's mask highlighted.
@@ -165,6 +172,7 @@ class QwenVLMObjectDescriber(AbstractObjectDescriber):
         # Display the image resolution
         print(f"Input image resolution: {pil_image.width}x{pil_image.height}")
         descriptions: Dict[int, str] = {}
+        debug_payload = DebugPayload()
         total = len(instances.masks)
 
         for i, mask in enumerate(instances.masks):
@@ -206,13 +214,25 @@ class QwenVLMObjectDescriber(AbstractObjectDescriber):
             self._save_debug_images(images[0], images[0],
                                     obj_id, i, zoomed, arrow_img)
 
-            description = self._querier.queryVLM(
-                prompt=self.prompt,
-                images=[images[0]],
-            )
+            query_images = [images[0]]
+            for q_idx, q_img in enumerate(query_images):
+                if q_img is None:
+                    continue
+                debug_payload.add(
+                    f"query_img_{obj_id}_qIm{q_idx:02d}",
+                    q_img,
+                    kind="image",
+                )
+
+            with timer.time_block(self._per_query_timer_name):
+                description, sub_debug = self._querier.queryVLM(
+                    prompt=self.prompt,
+                    images=query_images,
+                )
+            debug_payload.merge(sub_debug)
             descriptions[obj_id] = description
 
-        return descriptions
+        return descriptions, debug_payload
 
     def _compute_zoom_crop(
         self, mask: torch.Tensor, img_w: int, img_h: int

@@ -1,6 +1,7 @@
 from instance_segmentation.abs_instance_segmenter import AbsInstanceSegmenter, SegmentationResults
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 import torch
-from typing import Optional
+from typing import Optional, Tuple
 
 class ConfidenceThresholdSegmentationWrapper(AbsInstanceSegmenter):
 
@@ -26,14 +27,14 @@ class ConfidenceThresholdSegmentationWrapper(AbsInstanceSegmenter):
         )
         self.base_segmenter = base_segmenter
 
-    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstancesRaw(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
         """
         Delegates segmentation to the wrapped segmenter.
 
         Args:
             image: torch.Tensor, shape (C, H, W), dtype=uint8, RGB.
         Returns:
-            SegmentationResults from the wrapped segmenter before this wrapper's
-            own post-processing is applied.
+            (SegmentationResults, DebugPayload) from the wrapped segmenter before
+            this wrapper's own post-processing is applied.
         """
         return self.base_segmenter.segmentInstances(image)

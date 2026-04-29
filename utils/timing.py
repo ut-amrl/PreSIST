@@ -162,6 +162,28 @@ class _TimingContext:
         return False
 
 
+def querier_timer_suffix(
+    *,
+    use_vllm_server: bool = True,
+    enable_thinking: Optional[bool] = None,
+) -> str:
+    """
+    Build a suffix for per-VLM/LLM-query timer names that captures runtime
+    flags. Defaults assume the server (vLLM) path.
+
+    - enable_thinking=True  -> "_thinkOn"
+    - enable_thinking=False -> "_thinkOff"
+    - enable_thinking=None  -> (omit; querier has no thinking knob)
+    - use_vllm_server=False -> "_local"  (otherwise omit; vLLM is the default)
+    """
+    parts = []
+    if enable_thinking is not None:
+        parts.append("_thinkOn" if enable_thinking else "_thinkOff")
+    if not use_vllm_server:
+        parts.append("_local")
+    return "".join(parts)
+
+
 # Global singleton you can import everywhere
 timer = TimingManager()
 timer.install_signal_handlers()

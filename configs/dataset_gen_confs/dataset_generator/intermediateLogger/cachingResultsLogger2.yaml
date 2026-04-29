@@ -1,3 +1,8 @@
 _target_: dataset_generation.intermediate_results_logger.caching_results_logger2.CachingResultsLoggerRevised
 # baseLogDirectory: ./debug_outputs_single_imgs/
 baseLogDirectory: /workspace/data/output/
+debug_config:
+  _target_: dataset_generation.intermediate_results_logger.debug_data.DebugConfig
+  enabled: false
+  phases: null   # null = all phases (default). Override with a list to restrict, e.g. [segmentation, scene_caption].
+  kinds:  null   # null = all kinds   (default). Override with a list to restrict, e.g. [json, text].

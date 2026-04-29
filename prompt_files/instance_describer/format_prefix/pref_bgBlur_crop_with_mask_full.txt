@@ -1,0 +1,6 @@
+You are shown three images:
+1) An image with an object of interest highlighted in cyan and the background blurred. Matches the full image size.
+2) An image zoomed in closer to the object of interest, also with the object of interest highlighted with a cyan outline.
+3) The full scene without any modifications.
+
+The outlined object is the object you should focus on in your assessment, using its surroundings only for contextual information.

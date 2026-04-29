@@ -1,6 +1,10 @@
 
 
 from abc import ABC, abstractmethod
+from typing import Tuple
+
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
+
 
 class AbstractSceneLevelCaptioner(ABC):
 
@@ -11,5 +15,7 @@ class AbstractSceneLevelCaptioner(ABC):
         return self.name
 
     @abstractmethod
-    def generateCaption(self, image):
+    def generateCaption(self, image) -> Tuple[str, DebugPayload]:
+        """Returns (caption, DebugPayload). Subclasses with no debug data may
+        return (caption, DebugPayload.empty())."""
         pass

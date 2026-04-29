@@ -1,0 +1,5 @@
+You are shown two images:
+1) The full scene
+2) A copy of the same image with the with the object of interest visually highlighted by an outline and the background blurred.
+
+The outlined object is the object you should focus on in your assessment, using its surroundings only for contextual information.

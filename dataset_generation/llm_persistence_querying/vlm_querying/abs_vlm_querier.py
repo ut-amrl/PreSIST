@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Tuple
+
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 
 # PIL.Image for type hints; avoid hard dependency
 try:
@@ -21,9 +23,14 @@ class AbsVLMQuerier(ABC):
         return self.name
 
     @abstractmethod
-    def queryVLM(self, prompt: str, images: List["PILImage.Image"]) -> str:
+    def queryVLM(
+        self, prompt: str, images: List["PILImage.Image"]
+    ) -> Tuple[str, DebugPayload]:
         """
-        Send a single prompt with attached images to the VLM and return the model's reply.
+        Send a single prompt with attached images to the VLM and return the
+        model's reply along with a DebugPayload of any per-call debug data
+        (e.g. reasoning traces). Subclasses with no debug data should return
+        (response, DebugPayload.empty()).
 
         Args:
             prompt: Text prompt (may include instructions; placeholder tokens
@@ -31,6 +38,6 @@ class AbsVLMQuerier(ABC):
             images: List of PIL Images in the order they appear in the prompt.
 
         Returns:
-            Decoded response text.
+            Tuple of (decoded response text, DebugPayload).
         """
         pass

@@ -46,6 +46,13 @@ TRTLLM_MODEL="${TRTLLM_MODEL:-Qwen/Qwen3-VL-8B-Thinking}"
 MAX_SEQ_LEN="${MAX_SEQ_LEN:-32768}"
 HF_TOKEN="${HF_TOKEN:-}"
 
+GEMMA_PORT="${GEMMA_PORT:-9008}"
+GEMMA_MODEL="${GEMMA_MODEL:-google/gemma-4-31B-it}"
+GEMMA_MAX_SEQ_LEN="${GEMMA_MAX_SEQ_LEN:-$MAX_SEQ_LEN}"
+GEMMA_DTYPE="${GEMMA_DTYPE:-bfloat16}"
+GEMMA_QUANT="${GEMMA_QUANT:-}"
+GEMMA_ENABLE_THINKING="${GEMMA_ENABLE_THINKING:-1}"
+
 HF_TOKEN_FILE="${HF_TOKEN_FILE:-$HF_CACHE_DIR/token}"
 
 if [ -z "${HF_TOKEN:-}" ] && [ -f "$HF_TOKEN_FILE" ]; then
@@ -71,15 +78,34 @@ RUN_PHASES="${RUN_PHASES:-segmentation,scene_caption,object_descriptions}"
 
 DATASETS="${DATASETS:-train_mix_0 train_mix_1 train_mix_2 train_mix_3 train_mix_4 train_mix_5 train_mix_6 train_mix_7 train_mix_8 train_mix_9 train_mix_10}"
 
-TRTLLM_TP="${TRTLLM_TP:-1}"
+# Per-phase backend routing. Each var picks which server the corresponding
+# pipeline component talks to:
+#   qwen  -> the TRT-LLM/vLLM Qwen server on TRTLLM_PORT
+#   gemma -> the Gemma 4 vLLM server on GEMMA_PORT
+#   dam   -> the DAM server on DAM_PORT (object descriptions only)
+# Empty = don't emit overrides for that phase (use whatever the config says).
+LANG_PROMPT_BACKEND="${LANG_PROMPT_BACKEND:-qwen}"
+SCENE_CAPTION_BACKEND="${SCENE_CAPTION_BACKEND:-qwen}"
+OBJECT_DESC_BACKEND="${OBJECT_DESC_BACKEND:-dam}"
+PERSISTENCE_BACKEND="${PERSISTENCE_BACKEND:-}"
+
+# Qwen (TRT-LLM or vLLM) and Gemma (vLLM) GPU counts.
+# QWEN_GPUS=0 disables the Qwen server entirely (workers won't be passed
+# the segmenter/captioner vLLM overrides). GEMMA_GPUS=0 disables Gemma.
+# TRTLLM_TP is kept as a back-compat alias for QWEN_GPUS.
+QWEN_GPUS="${QWEN_GPUS:-${TRTLLM_TP:-1}}"
+GEMMA_GPUS="${GEMMA_GPUS:-0}"
+TRTLLM_TP="$QWEN_GPUS"
+GEMMA_TP="$GEMMA_GPUS"
 TOTAL_GPUS="${TOTAL_GPUS:-8}"
 
 WALL_HOURS="${WALL_HOURS:-48}"
 
-# Set USE_VLLM=1 to use vLLM (micromamba) instead of TRT-LLM (apptainer).
-# Auto-enabled for multi-GPU since TRT-LLM does not support it.
-if [[ "${TRTLLM_TP:-1}" -gt 1 && -z "${USE_VLLM:-}" ]]; then
-    echo "NOTE: TRTLLM_TP=$TRTLLM_TP > 1; TRT-LLM does not support multi-GPU — switching to vLLM."
+# Set USE_VLLM=1 to use vLLM (micromamba) instead of TRT-LLM (apptainer)
+# for the Qwen server. Auto-enabled for multi-GPU since TRT-LLM does not
+# support it. (Gemma always uses vLLM.)
+if [[ "$QWEN_GPUS" -gt 1 && -z "${USE_VLLM:-}" ]]; then
+    echo "NOTE: QWEN_GPUS=$QWEN_GPUS > 1; TRT-LLM does not support multi-GPU — switching to vLLM."
     USE_VLLM=1
 fi
 USE_VLLM="${USE_VLLM:-}"
@@ -87,22 +113,79 @@ VLLM_DTYPE="${VLLM_DTYPE:-bfloat16}"
 VLLM_QUANT="${VLLM_QUANT:-}"
 
 ############################################
-# Derive GPU layout from TP
+# Derive GPU layout from QWEN_GPUS / GEMMA_GPUS
 ############################################
 
-TRTLLM_GPUS=$(seq -s, 0 $((TRTLLM_TP - 1)))
+NEXT_GPU=0
 
-if [[ "$RUN_PHASES" == *"object_descriptions"* ]]; then
+if [[ "$QWEN_GPUS" -gt 0 ]]; then
+    USE_QWEN=1
+    TRTLLM_GPUS=$(seq -s, "$NEXT_GPU" $((NEXT_GPU + QWEN_GPUS - 1)))
+    NEXT_GPU=$((NEXT_GPU + QWEN_GPUS))
+else
+    USE_QWEN=
+    TRTLLM_GPUS=
+fi
+
+if [[ "$GEMMA_GPUS" -gt 0 ]]; then
+    USE_GEMMA=1
+    GEMMA_GPU_LIST=$(seq -s, "$NEXT_GPU" $((NEXT_GPU + GEMMA_GPUS - 1)))
+    NEXT_GPU=$((NEXT_GPU + GEMMA_GPUS))
+else
+    USE_GEMMA=
+    GEMMA_GPU_LIST=
+fi
+
+if [[ "$RUN_PHASES" == *"object_descriptions"* && "$OBJECT_DESC_BACKEND" == "dam" ]]; then
     USE_DAM=1
-    DAM_GPU_IDX=$TRTLLM_TP
+    DAM_GPU_IDX=$NEXT_GPU
     DAM_GPUS="$DAM_GPU_IDX"
-    PIPELINE_GPU_START=$((DAM_GPU_IDX + 1))
+    NEXT_GPU=$((NEXT_GPU + 1))
 else
     USE_DAM=
     DAM_GPU_IDX=
     DAM_GPUS=
-    PIPELINE_GPU_START=$TRTLLM_TP
 fi
+
+PIPELINE_GPU_START=$NEXT_GPU
+
+# Validate per-phase backend choices against which servers are actually up.
+backend_port() {
+    case "$1" in
+        qwen)  echo "$TRTLLM_PORT" ;;
+        gemma) echo "$GEMMA_PORT" ;;
+        dam)   echo "$DAM_PORT" ;;
+        "")    echo "" ;;
+        *)     echo "ERROR: unknown backend '$1'" >&2; return 1 ;;
+    esac
+}
+
+backend_available() {
+    case "$1" in
+        qwen)  [[ -n "$USE_QWEN" ]] ;;
+        gemma) [[ -n "$USE_GEMMA" ]] ;;
+        dam)   [[ -n "$USE_DAM" ]] ;;
+        "")    return 0 ;;
+        *)     return 1 ;;
+    esac
+}
+
+for pair in \
+    "LANG_PROMPT_BACKEND=$LANG_PROMPT_BACKEND:lang prompt" \
+    "SCENE_CAPTION_BACKEND=$SCENE_CAPTION_BACKEND:scene caption" \
+    "OBJECT_DESC_BACKEND=$OBJECT_DESC_BACKEND:object description" \
+    "PERSISTENCE_BACKEND=$PERSISTENCE_BACKEND:persistence estimation"; do
+    var_part="${pair%:*}"
+    label="${pair##*:}"
+    val="${var_part#*=}"
+    name="${var_part%%=*}"
+    [[ -z "$val" ]] && continue
+    if ! backend_available "$val"; then
+        echo "ERROR: $name=$val (for $label) but the corresponding server is not enabled."
+        echo "       Enable it (QWEN_GPUS/GEMMA_GPUS > 0, or use object_descriptions phase for DAM) or unset $name."
+        exit 1
+    fi
+done
 
 PIPELINE_GPU_LIST=()
 for i in $(seq "$PIPELINE_GPU_START" $((TOTAL_GPUS - 1))); do
@@ -111,7 +194,7 @@ done
 NUM_WORKERS=${#PIPELINE_GPU_LIST[@]}
 
 if [ "$NUM_WORKERS" -lt 1 ]; then
-    echo "ERROR: No GPUs left for pipeline workers (TP=$TRTLLM_TP, TOTAL_GPUS=$TOTAL_GPUS)."
+    echo "ERROR: No GPUs left for pipeline workers (QWEN_GPUS=$QWEN_GPUS, GEMMA_GPUS=$GEMMA_GPUS, DAM=${USE_DAM:+1}, TOTAL_GPUS=$TOTAL_GPUS)."
     exit 1
 fi
 
@@ -171,14 +254,28 @@ unset TRANSFORMERS_CACHE
 
 LLM_SERVER="${USE_VLLM:+vLLM}"
 LLM_SERVER="${LLM_SERVER:-TRT-LLM}"
-echo "GPU layout (TP=$TRTLLM_TP, $TOTAL_GPUS total GPUs):"
-echo "  $LLM_SERVER:  GPUs $TRTLLM_GPUS  (model: $TRTLLM_MODEL, port: $TRTLLM_PORT)"
+echo "GPU layout (QWEN_GPUS=$QWEN_GPUS, GEMMA_GPUS=$GEMMA_GPUS, $TOTAL_GPUS total GPUs):"
+if [[ -n "$USE_QWEN" ]]; then
+    echo "  Qwen ($LLM_SERVER): GPUs $TRTLLM_GPUS  (model: $TRTLLM_MODEL, port: $TRTLLM_PORT)"
+else
+    echo "  Qwen:     disabled (QWEN_GPUS=0)"
+fi
+if [[ -n "$USE_GEMMA" ]]; then
+    echo "  Gemma (vLLM): GPUs $GEMMA_GPU_LIST  (model: $GEMMA_MODEL, port: $GEMMA_PORT)"
+else
+    echo "  Gemma:    disabled (GEMMA_GPUS=0)"
+fi
 if [[ -n "$USE_DAM" ]]; then
     echo "  DAM:      GPU  $DAM_GPUS  (port: $DAM_PORT, workers $DAM_WORKERS)"
 else
     echo "  DAM:      disabled (object_descriptions not in RUN_PHASES)"
 fi
 echo "  Workers:  GPUs ${PIPELINE_GPU_LIST[*]}  ($NUM_WORKERS workers)"
+echo "  Backends:"
+echo "    lang prompt:          ${LANG_PROMPT_BACKEND:-<config default>}"
+echo "    scene caption:        ${SCENE_CAPTION_BACKEND:-<config default>}"
+echo "    object description:   ${OBJECT_DESC_BACKEND:-<config default>}"
+echo "    persistence estimate: ${PERSISTENCE_BACKEND:-<config default>}"
 echo "  Config:   $CONFIG_NAME"
 echo "  Phases:   $RUN_PHASES"
 echo "  Datasets: $DATASETS"
@@ -188,59 +285,98 @@ echo "  Logs:     $LOG_DIR"
 echo
 
 ############################################
-# Start LLM server (TRT-LLM or vLLM)
+# Start Qwen LLM server (TRT-LLM or vLLM) — only if QWEN_GPUS > 0
 ############################################
 
 TRTLLM_LOG="${LOG_DIR}/trtllm_${JOB_ID_TAG}.out"
 TRTLLM_PID_FILE="${JOB_RUN_DIR}/trtllm_${JOB_ID_TAG}.pid"
 TRTLLM_PGID_FILE="${JOB_RUN_DIR}/trtllm_${JOB_ID_TAG}.pgid"
 
-if [[ -n "$USE_VLLM" ]]; then
-    VLLM_START_SCRIPT="${VLLM_START_SCRIPT:-$CODE_DIR/tacc_start_vllm_server_pgid.sh}"
-    if [ ! -x "$VLLM_START_SCRIPT" ]; then
-        echo "ERROR: vLLM start script not found or not executable: $VLLM_START_SCRIPT"
-        exit 1
+if [[ -n "$USE_QWEN" ]]; then
+    if [[ -n "$USE_VLLM" ]]; then
+        VLLM_START_SCRIPT="${VLLM_START_SCRIPT:-$CODE_DIR/tacc_start_vllm_server_pgid.sh}"
+        if [ ! -x "$VLLM_START_SCRIPT" ]; then
+            echo "ERROR: vLLM start script not found or not executable: $VLLM_START_SCRIPT"
+            exit 1
+        fi
+        echo "Starting Qwen vLLM server via $VLLM_START_SCRIPT ..."
+        MODELS_DIR="$MODELS_DIR" \
+        HF_CACHE_DIR="$HF_CACHE_DIR" \
+        LOG_DIR="$LOG_DIR" \
+        VLLM_MODEL="$TRTLLM_MODEL" \
+        VLLM_PORT="$TRTLLM_PORT" \
+        VLLM_TP="$TRTLLM_TP" \
+        VLLM_GPUS="$TRTLLM_GPUS" \
+        VLLM_DTYPE="$VLLM_DTYPE" \
+        VLLM_QUANT="$VLLM_QUANT" \
+        MAX_SEQ_LEN="$MAX_SEQ_LEN" \
+        HF_TOKEN="$HF_TOKEN" \
+        VLLM_LOG="$TRTLLM_LOG" \
+        VLLM_PID_FILE="$TRTLLM_PID_FILE" \
+        VLLM_PGID_FILE="$TRTLLM_PGID_FILE" \
+        "$VLLM_START_SCRIPT"
+    else
+        TRTLLM_START_SCRIPT="${TRTLLM_START_SCRIPT:-$CODE_DIR/tacc_start_trtllm_server_pgid.sh}"
+        if [ ! -x "$TRTLLM_START_SCRIPT" ]; then
+            echo "ERROR: TRT-LLM start script not found or not executable: $TRTLLM_START_SCRIPT"
+            exit 1
+        fi
+        echo "Starting Qwen TRT-LLM server via $TRTLLM_START_SCRIPT ..."
+        TRTLLM_IMAGE="$TRTLLM_IMAGE" \
+        MODELS_DIR="$MODELS_DIR" \
+        HF_CACHE_DIR="$HF_CACHE_DIR" \
+        JOB_CACHE_DIR="$JOB_CACHE_DIR" \
+        JOB_TMP_DIR="$JOB_TMP_DIR" \
+        JOB_ROOT="$JOB_ROOT" \
+        LOG_DIR="$LOG_DIR" \
+        TRTLLM_MODEL="$TRTLLM_MODEL" \
+        TRTLLM_PORT="$TRTLLM_PORT" \
+        TRTLLM_TP="$TRTLLM_TP" \
+        TRTLLM_GPUS="$TRTLLM_GPUS" \
+        MAX_SEQ_LEN="$MAX_SEQ_LEN" \
+        HF_TOKEN="$HF_TOKEN" \
+        TRTLLM_LOG="$TRTLLM_LOG" \
+        TRTLLM_PID_FILE="$TRTLLM_PID_FILE" \
+        TRTLLM_PGID_FILE="$TRTLLM_PGID_FILE" \
+        "$TRTLLM_START_SCRIPT"
     fi
-    echo "Starting vLLM server via $VLLM_START_SCRIPT ..."
-    MODELS_DIR="$MODELS_DIR" \
-    HF_CACHE_DIR="$HF_CACHE_DIR" \
-    LOG_DIR="$LOG_DIR" \
-    VLLM_MODEL="$TRTLLM_MODEL" \
-    VLLM_PORT="$TRTLLM_PORT" \
-    VLLM_TP="$TRTLLM_TP" \
-    VLLM_GPUS="$TRTLLM_GPUS" \
-    VLLM_DTYPE="$VLLM_DTYPE" \
-    VLLM_QUANT="$VLLM_QUANT" \
-    MAX_SEQ_LEN="$MAX_SEQ_LEN" \
-    HF_TOKEN="$HF_TOKEN" \
-    VLLM_LOG="$TRTLLM_LOG" \
-    VLLM_PID_FILE="$TRTLLM_PID_FILE" \
-    VLLM_PGID_FILE="$TRTLLM_PGID_FILE" \
-    "$VLLM_START_SCRIPT"
 else
-    TRTLLM_START_SCRIPT="${TRTLLM_START_SCRIPT:-$CODE_DIR/tacc_start_trtllm_server_pgid.sh}"
-    if [ ! -x "$TRTLLM_START_SCRIPT" ]; then
-        echo "ERROR: TRT-LLM start script not found or not executable: $TRTLLM_START_SCRIPT"
+    echo "Skipping Qwen server (QWEN_GPUS=0)."
+fi
+
+############################################
+# Start Gemma 4 vLLM server — only if GEMMA_GPUS > 0
+############################################
+
+GEMMA_LOG="${LOG_DIR}/vllm_gemma_${JOB_ID_TAG}.out"
+GEMMA_PID_FILE="${JOB_RUN_DIR}/vllm_gemma_${JOB_ID_TAG}.pid"
+GEMMA_PGID_FILE="${JOB_RUN_DIR}/vllm_gemma_${JOB_ID_TAG}.pgid"
+
+if [[ -n "$USE_GEMMA" ]]; then
+    GEMMA_START_SCRIPT="${GEMMA_START_SCRIPT:-$CODE_DIR/tacc_start_gemma_vllm_server_pgid.sh}"
+    if [ ! -x "$GEMMA_START_SCRIPT" ]; then
+        echo "ERROR: Gemma vLLM start script not found or not executable: $GEMMA_START_SCRIPT"
         exit 1
     fi
-    echo "Starting TRT-LLM server via $TRTLLM_START_SCRIPT ..."
-    TRTLLM_IMAGE="$TRTLLM_IMAGE" \
+    echo "Starting Gemma 4 vLLM server via $GEMMA_START_SCRIPT ..."
     MODELS_DIR="$MODELS_DIR" \
     HF_CACHE_DIR="$HF_CACHE_DIR" \
-    JOB_CACHE_DIR="$JOB_CACHE_DIR" \
-    JOB_TMP_DIR="$JOB_TMP_DIR" \
-    JOB_ROOT="$JOB_ROOT" \
     LOG_DIR="$LOG_DIR" \
-    TRTLLM_MODEL="$TRTLLM_MODEL" \
-    TRTLLM_PORT="$TRTLLM_PORT" \
-    TRTLLM_TP="$TRTLLM_TP" \
-    TRTLLM_GPUS="$TRTLLM_GPUS" \
-    MAX_SEQ_LEN="$MAX_SEQ_LEN" \
+    VLLM_MODEL="$GEMMA_MODEL" \
+    VLLM_PORT="$GEMMA_PORT" \
+    VLLM_TP="$GEMMA_TP" \
+    VLLM_GPUS="$GEMMA_GPU_LIST" \
+    VLLM_DTYPE="$GEMMA_DTYPE" \
+    VLLM_QUANT="$GEMMA_QUANT" \
+    VLLM_ENABLE_THINKING="$GEMMA_ENABLE_THINKING" \
+    MAX_SEQ_LEN="$GEMMA_MAX_SEQ_LEN" \
     HF_TOKEN="$HF_TOKEN" \
-    TRTLLM_LOG="$TRTLLM_LOG" \
-    TRTLLM_PID_FILE="$TRTLLM_PID_FILE" \
-    TRTLLM_PGID_FILE="$TRTLLM_PGID_FILE" \
-    "$TRTLLM_START_SCRIPT"
+    VLLM_LOG="$GEMMA_LOG" \
+    VLLM_PID_FILE="$GEMMA_PID_FILE" \
+    VLLM_PGID_FILE="$GEMMA_PGID_FILE" \
+    "$GEMMA_START_SCRIPT"
+else
+    echo "Skipping Gemma server (GEMMA_GPUS=0)."
 fi
 
 ############################################
@@ -279,7 +415,7 @@ cleanup() {
     if [ -f "$TRTLLM_PGID_FILE" ]; then
         TRTLLM_PGID="$(cat "$TRTLLM_PGID_FILE" 2>/dev/null || true)"
         if [ -n "${TRTLLM_PGID:-}" ]; then
-            echo "Stopping TRT-LLM process group $TRTLLM_PGID ..."
+            echo "Stopping Qwen process group $TRTLLM_PGID ..."
             kill -TERM -- "-$TRTLLM_PGID" 2>/dev/null || true
             sleep 5
             kill -KILL -- "-$TRTLLM_PGID" 2>/dev/null || true
@@ -288,12 +424,31 @@ cleanup() {
     elif [ -f "$TRTLLM_PID_FILE" ]; then
         TRTLLM_PID="$(cat "$TRTLLM_PID_FILE" 2>/dev/null || true)"
         if [ -n "${TRTLLM_PID:-}" ] && kill -0 "$TRTLLM_PID" 2>/dev/null; then
-            echo "Stopping TRT-LLM server (PID $TRTLLM_PID)..."
+            echo "Stopping Qwen server (PID $TRTLLM_PID)..."
             kill "$TRTLLM_PID" 2>/dev/null || true
             wait "$TRTLLM_PID" 2>/dev/null || true
         fi
     fi
     rm -f "$TRTLLM_PID_FILE"
+
+    if [ -f "$GEMMA_PGID_FILE" ]; then
+        GEMMA_PGID="$(cat "$GEMMA_PGID_FILE" 2>/dev/null || true)"
+        if [ -n "${GEMMA_PGID:-}" ]; then
+            echo "Stopping Gemma process group $GEMMA_PGID ..."
+            kill -TERM -- "-$GEMMA_PGID" 2>/dev/null || true
+            sleep 5
+            kill -KILL -- "-$GEMMA_PGID" 2>/dev/null || true
+        fi
+        rm -f "$GEMMA_PGID_FILE"
+    elif [ -f "$GEMMA_PID_FILE" ]; then
+        GEMMA_PID_VAL="$(cat "$GEMMA_PID_FILE" 2>/dev/null || true)"
+        if [ -n "${GEMMA_PID_VAL:-}" ] && kill -0 "$GEMMA_PID_VAL" 2>/dev/null; then
+            echo "Stopping Gemma server (PID $GEMMA_PID_VAL)..."
+            kill "$GEMMA_PID_VAL" 2>/dev/null || true
+            wait "$GEMMA_PID_VAL" 2>/dev/null || true
+        fi
+    fi
+    rm -f "$GEMMA_PID_FILE"
 
     if [ -n "${DAM_PID:-}" ] && kill -0 "$DAM_PID" 2>/dev/null; then
         echo "Stopping DAM server (PID $DAM_PID)..."
@@ -343,22 +498,46 @@ run_worker() {
 
 	echo "[worker $worker_id / GPU $gpu] Starting $dataset  →  $log"
 
-        local container_cmd
-        local dam_arg=""
-        if [[ -n "$USE_DAM" ]]; then
-            dam_arg=" ++dataset_generator.objectDescriber.server_port=${DAM_PORT}"
+        # Per-phase hydra overrides routed to the chosen backend's port.
+        # vLLM-served components share the (use_vllm_server, vllm_url_root,
+        # vllm_port) trio (verified across object_discoverer, sceneCaptioner,
+        # the gemma/qwen vlm object describers, and the llm/vlm queriers).
+        # DAM uses a single objectDescriber.server_port field instead.
+        local extra_args=""
+        emit_vllm_overrides() {
+            local prefix="$1"
+            local port
+            port="$(backend_port "$2")"
+            extra_args+=" ++${prefix}.use_vllm_server=True"
+            extra_args+=" ++${prefix}.vllm_url_root=http://localhost"
+            extra_args+=" ++${prefix}.vllm_port=${port}"
+        }
+
+        if [[ -n "$LANG_PROMPT_BACKEND" ]]; then
+            emit_vllm_overrides "dataset_generator.instanceSegmenter.object_discoverer" "$LANG_PROMPT_BACKEND"
         fi
+        if [[ -n "$SCENE_CAPTION_BACKEND" ]]; then
+            emit_vllm_overrides "dataset_generator.sceneCaptioner" "$SCENE_CAPTION_BACKEND"
+        fi
+        case "$OBJECT_DESC_BACKEND" in
+            dam)
+                extra_args+=" ++dataset_generator.objectDescriber.server_port=${DAM_PORT}"
+                ;;
+            qwen|gemma)
+                emit_vllm_overrides "dataset_generator.objectDescriber" "$OBJECT_DESC_BACKEND"
+                ;;
+            "") ;;
+        esac
+        if [[ -n "$PERSISTENCE_BACKEND" ]]; then
+            emit_vllm_overrides "dataset_generator.llmPersistenceQuerier.llmQuerier" "$PERSISTENCE_BACKEND"
+        fi
+
+        local container_cmd
         container_cmd="cd /workspace/code/semantic-persistence-filter && \
 HYDRA_FULL_ERROR=1 python3 run_llm_labeling_pipeline.py \
   --config-name ${CONFIG_NAME} \
   +image_dataset=${dataset} \
-  ++dataset_generator.run_phases=[${RUN_PHASES}] \
-  ++dataset_generator.instanceSegmenter.object_discoverer.use_vllm_server=True \
-  ++dataset_generator.instanceSegmenter.object_discoverer.vllm_url_root=http://localhost \
-  ++dataset_generator.instanceSegmenter.object_discoverer.vllm_port=${TRTLLM_PORT} \
-  ++dataset_generator.sceneCaptioner.use_vllm_server=True \
-  ++dataset_generator.sceneCaptioner.vllm_url_root=http://localhost \
-  ++dataset_generator.sceneCaptioner.vllm_port=${TRTLLM_PORT}${dam_arg}"
+  ++dataset_generator.run_phases=[${RUN_PHASES}]${extra_args}"
 
 # add \ ++registry_info.read_only=true to the labeler command if running into sql errors with the registry
 

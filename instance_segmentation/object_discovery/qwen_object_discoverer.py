@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import base64
 import io
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 import re
 
 import torch
 from PIL import Image
 
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import derive_served_model_name, resolve_served_model_name, resolve_torch_dtype
 from instance_segmentation.object_discovery.abs_object_discoverer import AbsObjectDiscoverer
 
@@ -198,10 +199,6 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
     ):
         super().__init__(name=name)
 
-        # model_name = "Qwen/Qwen3-VL-8B-Instruct"
-        vllm_port = 9011
-
-
         if (torch_dtype == "auto") and use_vllm_server:
             torch_dtype = "bfloat16" if torch.cuda.is_available() else "float32"
 
@@ -279,13 +276,13 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
             self.model.eval()
 
     @torch.no_grad()
-    def identify(self, image: torch.Tensor) -> List[str]:
+    def identify(self, image: torch.Tensor) -> Tuple[List[str], DebugPayload]:
         if self.use_vllm_server:
-            text_out = self._identify_vllm(image)
+            text_out, debug = self._identify_vllm(image)
         else:
-            text_out = self._identify_local(image)
+            text_out, debug = self._identify_local(image)
         print(f"QwenVLObjectDiscoverer ({self.qwen_family}) identified text:", text_out)
-        return _parse_listish_text(text_out, max_items=self.max_objects)
+        return _parse_listish_text(text_out, max_items=self.max_objects), debug
 
     def _ensure_vllm_resolved(self) -> None:
         if self.vllm_served_model_name is None:
@@ -356,7 +353,7 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
         )
 
 
-    def _identify_vllm(self, image: torch.Tensor) -> str:
+    def _identify_vllm(self, image: torch.Tensor) -> Tuple[str, DebugPayload]:
         assert self.vllm_client is not None
         self._ensure_vllm_resolved()
         assert self.vllm_served_model_name is not None
@@ -504,10 +501,13 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
                     )
 
 
-        return text
+        debug = DebugPayload()
+        if reasoning:
+            debug.add("reasoning_trace", reasoning, kind="text")
+        return text, debug
 
 
-    def _identify_local(self, image: torch.Tensor) -> str:
+    def _identify_local(self, image: torch.Tensor) -> Tuple[str, DebugPayload]:
         assert self.model is not None
         assert self.processor is not None
         pil = _chw_uint8_to_pil(image)
@@ -554,5 +554,5 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )[0].strip()
-        return text_out
+        return text_out, DebugPayload.empty()
 

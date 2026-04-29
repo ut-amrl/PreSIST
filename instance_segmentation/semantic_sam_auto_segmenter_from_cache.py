@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Optional, Sequence, Union, List
+from typing import Optional, Sequence, Union, List, Tuple
 import numpy as np
 import torch
 from PIL import Image
@@ -10,6 +10,7 @@ import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
 
 from instance_segmentation.abs_instance_segmenter import AbsInstanceSegmenter, SegmentationResults
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 
 
 
@@ -69,6 +70,6 @@ class SemanticSAMInstanceSegmenterFromCache(AbsInstanceSegmenter):
 
 
 
-    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstancesRaw(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
         # Throw an error if it actually gets here -- this segmenter is only meant to be used with cached results, so segmentInstances should never be called.
         raise RuntimeError("SemanticSAMInstanceSegmenterFromCache is only meant to be used with cached segmentation results. segmentInstances should never be called.")

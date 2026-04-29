@@ -27,6 +27,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from dataset_generation.llm_persistence_querying.vlm_querying.abs_vlm_querier import AbsVLMQuerier
 
 
@@ -192,23 +193,18 @@ class QwenVLMQuerier(AbsVLMQuerier):
             )
             self.model.eval()
 
-    def queryVLM(self, prompt: str, images: List[Image.Image]) -> str:
+    def queryVLM(
+        self, prompt: str, images: List[Image.Image]
+    ) -> Tuple[str, DebugPayload]:
         if not images:
             raise ValueError("QwenVLMQuerier.queryVLM requires at least one image.")
-        _, content = self.queryVLMWithReasoning(prompt, images)
-        return content
-
-    def queryVLMWithReasoning(
-        self, prompt: str, images: List[Image.Image]
-    ) -> Tuple[str, str]:
-        """Return (reasoning_content, output_content). reasoning_content may be empty."""
-        if not images:
-            raise ValueError("QwenVLMQuerier.queryVLMWithReasoning requires at least one image.")
         if self.use_vllm_server:
             return self._query_vllm(prompt, images)
         return self._query_local(prompt, images)
 
-    def _query_vllm(self, prompt: str, images: List[Image.Image]) -> Tuple[str, str]:
+    def _query_vllm(
+        self, prompt: str, images: List[Image.Image]
+    ) -> Tuple[str, DebugPayload]:
         """Send images + text to vLLM via OpenAI chat completions (content: image_url + text)."""
         assert self.vllm_client is not None
         assert self.vllm_served_model_name is not None
@@ -242,10 +238,15 @@ class QwenVLMQuerier(AbsVLMQuerier):
         msg = resp.choices[0].message
         reasoning = (getattr(msg, "reasoning_content", None) or "").strip()
         output = (msg.content or "").strip()
-        return reasoning, output
+        debug = DebugPayload()
+        if reasoning:
+            debug.add("reasoning_trace", reasoning, kind="text")
+        return output, debug
 
     @torch.no_grad()
-    def _query_local(self, prompt: str, images: List[Image.Image]) -> Tuple[str, str]:
+    def _query_local(
+        self, prompt: str, images: List[Image.Image]
+    ) -> Tuple[str, DebugPayload]:
         """Local Transformers path: processor + model.generate()."""
         assert self.model is not None
         assert self.processor is not None
@@ -281,4 +282,4 @@ class QwenVLMQuerier(AbsVLMQuerier):
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )[0].strip()
-        return text_out
+        return text_out, DebugPayload.empty()

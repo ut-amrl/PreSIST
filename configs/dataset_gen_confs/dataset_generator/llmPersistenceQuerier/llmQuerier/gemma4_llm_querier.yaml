@@ -1,0 +1,9 @@
+_target_: dataset_generation.llm_persistence_querying.llm_querying.gemma_llm_querier.GemmaLLMQuerier
+torch_dtype: torch.bfloat16
+model_name: "google/gemma-4-31B-it"
+device_map: "auto"
+max_new_tokens: 2048
+temperature: 0.2
+top_p: 0.9
+name: gemma4_31b_default
+enable_thinking: false

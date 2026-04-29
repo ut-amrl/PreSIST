@@ -2,10 +2,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from math import ceil
-from typing import Optional
+from typing import Optional, Tuple
 import torch
 import numpy as np
 from utils.mask_utils import dedupe_mask_indices_by_iou, filter_mask_indices_by_min_area
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 
 
 # =========================
@@ -124,26 +125,30 @@ class AbsInstanceSegmenter(ABC):
         """Returns the name of this segmenter."""
         return self.name
 
-    def segmentInstances(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstances(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
         """
         Args:
             image: torch.Tensor, shape (C, H, W), dtype=uint8, RGB.
 
         Returns:
-            SegmentationResults
+            (SegmentationResults, DebugPayload)
         """
         self._validateImage(image)
-        raw_results = self.segmentInstancesRaw(image)
+        raw_results, debug_payload = self.segmentInstancesRaw(image)
         if not isinstance(raw_results, SegmentationResults):
             raise TypeError("segmentInstancesRaw() must return SegmentationResults.")
-        return self._postprocessSegmentationResults(image=image, results=raw_results)
+        if debug_payload is None:
+            debug_payload = DebugPayload.empty()
+        processed = self._postprocessSegmentationResults(image=image, results=raw_results)
+        return processed, debug_payload
 
     @abstractmethod
-    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstancesRaw(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
         """
         Model-specific segmentation implementation.
 
-        Subclasses should return unfiltered SegmentationResults in image space.
+        Subclasses should return (unfiltered SegmentationResults in image space, DebugPayload).
+        Subclasses with no debug data may return (results, DebugPayload.empty()) or (results, None).
         """
         raise NotImplementedError("Subclasses must implement this method.")
 

@@ -7,6 +7,7 @@ from PIL import Image, ImageFilter
 
 from typing import Tuple, Optional, Type
 
+
 def overlay_single_mask(
     image_t: torch.Tensor,
     mask_t: torch.Tensor,
@@ -72,6 +73,7 @@ def blur_bkg_outline_fg(
     highlight_alpha: float = 0.0,
     outline_color=(0, 255, 0),
     outline_alpha: float = 0.9,
+    outline_thickness: int = 1,
 ) -> np.ndarray:
     """
     Create a 'visual prompt' image that keeps the full scene but
@@ -96,8 +98,12 @@ def blur_bkg_outline_fg(
     mask_bool = _to_bool_mask_hw(obj_mask, H, W)
 
     # --- 3. Create blurred + dimmed background ---
-    blurred_pil = img_pil.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-    blurred_np = np.asarray(blurred_pil).astype(np.float32)
+    if (not blur_radius or blur_radius <= 0):
+        # Skip blurring if radius is 0 or negative, just use the original image as background
+        blurred_np = img_np.astype(np.float32)
+    else:
+        blurred_pil = img_pil.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        blurred_np = np.asarray(blurred_pil).astype(np.float32)
 
     # Start from blurred as background composite
     comp = blurred_np.copy()
@@ -117,21 +123,35 @@ def blur_bkg_outline_fg(
     )
 
     # --- 5. Build a simple outline from the mask via dilation ---
-    mask_pad = np.pad(mask_bool, 1, mode="constant", constant_values=False)
-    dilated = np.zeros_like(mask_bool)
-    for dy in range(3):
-        for dx in range(3):
-            dilated |= mask_pad[dy:dy + H, dx:dx + W]
+    if outline_thickness > 0:
+        t = int(outline_thickness)
+        k = 2 * t + 1
+        mask_pad = np.pad(mask_bool, t, mode="constant", constant_values=False)
+        dilated = np.zeros_like(mask_bool)
+        for dy in range(k):
+            for dx in range(k):
+                dilated |= mask_pad[dy:dy + H, dx:dx + W]
 
-    outline = dilated & ~mask_bool  # ring around the object
+        outline = dilated & ~mask_bool  # ring around the object
 
-    # Blend outline color into boundary pixels
-    outline_color_arr = np.array(outline_color, dtype=np.float32)
-    out_region = comp[outline]
-    comp[outline] = (
-        (1.0 - outline_alpha) * out_region +
-        outline_alpha * outline_color_arr
-    )
+        # Where the mask touches the image edge, the outward ring gets clipped.
+        # Add an inward strip of thickness ceil(t/2) along the image borders,
+        # restricted to mask pixels, so the outline is still visible on that side.
+        t_inner = (t + 1) // 2
+        edge_strip = np.zeros_like(mask_bool)
+        edge_strip[:t_inner, :] = True
+        edge_strip[-t_inner:, :] = True
+        edge_strip[:, :t_inner] = True
+        edge_strip[:, -t_inner:] = True
+        outline |= mask_bool & edge_strip
+
+        # Blend outline color into boundary pixels
+        outline_color_arr = np.array(outline_color, dtype=np.float32)
+        out_region = comp[outline]
+        comp[outline] = (
+            (1.0 - outline_alpha) * out_region +
+            outline_alpha * outline_color_arr
+        )
 
     # --- 6. Clip and convert back to uint8 numpy array ---
     comp = np.clip(comp, 0, 255).astype(np.uint8)
@@ -217,6 +237,8 @@ def mask_highlight_image(
     mask_highlight_color: Tuple[int, int, int] = (0, 0, 255),
     alpha_mask: float = 0.6,
     alpha_img: float = 0.4,
+    # Add additional kwargs for other styles as needed
+    extra_kwargs: Optional[dict] = None,
 ) -> np.ndarray:
     """
     Create an image that highlights a single mask for VLM input.
@@ -228,22 +250,27 @@ def mask_highlight_image(
             - "mask_overlay": strong color overlay on mask
             - "foreground_only": background black/dark, mask region unchanged
             - "binary_mask": background black, mask region white (silhouette)
+            - "blur_bg_outline_fg": blur+dim background, keep foreground sharp, add outline
         mask_highlight_color: BGR tuple for highlight (used when style="mask_overlay" or "blur_bg_outline_fg")
         alpha_mask, alpha_img: blend factors for mask_overlay
 
     Returns:
         (H, W, 3) uint8 numpy array.
     """
+
+    if (extra_kwargs is None):
+        extra_kwargs = {}
     if (style == "blur_bg_outline_fg"):
         return blur_bkg_outline_fg(
             image_t,
             mask_t,
-            blur_radius=8,
-            background_dim_factor=0.35,
+            blur_radius=extra_kwargs.get("blur_radius", 8),
+            background_dim_factor=extra_kwargs.get("background_dim_factor", 0.35),
             highlight_color=mask_highlight_color,
-            highlight_alpha=0.0,
+            highlight_alpha=extra_kwargs.get("highlight_alpha", 0.0),
             outline_color=mask_highlight_color,
-            outline_alpha=0.9,
+            outline_alpha=extra_kwargs.get("outline_alpha", 0.9),
+            outline_thickness=extra_kwargs.get("outline_thickness", 1),
         )
 
     if image_t.dim() == 3 and image_t.shape[0] in (1, 3):

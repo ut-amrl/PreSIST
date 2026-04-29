@@ -1,0 +1,51 @@
+defaults:
+  - dataset_generator: caching_dataset_generation_process
+  - registry_info: registry_default
+  - dataloader: dataloader_default
+  # - override dataset_generator/instanceSegmenter: semanticsamautosegmenter_cache
+  - override dataset_generator/instanceSegmenter: languagegroundedsegmenter
+  - override dataset_generator/sceneCaptioner: gemma_vl_vllm
+  - _self_
+
+# output_root_dir: "./debug_outputs_single_imgs/"
+
+
+dataset_generator:
+  llmPersistenceQuerier:
+    llmQuerier:
+      model_name: Qwen/Qwen3-30B-A3B-Thinking-2507
+      max_new_tokens: 16384
+      vllm_request_timeout_s: 600
+      name: qwen3_30b_thinking
+    promptHandler:
+      prompt_template_file: "prompt_files/llm_querier/v3_iqr_only_behav.txt"
+      name: v3_iqr_only_behav
+  # Update the captioner prompt and name
+  sceneCaptioner:
+    enable_thinking: false
+    prompt_file: prompt_files/scene_level_captioner/process_long7.txt
+    max_new_tokens: 16384
+    name: gemma_cap_proc_long7
+  instanceSegmenter:
+    object_discoverer:
+      _target_: instance_segmentation.object_discovery.qwen_object_discoverer.QwenVLObjectDiscoverer
+      name: "qwenvl37bT_disc_maxObj30_u3"
+      model_name: "Qwen/Qwen3-VL-8B-Thinking"
+      max_objects: 30
+      prompt_file: "prompt_files/object_discoverer/u3.txt"
+      max_new_tokens: 30000
+    language_segmenter:
+      _target_: instance_segmentation.language_prompted_segmentation.sam3_batch_language_prompted_segmenter.SAM3BatchedLanguagePromptedSegmenter
+      name: sam3b32
+      score_thresh: 0.35
+    min_area_perc: 0.001
+    confidence_threshold: 0.35
+    dedupe_iou_threshold: 0.9
+    name_suffix: "_s0p35_mA0p001_dedupe0p9"
+
+
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

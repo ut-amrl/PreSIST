@@ -1,5 +1,6 @@
 from instance_segmentation.abs_instance_segmenter import AbsInstanceSegmenter, SegmentationResults
-from typing import Optional
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
+from typing import Optional, Tuple
 import torch
 import numpy as np
 from sam2.build_sam import build_sam2
@@ -156,17 +157,13 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
         x, y, w, h = map(float, xywh)
         return [x, y, x + w, y + h]
 
-    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstancesRaw(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
         """
         Args:
             image: torch.uint8 tensor, shape (3, H, W), RGB.
 
         Returns:
-            SegmentationResults with:
-                ids: (N,) int64
-                masks:  (N, H, W) bool
-                boxes:  (N, 4) XYXY float32
-                scores: (N,) float32 (predicted IoU from SAM2)
+            (SegmentationResults, DebugPayload)
         """
         # SAM2 expects HxWxC uint8 RGB numpy array
         img_np = image[:3].permute(1, 2, 0).contiguous().cpu().numpy()
@@ -176,7 +173,7 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
 
         if len(raw) == 0:
             H, W = image.shape[-2:]
-            return SegmentationResults.empty(h=H, w=W)
+            return SegmentationResults.empty(h=H, w=W), DebugPayload.empty()
 
         ids = torch.arange(len(raw), dtype=torch.int64)
 
@@ -194,6 +191,6 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
             dtype=torch.float32,
         )  # (N,)
 
-        return SegmentationResults(ids=ids, masks=masks, boxes=boxes, scores=scores)
+        return SegmentationResults(ids=ids, masks=masks, boxes=boxes, scores=scores), DebugPayload.empty()
 
 

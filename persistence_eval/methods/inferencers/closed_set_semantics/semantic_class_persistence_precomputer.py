@@ -137,7 +137,7 @@ def run_precomputer(
         print("\n"*3)
 
         try:
-            response = querier.queryLLM(prompt)
+            response, _ = querier.queryLLM(prompt)
             params = _parse_response(response, param_keys, output_param_keys)
             print("Params: ")
             print(params)

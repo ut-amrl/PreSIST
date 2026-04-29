@@ -1,9 +1,10 @@
 from utils.image_utils import tensor_image_to_pil, mask_to_pil
 from instance_segmentation.abs_instance_segmenter import SegmentationResults
 from dataset_generation.instance_descriptions.abs_object_describer import AbstractObjectDescriber
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 import torch
 import numpy as np
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 
 
 from PIL import Image
@@ -23,23 +24,13 @@ class DummyObjectDescriber(AbstractObjectDescriber):
         self,
         image: torch.Tensor,
         instances: SegmentationResults,
-    ) -> Dict[int, str]:
+    ) -> Tuple[Dict[int, str], DebugPayload]:
         """
         Describe objects in the image based on the provided instances.
 
-        Args:
-            image:
-                Input image tensor of shape (C, H, W).
-            instances:
-                SegmentationResults with:
-                    - instances.masks: iterable of per-instance masks (H, W) or (1, H, W)
-                    - instances.ids: tensor/list of instance IDs
-                    - instances.boxes: tensor of (N, 4) in XYXY format (currently unused)
-
-        Returns:
-            dict[obj_id -> description string]
+        Returns (descriptions, DebugPayload).
         """
         descriptions: Dict[int, str] = {}
 
 
-        return descriptions
+        return descriptions, DebugPayload.empty()

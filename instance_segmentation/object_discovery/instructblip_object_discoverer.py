@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import re
 import torch
+
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from instance_segmentation.object_discovery.abs_object_discoverer import AbsObjectDiscoverer
 from transformers import InstructBlipProcessor, InstructBlipForConditionalGeneration
 
@@ -141,7 +143,7 @@ class InstructBLIPObjectDiscoverer(AbsObjectDiscoverer):
         self.model.eval()
 
     @torch.no_grad()
-    def identify(self, image: torch.Tensor) -> List[str]:
+    def identify(self, image: torch.Tensor) -> Tuple[List[str], DebugPayload]:
         if not isinstance(image, torch.Tensor):
             raise TypeError("image must be a torch.Tensor")
         if image.ndim != 3 or image.shape[0] not in (3, 4):
@@ -169,4 +171,4 @@ class InstructBLIPObjectDiscoverer(AbsObjectDiscoverer):
 
         text = self.processor.batch_decode(out_ids, skip_special_tokens=True)[0].strip()
         # print("InstructBLIPObjectDiscoverer identified text:", text)
-        return _parse_listish_text(text, max_items=self.max_objects)
+        return _parse_listish_text(text, max_items=self.max_objects), DebugPayload.empty()

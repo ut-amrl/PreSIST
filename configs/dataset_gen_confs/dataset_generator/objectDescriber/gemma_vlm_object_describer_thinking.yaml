@@ -1,0 +1,21 @@
+_target_: dataset_generation.instance_descriptions.gemma_vlm_object_describer.GemmaVLMObjectDescriber
+name: gemmaVLMDescThinking
+model_name: "google/gemma-4-31b-it"
+torch_dtype: torch.bfloat16
+prompt: null
+prompt_file: "prompt_files/instance_describer/movement_and_relationships.txt"
+prefix: null
+prefix_file: "prompt_files/instance_describer/format_prefix/pref_double_img_blur.txt"
+use_vllm_server: true
+enable_thinking: true
+vllm_url_root: "http://localhost"
+vllm_port: 9008
+vllm_url_suffix: "/v1"
+vllm_api_key: "EMPTY"
+vllm_request_timeout_s: 600.0
+max_new_tokens: 16384
+temperature: 0.2
+top_p: 0.9
+mask_style: blur_bg_outline_fg
+mask_highlight_color: [0, 255, 255]
+mask_dilation_px: 5

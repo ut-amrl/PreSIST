@@ -1,7 +1,8 @@
 from dataset_generation.scene_level_captioning.abs_scene_level_captioner import AbstractSceneLevelCaptioner
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from transformers import InstructBlipProcessor, InstructBlipForConditionalGeneration
 import torch
-from typing import Optional
+from typing import Optional, Tuple
 
 
 
@@ -70,10 +71,10 @@ class InstructBLIPSceneLevelCaptioner(AbstractSceneLevelCaptioner):
         self.model.eval()
 
     @torch.no_grad()
-    def generateCaption(self, image: torch.Tensor) -> str:
+    def generateCaption(self, image: torch.Tensor) -> Tuple[str, DebugPayload]:
         """
         Generate a scene-level caption for the given image using InstructBLIP.
-        Takes in a torch tensor image (C, H, W) or (B, C, H, W) and returns a string caption.
+        Takes in a torch tensor image (C, H, W) or (B, C, H, W) and returns (caption, DebugPayload).
         """
         if not self.initialized:
             self.initialize()
@@ -115,7 +116,7 @@ class InstructBLIPSceneLevelCaptioner(AbstractSceneLevelCaptioner):
             output_ids, skip_special_tokens=True
         )[0].strip()
 
-        return caption
+        return caption, DebugPayload.empty()
 
 
 

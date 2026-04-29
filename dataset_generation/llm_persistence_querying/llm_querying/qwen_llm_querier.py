@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import os
+import re
 from time import time
-from typing import Any, Optional, Dict, List, Union
+from typing import Any, Optional, Dict, List, Tuple, Union
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # from openai import OpenAI
 
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from dataset_generation.llm_persistence_querying.llm_querying.abs_llm_querier import AbsLLMQuerier
 import os
 
@@ -267,7 +269,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
         repetition_penalty: Optional[float] = None,
         stop: Optional[List[str]] = None,
         seed: Optional[int] = None,
-    ) -> str:
+    ) -> Tuple[str, DebugPayload]:
         """
         Single-turn query.
 
@@ -286,7 +288,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
 
         start_time = time()
         if self.use_vllm_server:
-            vllmOut = self._query_vllm(
+            output, debug = self._query_vllm(
                 prompt,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
@@ -297,7 +299,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
             )
 
         else:
-            vllmOut = self._query_local(
+            output, debug = self._query_local(
                 prompt,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
@@ -310,7 +312,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
         self.numQueries += 1
         average_time = self.totalQueryTime / self.numQueries
         print(f"Query time: {query_time:.2f}s (average over {self.numQueries} queries: {average_time:.2f}s)")
-        return vllmOut
+        return output, debug
 
     # -------------------------
     # Mode implementations
@@ -326,7 +328,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
         # repetition_penalty: Optional[float],
         stop: Optional[List[str]],
         seed: Optional[int],
-    ) -> str:
+    ) -> Tuple[str, DebugPayload]:
         assert self.vllm_client is not None
         assert self.vllm_served_model_name is not None
 
@@ -350,7 +352,13 @@ class QwenLLMQuerier(AbsLLMQuerier):
             **params,
             **self.vllm_extra_request_params,
         )
-        return (resp.choices[0].message.content or "").strip()
+        msg = resp.choices[0].message
+        reasoning = (getattr(msg, "reasoning_content", None) or "").strip()
+        output = (msg.content or "").strip()
+        debug = DebugPayload()
+        if reasoning:
+            debug.add("reasoning_trace", reasoning, kind="text")
+        return output, debug
 
     def _query_local(
         self,
@@ -360,7 +368,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
         temperature: Optional[float],
         top_p: Optional[float],
         repetition_penalty: Optional[float],
-    ) -> str:
+    ) -> Tuple[str, DebugPayload]:
         assert self.model is not None
         assert self.tokenizer is not None
 
@@ -391,7 +399,16 @@ class QwenLLMQuerier(AbsLLMQuerier):
 
         generated_ids = output_ids[:, model_inputs["input_ids"].shape[1] :]
         response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        return response.strip()
+        response = response.strip()
+
+        debug = DebugPayload()
+        think_match = re.search(r"<think>(.*?)</think>\s*", response, flags=re.DOTALL)
+        if think_match:
+            reasoning = think_match.group(1).strip()
+            response = (response[: think_match.start()] + response[think_match.end():]).strip()
+            if reasoning:
+                debug.add("reasoning_trace", reasoning, kind="text")
+        return response, debug
 
 
 # from dataset_generation.llm_persistence_querying.llm_querying.abs_llm_querier import AbsLLMQuerier

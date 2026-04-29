@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 import torch
 import numpy as np
@@ -7,6 +7,7 @@ from instance_segmentation.abs_instance_segmenter import (
     AbsInstanceSegmenter,
     SegmentationResults,
 )
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 
 from sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
 from instance_segmentation.raw_sam3_automatic_mask_generator import SAM3AutomaticMaskGenerator
@@ -113,7 +114,7 @@ class SAM3InstanceSegmenter(AbsInstanceSegmenter):
         x, y, w, h = map(float, xywh)
         return [x, y, x + w, y + h]
 
-    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstancesRaw(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
         # (C, H, W) -> (H, W, C) numpy uint8
         img_np = image[:3].permute(1, 2, 0).contiguous().cpu().numpy()
         H, W = img_np.shape[:2]
@@ -121,7 +122,7 @@ class SAM3InstanceSegmenter(AbsInstanceSegmenter):
         raw = self._mask_generator.generate(img_np)
 
         if len(raw) == 0:
-            return SegmentationResults.empty(h=H, w=W)
+            return SegmentationResults.empty(h=H, w=W), DebugPayload.empty()
 
         ids = torch.arange(len(raw), dtype=torch.int64)
 
@@ -150,4 +151,4 @@ class SAM3InstanceSegmenter(AbsInstanceSegmenter):
             masks=masks,
             boxes=boxes,
             scores=scores,
-        )
+        ), DebugPayload.empty()

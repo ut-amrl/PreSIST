@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 import torch
 
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from instance_segmentation.abs_instance_segmenter import SegmentationResults
 
 
@@ -24,9 +25,12 @@ class AbsLLMPersistenceQuerier(ABC):
         timeAndDate: Optional[str],
         image: torch.Tensor,
         instances: SegmentationResults
-    ):
+    ) -> Tuple[Any, Any, Any, DebugPayload]:
         """
         Estimate persistence parameters for each object.
+
+        Returns (prompts, rawResponse, persistenceParameters, DebugPayload).
+        Subclasses with no debug data may return DebugPayload.empty() in the last slot.
 
         image: (C, H, W) tensor for the scene.
         instances: SegmentationResults (masks, ids, etc.) for the scene.

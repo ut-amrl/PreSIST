@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from typing import Tuple
+
 import torch
 
 from instance_segmentation.abs_instance_segmenter import AbsInstanceSegmenter, SegmentationResults
 from instance_segmentation.object_discovery.abs_object_discoverer import AbsObjectDiscoverer
 from instance_segmentation.language_prompted_segmentation.abs_language_prompted_segmenter import AbsLanguagePromptedSegmenter
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 
 
 class LanguageGroundedSegmenter(AbsInstanceSegmenter):
@@ -39,10 +42,10 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
         self.language_segmenter = language_segmenter
 
     @torch.no_grad()
-    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstancesRaw(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
         _, H, W = image.shape
 
-        obj_descriptions = self.object_discoverer.identify(image)
+        obj_descriptions, discoverer_debug = self.object_discoverer.identify(image)
         # print("Object descriptions:", obj_descriptions)
 
         # Dedupe object descriptions if needed (some discoverers may return duplicates or near-duplicates)
@@ -56,11 +59,12 @@ class LanguageGroundedSegmenter(AbsInstanceSegmenter):
         # Convert to your SegmentationResults.
         # ids are prompt indices for each mask (can swap to arange if you prefer).
         if seg.masks.shape[0] == 0:
-            return SegmentationResults.empty(h=H, w=W)
+            return SegmentationResults.empty(h=H, w=W), discoverer_debug
 
-        return SegmentationResults(
+        results = SegmentationResults(
             ids=torch.arange(seg.masks.shape[0], dtype=torch.int64),
             masks=seg.masks.to(torch.bool),
             boxes=seg.boxes.to(torch.float32),
             scores=seg.scores.to(torch.float32) if seg.scores is not None else None,
         )
+        return results, discoverer_debug

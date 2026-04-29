@@ -10,6 +10,7 @@ from instance_segmentation.abs_instance_segmenter import (
     AbsInstanceSegmenter,
     SegmentationResults,
 )
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from instance_segmentation.point_prompted_segmentation.abs_point_prompted_segmenter import (
     AbsPointPromptedSegmenter,
 )
@@ -139,10 +140,10 @@ class LanguageGroundedWithPointRepromptSegmenter(AbsInstanceSegmenter):
             points = points[: self.max_points_per_region]
         return points
 
-    def segmentInstancesRaw(self, image: torch.Tensor) -> SegmentationResults:
+    def segmentInstancesRaw(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
         _, h, w = image.shape
 
-        first_pass = self.language_grounded_segmenter.segmentInstances(image)
+        first_pass, _first_pass_debug = self.language_grounded_segmenter.segmentInstances(image)
         # print(f"Number of masks after language grounded segmentation: {len(first_pass)}")
 
 
@@ -168,7 +169,7 @@ class LanguageGroundedWithPointRepromptSegmenter(AbsInstanceSegmenter):
         # print(f"Percent of uncovered pixels: {uncovered.sum() / (h * w)}")
 
         if not bool(uncovered.any()):
-            return first_pass
+            return first_pass, DebugPayload.empty()
 
         uncovered_np = uncovered.cpu().numpy().astype(bool)
         components = _connected_components_8(uncovered_np)
@@ -211,7 +212,7 @@ class LanguageGroundedWithPointRepromptSegmenter(AbsInstanceSegmenter):
             sampled_points.extend(pointsForComponent)
 
         if len(sampled_points) == 0:
-            return first_pass
+            return first_pass, DebugPayload.empty()
 
         # Display sampled points on a contiguous HWC uint8 image for OpenCV drawing.
         # If the image is a tensor, detach and convert to numpy
@@ -252,7 +253,7 @@ class LanguageGroundedWithPointRepromptSegmenter(AbsInstanceSegmenter):
         # print(f"Number of masks after point prompted segmentation: {len(second_pass)}")
 
         if second_pass.masks.shape[0] == 0:
-            return first_pass
+            return first_pass, DebugPayload.empty()
 
         second_seg = SegmentationResults(
             ids=torch.arange(second_pass.masks.shape[0], dtype=torch.int64),
@@ -267,7 +268,7 @@ class LanguageGroundedWithPointRepromptSegmenter(AbsInstanceSegmenter):
                 masks=second_seg.masks,
                 boxes=second_seg.boxes,
                 scores=second_seg.scores,
-            )
+            ), DebugPayload.empty()
 
         first_scores = (
             first_pass.scores.to(torch.float32)
@@ -293,5 +294,5 @@ class LanguageGroundedWithPointRepromptSegmenter(AbsInstanceSegmenter):
             masks=merged_masks,
             boxes=merged_boxes,
             scores=merged_scores,
-        )
+        ), DebugPayload.empty()
 

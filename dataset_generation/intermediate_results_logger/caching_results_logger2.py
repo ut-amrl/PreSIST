@@ -1,6 +1,11 @@
 from datetime import datetime, time
 
 from dataset_generation.intermediate_results_logger.abs_intermediate_results_logger import AbsIntermediateResultsLogger
+from dataset_generation.intermediate_results_logger.debug_data import (
+    DebugConfig,
+    DebugPayload,
+    DebugWriter,
+)
 import os
 from PIL import Image
 import json
@@ -28,10 +33,12 @@ class CachingResultsLoggerRevised:
         baseLogDirectory,
         saveDebugImages=False,
         forceRegen=False,
+        debug_config: DebugConfig = None,
     ):
         self.baseLogDirectory = baseLogDirectory
         self.saveDebugImages = saveDebugImages
         self.forceRegen = forceRegen
+        self.debug_config = debug_config or DebugConfig()
 
         self.configFileName = None
         self.imgFileName = None
@@ -85,6 +92,22 @@ class CachingResultsLoggerRevised:
         for subDirName in subDirNames:
             dirPath = os.path.join(dirPath, subDirName)
         return dirPath
+
+
+    def _emit_debug(self, phase_name, debug_payload, debug_dir):
+        if not self.debug_config.enabled:
+            return
+        if not self.debug_config.is_phase_enabled(phase_name):
+            return
+        if debug_payload is None or debug_payload.is_empty():
+            return
+        try:
+            DebugWriter(debug_dir).write(
+                debug_payload,
+                kinds_filter=self.debug_config.kinds_filter(),
+            )
+        except Exception as e:
+            print(f"[debug-data] failed for {phase_name}: {e}")
 
 
     def getFinalOutputDirectory(self):
@@ -171,7 +194,7 @@ class CachingResultsLoggerRevised:
         # raise ValueError("Segmentation results not found and forceRegen is False.")
         # Otherwise, compute segmentation results
         with timer.time_block(self.segmenterTimerName):
-            segmentationResults = segmentationLambda()
+            segmentationResults, debug_payload = segmentationLambda()
 
         # Make sure directory exists
         # Create directory if it does not exist
@@ -185,6 +208,11 @@ class CachingResultsLoggerRevised:
 
         # Save segmentation results to file
         segmentationResults.saveToFile(segmentationResultsFilePath, imagePath=self.imgFileName)
+        self._emit_debug(
+            "segmentation",
+            debug_payload,
+            os.path.join(segmentationResultsDir, "debug"),
+        )
         return segmentationResults
 
 
@@ -210,7 +238,7 @@ class CachingResultsLoggerRevised:
 
         # Otherwise, compute caption
         with timer.time_block(self.sceneCaptionerTimerName):
-            caption = captionLambda()
+            caption, debug_payload = captionLambda()
 
         # Save caption to a JSON file
         # Make sure directory exists
@@ -222,6 +250,11 @@ class CachingResultsLoggerRevised:
                 "imagePath": self.imgFileName
             }, f, indent=2, ensure_ascii=False)
 
+        self._emit_debug(
+            "scene_caption",
+            debug_payload,
+            os.path.join(captionDir, "debug"),
+        )
         return caption
 
 
@@ -252,7 +285,7 @@ class CachingResultsLoggerRevised:
 
         # Otherwise, compute descriptions
         with timer.time_block(self.objectDescriberTimerName):
-            objectDescriptions = descriptionsLambda()
+            objectDescriptions, debug_payload = descriptionsLambda()
 
         # Save object descriptions to a JSON file
         # Make sure directory exists
@@ -265,12 +298,22 @@ class CachingResultsLoggerRevised:
             }
             json.dump(descriptionsOutputData, f, indent=2, ensure_ascii=False)
 
+        self._emit_debug(
+            "object_descriptions",
+            debug_payload,
+            os.path.join(descriptionsDir, "debug"),
+        )
         return objectDescriptions
 
     def getOrGenerateRelationshipDescriptions(self, relationshipLambda):
 
         # For now, just return the computed relationships without caching
-        relationshipDescriptions = relationshipLambda()
+        relationshipDescriptions, debug_payload = relationshipLambda()
+        self._emit_debug(
+            "relationships",
+            debug_payload,
+            os.path.join(self.getRelationshipDescriberResultsDirectory(), "debug"),
+        )
         return relationshipDescriptions
 
 
@@ -321,7 +364,7 @@ class CachingResultsLoggerRevised:
 
         # Otherwise, compute prompts and persistence parameters
         with timer.time_block(self.llmQuerierTimerName):
-            prompts, rawResponse, persistenceParameters = llmLambda()
+            prompts, rawResponse, persistenceParameters, debug_payload = llmLambda()
 
         # Save prompts and persistence parameters to their respective files
         self.createDirectoryIfNotExists(llmDataDir)
@@ -339,6 +382,11 @@ class CachingResultsLoggerRevised:
 
         writePersistenceData(persistenceParamsPath, persistenceParameters=persistenceParameters, imgFileName=self.imgFileName)
 
+        self._emit_debug(
+            "persistence",
+            debug_payload,
+            os.path.join(llmDataDir, "debug"),
+        )
         return prompts, rawResponse, persistenceParameters
 
     # def logObjectDescriptions(self, objectDescriptions):

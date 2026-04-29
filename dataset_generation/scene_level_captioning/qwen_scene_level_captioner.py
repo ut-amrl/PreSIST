@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import base64
 import io
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 from PIL import Image
 
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import (
     derive_served_model_name,
     resolve_served_model_name,
@@ -148,7 +149,7 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
             **self.vllm_extra_request_params,
         )
 
-    def _caption_vllm(self, pil: Image.Image) -> str:
+    def _caption_vllm(self, pil: Image.Image) -> Tuple[str, DebugPayload]:
         self._ensure_vllm_resolved()
         content = [
             {"type": "image_url", "image_url": {"url": _pil_to_data_url_jpeg(pil)}},
@@ -168,6 +169,7 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
             resp = self._make_vllm_request(content, enable_thinking=False, inject_no_think=True)
             choice = resp.choices[0]
             text = (choice.message.content or "").strip()
+            reasoning = (getattr(choice.message, "reasoning_content", "") or "").strip()
 
             if choice.finish_reason == "length":
                 max_img_size = max(512, max(pil.width, pil.height) // 4)
@@ -180,6 +182,7 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
                 resp = self._make_vllm_request(resized_content, enable_thinking=False, inject_no_think=True)
                 choice = resp.choices[0]
                 text = (choice.message.content or "").strip()
+                reasoning = (getattr(choice.message, "reasoning_content", "") or "").strip()
 
                 if choice.finish_reason == "length":
                     raise RuntimeError(
@@ -192,10 +195,13 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
 
         print(f"[vLLM DEBUG] Final reasoning length: {len(reasoning)} chars")
 
-        return text
+        debug = DebugPayload()
+        if reasoning:
+            debug.add("reasoning_trace", reasoning, kind="text")
+        return text, debug
 
     @torch.no_grad()
-    def _caption_local(self, pil: Image.Image) -> str:
+    def _caption_local(self, pil: Image.Image) -> Tuple[str, DebugPayload]:
         assert self.model is not None
         assert self.processor is not None
 
@@ -238,13 +244,14 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
             out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
 
-        return self.processor.batch_decode(
+        text = self.processor.batch_decode(
             generated_trimmed,
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )[0].strip()
+        return text, DebugPayload.empty()
 
-    def generateCaption(self, image: torch.Tensor) -> str:
+    def generateCaption(self, image: torch.Tensor) -> Tuple[str, DebugPayload]:
         if image.ndim == 3:
             pil = _chw_uint8_to_pil(image)
         elif image.ndim == 4:
@@ -253,9 +260,9 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
             raise ValueError(f"Expected image with 3 or 4 dims, got {image.ndim}")
 
         if self.use_vllm_server:
-            caption = self._caption_vllm(pil)
+            caption, debug = self._caption_vllm(pil)
         else:
-            caption = self._caption_local(pil)
+            caption, debug = self._caption_local(pil)
 
         print(f"QwenVLSceneLevelCaptioner ({self.qwen_family}) caption: {caption[:200]}")
-        return caption
+        return caption, debug
