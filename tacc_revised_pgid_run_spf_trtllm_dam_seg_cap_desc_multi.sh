@@ -52,6 +52,7 @@ GEMMA_MAX_SEQ_LEN="${GEMMA_MAX_SEQ_LEN:-$MAX_SEQ_LEN}"
 GEMMA_DTYPE="${GEMMA_DTYPE:-bfloat16}"
 GEMMA_QUANT="${GEMMA_QUANT:-}"
 GEMMA_ENABLE_THINKING="${GEMMA_ENABLE_THINKING:-1}"
+GEMMA_ENV_NAME="${GEMMA_ENV_NAME:-vllm-gemma}"
 
 HF_TOKEN_FILE="${HF_TOKEN_FILE:-$HF_CACHE_DIR/token}"
 
@@ -358,10 +359,11 @@ if [[ -n "$USE_GEMMA" ]]; then
         echo "ERROR: Gemma vLLM start script not found or not executable: $GEMMA_START_SCRIPT"
         exit 1
     fi
-    echo "Starting Gemma 4 vLLM server via $GEMMA_START_SCRIPT ..."
+    echo "Starting Gemma 4 vLLM server via $GEMMA_START_SCRIPT (env: $GEMMA_ENV_NAME) ..."
     MODELS_DIR="$MODELS_DIR" \
     HF_CACHE_DIR="$HF_CACHE_DIR" \
     LOG_DIR="$LOG_DIR" \
+    ENV_NAME="$GEMMA_ENV_NAME" \
     VLLM_MODEL="$GEMMA_MODEL" \
     VLLM_PORT="$GEMMA_PORT" \
     VLLM_TP="$GEMMA_TP" \

@@ -63,7 +63,7 @@ fi
 
 eval "$("$MAMBA_EXE" shell hook --shell bash --root-prefix "$MAMBA_ROOT_PREFIX" 2>/dev/null)"
 
-ENV_NAME="${ENV_NAME:-vllm2}"
+ENV_NAME="${ENV_NAME:-vllm-gemma}"
 if ! micromamba activate "$ENV_NAME"; then
     echo "ERROR: Failed to activate micromamba env '$ENV_NAME'."
     exit 1
