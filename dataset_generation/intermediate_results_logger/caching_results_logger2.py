@@ -1,4 +1,6 @@
+from dataclasses import dataclass
 from datetime import datetime, time
+from typing import Any, Optional
 
 from dataset_generation.intermediate_results_logger.abs_intermediate_results_logger import AbsIntermediateResultsLogger
 from dataset_generation.intermediate_results_logger.debug_data import (
@@ -18,6 +20,30 @@ import torch
 import numpy as np
 
 from spf_io.persistence_io import readPersistenceData, writePersistenceData, PERSISTENCE_FILE_NAME
+
+
+@dataclass(frozen=True)
+class ImageContext:
+    """Per-image context passed through every per-image method on the logger.
+
+    Replaces the previous pattern of stashing per-image state on the logger
+    instance (``self.image_id`` etc.), which was unsafe under cross-scene
+    threading because two threads racing through ``processImage`` would
+    silently overwrite each other's per-image fields.
+
+    All fields are immutable for the lifetime of one image's processing.
+    """
+    # Stable identifier used for output paths and cache keys.
+    image_id: str
+    # Original input file path (or whatever the caller put in
+    # inputBatchInfo["path"]); used in metadata written alongside outputs.
+    img_file_name: Optional[str]
+    # The raw image / LazyImage handle. The logger only touches it when
+    # saving debug visualizations (e.g. masks-on-image). Opaque to the
+    # logger; just expected to expose ``.get()`` returning a tensor when
+    # it's a LazyImage.
+    image: Any
+
 
 class CachingResultsLoggerRevised:
 
@@ -40,10 +66,9 @@ class CachingResultsLoggerRevised:
         self.forceRegen = forceRegen
         self.debug_config = debug_config or DebugConfig()
 
+        # Per-run, read-only after configureComponentNames / setConfigFileName.
+        # Per-image state is no longer stored on self — see ImageContext.
         self.configFileName = None
-        self.imgFileName = None
-        self.image_id = None
-        self.image = None
         self.segmenterName = None
         self.sceneCaptionerName = None
         self.objectDescriberName = None
@@ -110,39 +135,34 @@ class CachingResultsLoggerRevised:
             print(f"[debug-data] failed for {phase_name}: {e}")
 
 
-    def getFinalOutputDirectory(self):
-        # return self.generateLogDirectory([self.FULL_RESULTS_DIR, self.configFileName, self.imgBaseName])
-        # return self.generateLogDirectory([self.FULL_RESULTS_DIR, self.configFileName, self.imgExtendedName])
-        return self.generateLogDirectory([self.FULL_RESULTS_DIR, self.configFileName, self.image_id])
+    def getFinalOutputDirectory(self, ctx: ImageContext):
+        return self.generateLogDirectory([self.FULL_RESULTS_DIR, self.configFileName, ctx.image_id])
 
 
-    def getSegmenterResultsDirectory(self):
-        # return self.generateLogDirectory([self.SEGMENTER_RESULTS_DIR, self.segmenterName, self.imgBaseName])
-        # return self.generateLogDirectory([self.SEGMENTER_RESULTS_DIR, self.segmenterName, self.imgExtendedName])
-        return self.generateLogDirectory([self.SEGMENTER_RESULTS_DIR, self.segmenterName, self.image_id])
+    def getSegmenterResultsDirectory(self, ctx: ImageContext):
+        return self.generateLogDirectory([self.SEGMENTER_RESULTS_DIR, self.segmenterName, ctx.image_id])
 
 
-    def getSceneCaptionerResultsDirectory(self):
-        # return self.generateLogDirectory([self.SCENE_CAPTIONER_RESULTS_DIR, self.sceneCaptionerName, self.imgBaseName])
-        # return self.generateLogDirectory([self.SCENE_CAPTIONER_RESULTS_DIR, self.sceneCaptionerName, self.image_id])
-        return self.generateLogDirectory([self.SCENE_CAPTIONER_RESULTS_DIR, self.sceneCaptionerName, self.image_id])
+    def getSceneCaptionerResultsDirectory(self, ctx: ImageContext):
+        return self.generateLogDirectory([self.SCENE_CAPTIONER_RESULTS_DIR, self.sceneCaptionerName, ctx.image_id])
 
 
-    def getObjectDescriberResultsDirectory(self):
-        # return self.generateLogDirectory([self.OBJECT_DESCRIBER_RESULTS_DIR, self.segmenterName, self.objectDescriberName, self.imgBaseName])
-        # return self.generateLogDirectory([self.OBJECT_DESCRIBER_RESULTS_DIR, self.segmenterName, self.objectDescriberName, self.imgExtendedName])
-        return self.generateLogDirectory([self.OBJECT_DESCRIBER_RESULTS_DIR, self.segmenterName, self.objectDescriberName, self.image_id])
+    def getObjectDescriberResultsDirectory(self, ctx: ImageContext):
+        return self.generateLogDirectory([self.OBJECT_DESCRIBER_RESULTS_DIR, self.segmenterName, self.objectDescriberName, ctx.image_id])
 
 
-    def getRelationshipDescriberResultsDirectory(self):
-        # return self.generateLogDirectory([self.RELATIONSHIP_DESCRIBER_RESULTS_DIR, self.segmenterName, self.objectDescriberName, self.relationshipDescriberName, self.imgBaseName])
-        # return self.generateLogDirectory([self.RELATIONSHIP_DESCRIBER_RESULTS_DIR, self.segmenterName, self.objectDescriberName, self.relationshipDescriberName, self.imgExtendedName])
-        return self.generateLogDirectory([self.RELATIONSHIP_DESCRIBER_RESULTS_DIR, self.segmenterName, self.objectDescriberName, self.relationshipDescriberName, self.image_id])
+    def getRelationshipDescriberResultsDirectory(self, ctx: ImageContext):
+        return self.generateLogDirectory([self.RELATIONSHIP_DESCRIBER_RESULTS_DIR, self.segmenterName, self.objectDescriberName, self.relationshipDescriberName, ctx.image_id])
 
 
-    def logInputData(self, image, timeAndDate, inputBatchInfo):
+    def buildImageContext(self, image, timeAndDate, inputBatchInfo) -> ImageContext:
+        """Construct the per-image context for one ``processImage`` call.
 
-        # Check that the configured component names are set
+        Replaces the old ``logInputData`` setter pattern: instead of mutating
+        the logger, we return an immutable ``ImageContext`` value object that
+        the caller threads through every subsequent per-image method.
+        """
+        # Check that the configured component names are set.
         assert self.segmenterName is not None, "Segmenter name not configured"
         assert self.sceneCaptionerName is not None, "Scene captioner name not configured"
         assert self.objectDescriberName is not None, "Object describer name not configured"
@@ -150,26 +170,32 @@ class CachingResultsLoggerRevised:
         assert self.llmQuerierName is not None, "LLM querier name not configured"
         assert self.configFileName is not None, "Config file name not configured"
 
-        self.imgFileName = inputBatchInfo.get("path", None)
+        if inputBatchInfo is None:
+            raise ValueError("inputBatchInfo is None in buildImageContext")
 
-        self.image = image
-        if (inputBatchInfo is None):
-            # throw an error; how did we get here
-            raise ValueError("inputBatchInfo is None in logInputData")
+        img_file_name = inputBatchInfo.get("path", None)
 
-        if ("image_id" in inputBatchInfo):
-            self.image_id = inputBatchInfo["image_id"]
+        if "image_id" in inputBatchInfo:
+            image_id = inputBatchInfo["image_id"]
+        elif "relpath" in inputBatchInfo:
+            # Use the relpath as the image_id (after replacing os separators
+            # with underscores).
+            image_id = inputBatchInfo["relpath"].replace(os.sep, "_")
         else:
-            # Get the relPath entry from inputBatchInfo, and use that as the image_id (after replacing os separators with underscores)
-            if "relpath" in inputBatchInfo:
-                relPath = inputBatchInfo["relpath"]
-                self.image_id = relPath.replace(os.sep, "_")
-            else:
-                raise ValueError("inputBatchInfo must contain either 'image_id' or 'relpath' to generate image_id for logging")
+            raise ValueError(
+                "inputBatchInfo must contain either 'image_id' or 'relpath' "
+                "to generate image_id for logging"
+            )
+
+        return ImageContext(
+            image_id=image_id,
+            img_file_name=img_file_name,
+            image=image,
+        )
 
 
-    def getOrGenerateSegmentationResults(self, segmentationLambda):
-        segmentationResultsDir = self.getSegmenterResultsDirectory()
+    def getOrGenerateSegmentationResults(self, ctx: ImageContext, segmentationLambda):
+        segmentationResultsDir = self.getSegmenterResultsDirectory(ctx)
 
         # Segmentation results file is stored as segmentation_results.npz
         segmentationResultsFilePath = os.path.join(segmentationResultsDir, "segmentation_results.npz")
@@ -203,11 +229,11 @@ class CachingResultsLoggerRevised:
         if (self.saveDebugImages):
             saveMasksOnImages(
                 segmentationResults.masks,
-                self.image.get(),
+                ctx.image.get(),
                 segmentationResultsDir)
 
         # Save segmentation results to file
-        segmentationResults.saveToFile(segmentationResultsFilePath, imagePath=self.imgFileName)
+        segmentationResults.saveToFile(segmentationResultsFilePath, imagePath=ctx.img_file_name)
         self._emit_debug(
             "segmentation",
             debug_payload,
@@ -216,8 +242,8 @@ class CachingResultsLoggerRevised:
         return segmentationResults
 
 
-    def getOrGenerateSceneCaption(self, captionLambda):
-        captionDir = self.getSceneCaptionerResultsDirectory()
+    def getOrGenerateSceneCaption(self, ctx: ImageContext, captionLambda):
+        captionDir = self.getSceneCaptionerResultsDirectory(ctx)
         primaryCaptionFilePath = os.path.join(captionDir, "scene_caption.json")
         alternateCaptionFilePath = os.path.join(captionDir, "scene_caption.txt")
 
@@ -247,7 +273,7 @@ class CachingResultsLoggerRevised:
         with open(primaryCaptionFilePath, 'w', encoding='utf-8') as f:
             json.dump({
                 "caption": caption,
-                "imagePath": self.imgFileName
+                "imagePath": ctx.img_file_name
             }, f, indent=2, ensure_ascii=False)
 
         self._emit_debug(
@@ -258,18 +284,18 @@ class CachingResultsLoggerRevised:
         return caption
 
 
-    def checkIfAlreadyProcessed(self):
+    def checkIfAlreadyProcessed(self, ctx: ImageContext):
         if (self.forceRegen):
             return False
 
-        llmDataDir = self.getFinalOutputDirectory()
+        llmDataDir = self.getFinalOutputDirectory(ctx)
 
         persistenceParamsPath = os.path.join(llmDataDir, PERSISTENCE_FILE_NAME)
         return os.path.exists(persistenceParamsPath)
 
 
-    def getOrGenerateObjectDescriptions(self, descriptionsLambda):
-        descriptionsDir = self.getObjectDescriberResultsDirectory()
+    def getOrGenerateObjectDescriptions(self, ctx: ImageContext, descriptionsLambda):
+        descriptionsDir = self.getObjectDescriberResultsDirectory(ctx)
         descriptionsFilePath = os.path.join(descriptionsDir, "object_descriptions.json")
 
         # If the descriptions already exist, and forceRegen is False, load and return them
@@ -294,7 +320,7 @@ class CachingResultsLoggerRevised:
         with open(descriptionsFilePath, 'w', encoding='utf-8') as f:
             descriptionsOutputData = {
                 "descriptions": objectDescriptions,
-                "imagePath": self.imgFileName
+                "imagePath": ctx.img_file_name
             }
             json.dump(descriptionsOutputData, f, indent=2, ensure_ascii=False)
 
@@ -305,14 +331,14 @@ class CachingResultsLoggerRevised:
         )
         return objectDescriptions
 
-    def getOrGenerateRelationshipDescriptions(self, relationshipLambda):
+    def getOrGenerateRelationshipDescriptions(self, ctx: ImageContext, relationshipLambda):
 
         # For now, just return the computed relationships without caching
         relationshipDescriptions, debug_payload = relationshipLambda()
         self._emit_debug(
             "relationships",
             debug_payload,
-            os.path.join(self.getRelationshipDescriberResultsDirectory(), "debug"),
+            os.path.join(self.getRelationshipDescriberResultsDirectory(ctx), "debug"),
         )
         return relationshipDescriptions
 
@@ -321,9 +347,9 @@ class CachingResultsLoggerRevised:
         """Returns True if prompts and rawResponse are both dicts (per-object map format)."""
         return isinstance(prompts, dict) and isinstance(rawResponse, dict)
 
-    def getOrGenerateLLMPromptsAndOutput(self, llmLambda):
+    def getOrGenerateLLMPromptsAndOutput(self, ctx: ImageContext, llmLambda):
 
-        llmDataDir = self.getFinalOutputDirectory()
+        llmDataDir = self.getFinalOutputDirectory(ctx)
 
         promptsFilePath = os.path.join(llmDataDir, "llm_prompt.txt")
         persistenceParamsPath = os.path.join(llmDataDir, PERSISTENCE_FILE_NAME)
@@ -380,7 +406,7 @@ class CachingResultsLoggerRevised:
             with open(rawResponsePath, 'w', encoding='utf-8') as f:
                 f.write(rawResponse + "\n\n")
 
-        writePersistenceData(persistenceParamsPath, persistenceParameters=persistenceParameters, imgFileName=self.imgFileName)
+        writePersistenceData(persistenceParamsPath, persistenceParameters=persistenceParameters, imgFileName=ctx.img_file_name)
 
         self._emit_debug(
             "persistence",
