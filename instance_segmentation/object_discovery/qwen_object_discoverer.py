@@ -15,6 +15,8 @@ from instance_segmentation.object_discovery.abs_object_discoverer import AbsObje
 from transformers import AutoProcessor, AutoTokenizer
 from qwen_vl_utils import process_vision_info
 
+from utils.threading_utils import ForwardSerializeLock
+
 
 def _build_qwen2vl_prompt(user_text: str) -> str:
     # Minimal Qwen chat framing + required vision placeholder tokens
@@ -274,6 +276,13 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
                 model_cls, self.model_name, self.device_map, resolved_dtype
             )
             self.model.eval()
+
+        # Defense-in-depth: serialize concurrent forward passes on the local
+        # PyTorch model. Not taken in vLLM-server mode.
+        self._local_forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.identify (local)",
+            advice="use vLLM-server mode for real concurrency",
+        )
 
     @torch.no_grad()
     def identify(self, image: torch.Tensor) -> Tuple[List[str], DebugPayload]:
@@ -537,13 +546,14 @@ class QwenVLObjectDiscoverer(AbsObjectDiscoverer):
         target_device = getattr(self.model, "device", None) or torch.device(self.device)
         inputs = inputs.to(target_device)
 
-        generated_ids = self.model.generate(
-            **inputs,
-            do_sample=False,
-            num_beams=self.num_beams,
-            max_new_tokens=self.max_new_tokens,
-            repetition_penalty=1.15,
-        )
+        with self._local_forward_lock.acquire():
+            generated_ids = self.model.generate(
+                **inputs,
+                do_sample=False,
+                num_beams=self.num_beams,
+                max_new_tokens=self.max_new_tokens,
+                repetition_penalty=1.15,
+            )
 
         generated_trimmed = [
             out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)

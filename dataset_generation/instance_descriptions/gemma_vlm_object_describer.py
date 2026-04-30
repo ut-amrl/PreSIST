@@ -11,8 +11,9 @@ delegating to GemmaVLMQuerier for all model interaction.
 from __future__ import annotations
 
 import sys
+import warnings
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import math
 
@@ -25,6 +26,8 @@ from dataset_generation.instance_descriptions.abs_object_describer import Abstra
 from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
 from dataset_generation.llm_persistence_querying.gemma.gemma_chat_engine import (
     GemmaChatEngine,
+    GemmaChatRequest,
+    pil_to_data_url_jpeg,
 )
 from instance_segmentation.abs_instance_segmenter import SegmentationResults
 from utils.image_utils import image_tensor_to_pil
@@ -110,6 +113,9 @@ class GemmaVLMObjectDescriber(AbstractObjectDescriber):
         crop_mask_background_dim_factor: float = 0.35,
         crop_highlight_alpha: float = 0.0,
         crop_mask_outline_thickness: int = 1,
+        # --- per-scene fan-out ---
+        max_concurrency: int = 16,
+        chunk_size: Optional[int] = None,
     ):
         if name is None:
             raise ValueError("name must be provided for GemmaVLMObjectDescriber")
@@ -161,6 +167,22 @@ class GemmaVLMObjectDescriber(AbstractObjectDescriber):
         self.max_new_tokens = int(max_new_tokens)
         self.temperature = float(temperature)
         self.top_p = float(top_p)
+        self.max_concurrency = int(max_concurrency)
+        # Bound the number of object-overlay images held simultaneously by
+        # processing the per-scene request list in chunks. Defaults to
+        # max_concurrency: each chunk fully fills the chat_many fan-out, so
+        # there's no Python-side benefit to making it smaller. Set higher to
+        # reduce chunk-boundary overhead at the cost of more peak memory.
+        self.chunk_size = int(chunk_size) if chunk_size is not None else self.max_concurrency
+        if self.chunk_size < self.max_concurrency:
+            warnings.warn(
+                f"{type(self).__name__}: chunk_size ({self.chunk_size}) is less "
+                f"than max_concurrency ({self.max_concurrency}); the effective "
+                f"in-flight cap will be chunk_size, so max_concurrency is wasted. "
+                f"Either raise chunk_size to >= max_concurrency or lower "
+                f"max_concurrency to chunk_size.",
+                stacklevel=2,
+            )
 
         self._per_query_timer_name = (
             "Timer::gemma_vlm_obj_describer_vlm_query"
@@ -208,116 +230,96 @@ class GemmaVLMObjectDescriber(AbstractObjectDescriber):
 
         pil_image = image_tensor_to_pil(image)
 
+        # Encode the full scene image once and reuse the data URL across every
+        # per-object request that includes it. Per-object overlays (highlight,
+        # box, crops, arrow) stay as PIL images and get encoded by the engine
+        # because they're unique per request. Only valid for vLLM-server mode;
+        # local-Transformers mode requires PIL throughout.
+        if self._engine.use_vllm_server:
+            full_scene_for_engine: Union[Image.Image, str] = pil_to_data_url_jpeg(pil_image)
+        else:
+            full_scene_for_engine = pil_image
+
         print(f"Input image resolution: {pil_image.width}x{pil_image.height}")
         descriptions: Dict[int, str] = {}
         reasoning_by_id: Dict[str, str] = {}
         debug_payload = DebugPayload()
         total = len(instances.masks)
+        if total == 0:
+            return descriptions, debug_payload
 
-        for i, mask in enumerate(instances.masks):
-            obj_id = int(instances.ids[i].item())
-            print(f"Describing object {i + 1}/{total} (id={obj_id})...")
+        # Process objects in chunks so we don't hold all N per-object overlay
+        # images and request payloads in memory at once. Each chunk builds its
+        # request specs, fans them out via chat_many, collects results, and
+        # then drops its references — bounding peak request-side memory at
+        # ~chunk_size objects' worth. Note: debug_payload still references
+        # every overlay image until describeObjects returns (this matches the
+        # pre-refactor behavior, which also accumulated the full scene's worth
+        # of debug images by the end of the loop).
+        chunk_size = max(1, self.chunk_size)
+        result_idx = 0
+        for chunk_start in range(0, total, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, total)
+            chunk_obj_ids: List[int] = []
+            chunk_requests: List[GemmaChatRequest] = []
 
-            display_mask = self._dilate_mask(mask, self.mask_dilation_px)
-            crop_mask = display_mask if self.mask_crop else None
-            if (crop_mask is not None) and (self.crop_mask_style is not None) and (self.crop_mask_dilation_px != self.mask_dilation_px):
-                crop_mask = self._dilate_mask(mask, self.crop_mask_dilation_px)
+            for i in range(chunk_start, chunk_end):
+                mask = instances.masks[i]
+                obj_id = int(instances.ids[i].item())
 
-            if self.include_full_img_last:
-                images = []
-            else:
-                images = [pil_image]
-
-            if self.mask_style is not None:
-                extra_kwargs = {
-                    "blur_radius": self.blur_radius,
-                    "background_dim_factor": self.mask_background_dim_factor,
-                    "highlight_alpha": self.highlight_alpha,
-                    "outline_thickness": self.mask_outline_thickness,
-                }
-                highlighted_np = mask_highlight_image(
-                    image,
-                    display_mask,
-                    style=self.mask_style,
-                    mask_highlight_color=self.mask_highlight_color,
-                    extra_kwargs=extra_kwargs,
-                )
-                images.append(Image.fromarray(highlighted_np))
-
-            if self.include_box_image:
-                box_img = self._draw_box_image(pil_image, display_mask)
-                if box_img is not None:
-                    images.append(box_img)
-
-            if self.include_zoomed_crop or self.include_context_crop:
-
-                imageToCrop = pil_image
-                if (self.mask_crop and self.mask_style is not None):
-                    extra_kwargs = {
-                        "blur_radius": self.crop_blur_radius,
-                        "background_dim_factor": self.crop_mask_background_dim_factor,
-                        "highlight_alpha": self.crop_highlight_alpha,
-                        "outline_thickness": self.crop_mask_outline_thickness,
-                    }
-                    highlighted_np = mask_highlight_image(
-                        image,
-                        crop_mask,
-                        style=self.mask_style,
-                        mask_highlight_color=self.mask_highlight_color,
-                        extra_kwargs=extra_kwargs,
-                    )
-                    imageToCrop = Image.fromarray(highlighted_np)
-
-                if (self.include_zoomed_crop):
-                    crop = self._compute_zoom_crop(
-                        crop_mask, pil_image.width, pil_image.height
-                    )
-                    if crop is not None:
-                        images.append(imageToCrop.crop(crop))
-
-                if self.include_context_crop:
-                    crop = self._compute_context_crop(
-                        crop_mask,
-                        pil_image.width,
-                        pil_image.height,
-                        pad_frac=self.context_crop_pad_frac,
-                        min_size_frac=self.context_crop_min_size_frac,
-                    )
-                    if crop is not None:
-                        images.append(imageToCrop.crop(crop))
-
-            if self.include_arrow_image:
-                target = self._compute_arrow_target(display_mask)
-                if target is not None:
-                    images.append(
-                        self._draw_arrow_image(pil_image, target[0], target[1])
-                    )
-
-            if self.include_full_img_last:
-                images.append(pil_image)
-
-            for q_idx, q_img in enumerate(images):
-                if q_img is None:
-                    continue
-                debug_payload.add(
-                    f"query_img_{obj_id}_qIm{q_idx:02d}",
-                    q_img,
-                    kind="image",
+                debug_images, request_images = self._build_query_images(
+                    image=image,
+                    pil_image=pil_image,
+                    full_scene_for_engine=full_scene_for_engine,
+                    mask=mask,
                 )
 
-            with timer.time_block(self._per_query_timer_name):
-                result = self._engine.chat(
+                # Add this object's images to the per-scene debug payload.
+                # Using debug_payload here keeps debug behavior identical to
+                # the pre-chunked code.
+                for q_idx, q_img in enumerate(debug_images):
+                    if q_img is None:
+                        continue
+                    debug_payload.add(
+                        f"query_img_{obj_id}_qIm{q_idx:02d}",
+                        q_img,
+                        kind="image",
+                    )
+
+                chunk_obj_ids.append(obj_id)
+                chunk_requests.append(GemmaChatRequest(
                     prompt=self.prompt,
-                    images=images,
+                    images=request_images,
                     max_new_tokens=self.max_new_tokens,
                     temperature=self.temperature,
                     top_p=self.top_p,
+                ))
+
+            print(
+                f"Describing objects {chunk_start + 1}-{chunk_end} of {total} "
+                f"via chat_many (max_concurrency="
+                f"{min(self.max_concurrency, len(chunk_requests))})..."
+            )
+            with timer.time_block(
+                self._per_query_timer_name,
+                batch_count=len(chunk_requests),
+            ):
+                results = self._engine.chat_many(
+                    chunk_requests,
+                    max_concurrency=self.max_concurrency,
                 )
-            description = result.text
-            self._save_debug_text(obj_id, i, image_call_idx, "", description)
-            descriptions[obj_id] = description
-            if result.reasoning:
-                reasoning_by_id[str(obj_id)] = result.reasoning
+
+            for obj_id, result in zip(chunk_obj_ids, results):
+                description = result.text
+                self._save_debug_text(obj_id, result_idx, image_call_idx, "", description)
+                descriptions[obj_id] = description
+                if result.reasoning:
+                    reasoning_by_id[str(obj_id)] = result.reasoning
+                result_idx += 1
+
+            # Explicitly drop the chunk's request specs and PIL/data-URL
+            # references so they're collectable before the next chunk starts.
+            del chunk_requests, chunk_obj_ids, results
 
         if reasoning_by_id:
             debug_payload.add(
@@ -327,6 +329,113 @@ class GemmaVLMObjectDescriber(AbstractObjectDescriber):
             )
 
         return descriptions, debug_payload
+
+    def _build_query_images(
+        self,
+        *,
+        image: torch.Tensor,
+        pil_image: "Image.Image",
+        full_scene_for_engine: Union["Image.Image", str],
+        mask: torch.Tensor,
+    ) -> Tuple[List["Image.Image"], List[Union["Image.Image", str]]]:
+        """Build the per-object image lists for one mask.
+
+        Returns (``debug_images``, ``request_images``):
+        - ``debug_images``: PIL-only list used for the debug payload.
+        - ``request_images``: same images but with the full scene swapped for
+          its pre-encoded data URL in vLLM mode (so the engine doesn't
+          re-encode it for every request). In local-Transformers mode the
+          two lists hold the same PIL references.
+        """
+        display_mask = self._dilate_mask(mask, self.mask_dilation_px)
+        crop_mask = display_mask if self.mask_crop else None
+        if (crop_mask is not None) and (self.crop_mask_style is not None) and (self.crop_mask_dilation_px != self.mask_dilation_px):
+            crop_mask = self._dilate_mask(mask, self.crop_mask_dilation_px)
+
+        if self.include_full_img_last:
+            debug_images: List[Image.Image] = []
+            request_images: List[Union[Image.Image, str]] = []
+        else:
+            debug_images = [pil_image]
+            request_images = [full_scene_for_engine]
+
+        if self.mask_style is not None:
+            extra_kwargs = {
+                "blur_radius": self.blur_radius,
+                "background_dim_factor": self.mask_background_dim_factor,
+                "highlight_alpha": self.highlight_alpha,
+                "outline_thickness": self.mask_outline_thickness,
+            }
+            highlighted_np = mask_highlight_image(
+                image,
+                display_mask,
+                style=self.mask_style,
+                mask_highlight_color=self.mask_highlight_color,
+                extra_kwargs=extra_kwargs,
+            )
+            hl_pil = Image.fromarray(highlighted_np)
+            debug_images.append(hl_pil)
+            request_images.append(hl_pil)
+
+        if self.include_box_image:
+            box_img = self._draw_box_image(pil_image, display_mask)
+            if box_img is not None:
+                debug_images.append(box_img)
+                request_images.append(box_img)
+
+        if self.include_zoomed_crop or self.include_context_crop:
+
+            imageToCrop = pil_image
+            if (self.mask_crop and self.mask_style is not None):
+                extra_kwargs = {
+                    "blur_radius": self.crop_blur_radius,
+                    "background_dim_factor": self.crop_mask_background_dim_factor,
+                    "highlight_alpha": self.crop_highlight_alpha,
+                    "outline_thickness": self.crop_mask_outline_thickness,
+                }
+                highlighted_np = mask_highlight_image(
+                    image,
+                    crop_mask,
+                    style=self.mask_style,
+                    mask_highlight_color=self.mask_highlight_color,
+                    extra_kwargs=extra_kwargs,
+                )
+                imageToCrop = Image.fromarray(highlighted_np)
+
+            if self.include_zoomed_crop:
+                crop = self._compute_zoom_crop(
+                    crop_mask, pil_image.width, pil_image.height
+                )
+                if crop is not None:
+                    crop_img = imageToCrop.crop(crop)
+                    debug_images.append(crop_img)
+                    request_images.append(crop_img)
+
+            if self.include_context_crop:
+                crop = self._compute_context_crop(
+                    crop_mask,
+                    pil_image.width,
+                    pil_image.height,
+                    pad_frac=self.context_crop_pad_frac,
+                    min_size_frac=self.context_crop_min_size_frac,
+                )
+                if crop is not None:
+                    crop_img = imageToCrop.crop(crop)
+                    debug_images.append(crop_img)
+                    request_images.append(crop_img)
+
+        if self.include_arrow_image:
+            target = self._compute_arrow_target(display_mask)
+            if target is not None:
+                arrow_img = self._draw_arrow_image(pil_image, target[0], target[1])
+                debug_images.append(arrow_img)
+                request_images.append(arrow_img)
+
+        if self.include_full_img_last:
+            debug_images.append(pil_image)
+            request_images.append(full_scene_for_engine)
+
+        return debug_images, request_images
 
     def _compute_zoom_crop(
         self, mask: torch.Tensor, img_w: int, img_h: int

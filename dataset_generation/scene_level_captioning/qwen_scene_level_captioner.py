@@ -23,6 +23,8 @@ from instance_segmentation.object_discovery.qwen_object_discoverer import (
     _pil_to_data_url_jpeg,
 )
 
+from utils.threading_utils import ForwardSerializeLock
+
 
 class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
     def __init__(
@@ -102,6 +104,13 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
                 model_cls, self.model_name, self.device_map, resolved_dtype
             )
             self.model.eval()
+
+        # Defense-in-depth: serialize concurrent forward passes on the local
+        # PyTorch model. Not taken in vLLM-server mode.
+        self._local_forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.generateCaption (local)",
+            advice="use vLLM-server mode for real concurrency",
+        )
 
     def _ensure_vllm_resolved(self) -> None:
         if self.vllm_served_model_name is None:
@@ -232,13 +241,14 @@ class QwenVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
         target_device = getattr(self.model, "device", None) or torch.device(self.device)
         inputs = inputs.to(target_device)
 
-        generated_ids = self.model.generate(
-            **inputs,
-            do_sample=False,
-            num_beams=self.num_beams,
-            max_new_tokens=self.max_new_tokens,
-            repetition_penalty=1.15,
-        )
+        with self._local_forward_lock.acquire():
+            generated_ids = self.model.generate(
+                **inputs,
+                do_sample=False,
+                num_beams=self.num_beams,
+                max_new_tokens=self.max_new_tokens,
+                repetition_penalty=1.15,
+            )
 
         generated_trimmed = [
             out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)

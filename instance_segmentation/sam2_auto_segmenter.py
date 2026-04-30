@@ -10,6 +10,8 @@ import os
 from omegaconf import OmegaConf
 from hydra.utils import instantiate
 
+from utils.threading_utils import ForwardSerializeLock
+
 # =======================================
 # SAM 2-backed instance segmenter (auto)
 # =======================================
@@ -145,6 +147,15 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
         )
         self._mask_generator_kwargs = mask_generator_kwargs or {}
         self._mask_generator = None  # created on first use
+        # Defense-in-depth: PyTorch models aren't safe under concurrent forward
+        # passes. The current pipeline calls segmentInstancesRaw from a single
+        # thread, but if cross-scene threading lands later this lock keeps the
+        # path correct (serialized) and surfaces a one-shot warning.
+        self._forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.segmentInstancesRaw",
+            advice="segmentation cannot be parallelized across host threads on "
+                   "one model; run from a single-threaded driver",
+        )
 
     def _ensure_mask_generator(self):
         if self._mask_generator is None:
@@ -169,7 +180,8 @@ class SAM2InstanceSegmenter(AbsInstanceSegmenter):
         img_np = image[:3].permute(1, 2, 0).contiguous().cpu().numpy()
 
         self._ensure_mask_generator()
-        raw = self._mask_generator.generate(img_np)  # list[dict], each has 'segmentation', 'bbox' (xywh), 'predicted_iou', ...
+        with self._forward_lock.acquire():
+            raw = self._mask_generator.generate(img_np)  # list[dict], each has 'segmentation', 'bbox' (xywh), 'predicted_iou', ...
 
         if len(raw) == 0:
             H, W = image.shape[-2:]

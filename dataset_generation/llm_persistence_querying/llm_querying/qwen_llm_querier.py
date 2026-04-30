@@ -15,6 +15,7 @@ from dataset_generation.llm_persistence_querying.llm_querying.abs_llm_querier im
 import os
 
 from dataset_generation.llm_persistence_querying.utils.llm_querying_utils import derive_served_model_name, resolve_served_model_name, resolve_torch_dtype
+from utils.threading_utils import ForwardSerializeLock
 
 # def _derive_served_model_name(model_name, torch_dtype, quantization=False):
 
@@ -118,6 +119,13 @@ class QwenLLMQuerier(AbsLLMQuerier):
 
 
         self.vllm_extra_request_params = vllm_extra_request_params or {}
+
+        # Defense-in-depth: serialize concurrent forward passes on the local
+        # PyTorch model. Not taken in vLLM-server mode.
+        self._local_forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.queryLLM (local)",
+            advice="use vLLM-server mode for real concurrency",
+        )
 
         # -------------------------
         # local mode
@@ -394,7 +402,7 @@ class QwenLLMQuerier(AbsLLMQuerier):
 
         model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
 
-        with torch.inference_mode():
+        with torch.inference_mode(), self._local_forward_lock.acquire():
             output_ids = self.model.generate(**model_inputs, **gen)
 
         generated_ids = output_ids[:, model_inputs["input_ids"].shape[1] :]

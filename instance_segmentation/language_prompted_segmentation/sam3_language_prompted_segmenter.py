@@ -11,6 +11,8 @@ from PIL import Image
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
 
+from utils.threading_utils import ForwardSerializeLock
+
 
 def _mask_to_box_xyxy(mask: torch.Tensor) -> torch.Tensor:
     ys, xs = torch.where(mask)
@@ -56,9 +58,22 @@ class SAM3LanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
         self.model.eval()
         self.processor = Sam3Processor(self.model, confidence_threshold=self.score_thresh)
 
+        # Defense-in-depth: PyTorch model + Sam3Processor with stateful
+        # set_image / set_text_prompt sequence. Single-threaded today; the
+        # lock keeps it correct under future cross-scene threading.
+        self._forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.segment_from_prompts",
+            advice="SAM3 segmentation cannot be parallelized across host "
+                   "threads on one model; run from a single-threaded driver",
+        )
+
 
     @torch.no_grad()
     def segment_from_prompts(self, image: torch.Tensor, prompts: List[str]) -> LanguagePromptedSegmentationResults:
+        # Input validation, empty-result short-circuit, and PIL conversion run
+        # outside the lock — they're pure CPU/Python and don't touch the
+        # model. The lock is acquired only around the prompt loop where the
+        # SAM3 processor is actually invoked.
         if not isinstance(image, torch.Tensor):
             raise TypeError("image must be a torch.Tensor")
         if image.ndim != 3 or image.shape[0] not in (3, 4):
@@ -75,10 +90,20 @@ class SAM3LanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
                 scores=torch.zeros((0,), dtype=torch.float32),
             )
 
-        # Convert to PIL once
+        # Convert to PIL once.
         img_np = image[:3].permute(1, 2, 0).contiguous().cpu().numpy()
         pil = Image.fromarray(img_np, mode="RGB")
 
+        with self._forward_lock.acquire():
+            return self._segment_from_prompts_locked(pil, prompts, H, W)
+
+    def _segment_from_prompts_locked(
+        self,
+        pil: Image.Image,
+        prompts: List[str],
+        H: int,
+        W: int,
+    ) -> LanguagePromptedSegmentationResults:
         all_prompt_ids: List[int] = []
         all_masks: List[torch.Tensor] = []
         all_boxes: List[torch.Tensor] = []

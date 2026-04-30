@@ -12,6 +12,8 @@ from dataset_generation.intermediate_results_logger.debug_data import DebugPaylo
 from sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
 from instance_segmentation.raw_sam3_automatic_mask_generator import SAM3AutomaticMaskGenerator
 
+from utils.threading_utils import ForwardSerializeLock
+
 
 
 class SAM3InstanceSegmenter(AbsInstanceSegmenter):
@@ -109,6 +111,15 @@ class SAM3InstanceSegmenter(AbsInstanceSegmenter):
                 **self._mask_generator_kwargs,
             )
 
+        # Defense-in-depth: PyTorch models aren't safe under concurrent forward
+        # passes. Single-threaded today, but if cross-scene threading lands the
+        # lock keeps this correct (serialized) with a one-shot warning.
+        self._forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.segmentInstancesRaw",
+            advice="segmentation cannot be parallelized across host threads on "
+                   "one model; run from a single-threaded driver",
+        )
+
     @staticmethod
     def _xywh_to_xyxy(xywh):
         x, y, w, h = map(float, xywh)
@@ -119,7 +130,8 @@ class SAM3InstanceSegmenter(AbsInstanceSegmenter):
         img_np = image[:3].permute(1, 2, 0).contiguous().cpu().numpy()
         H, W = img_np.shape[:2]
 
-        raw = self._mask_generator.generate(img_np)
+        with self._forward_lock.acquire():
+            raw = self._mask_generator.generate(img_np)
 
         if len(raw) == 0:
             return SegmentationResults.empty(h=H, w=W), DebugPayload.empty()

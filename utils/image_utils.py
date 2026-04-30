@@ -1,4 +1,6 @@
 
+import threading
+
 from PIL import Image, ImageOps
 import torchvision.transforms as transforms
 import torch
@@ -44,12 +46,34 @@ class LazyImage:
         self._path = path
         self._image = preloaded
         self._loader = loader
+        # In current usage each scene gets its own LazyImage and instances
+        # aren't shared across threads, but the lock keeps get() correct under
+        # accidental sharing for the cost of one Python lock acquisition.
+        self._lock = threading.Lock()
+
+    def __getstate__(self):
+        # threading.Lock is not picklable. LazyImage instances pass through
+        # multiprocessing.Queue when DataLoader uses worker processes, which
+        # serializes them via pickle. Skip the lock here; __setstate__ creates
+        # a fresh one on the receiving side. Each process gets its own lock,
+        # which is correct — locks don't need to span processes (LazyImage is
+        # not shared across processes anyway).
+        state = self.__dict__.copy()
+        state["_lock"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
 
     def get(self):
-        if self._image is None:
-            loader = self._loader or loadImageForDatasetGeneration
-            self._image = loader(self._path)
-        return self._image
+        if self._image is not None:
+            return self._image
+        with self._lock:
+            if self._image is None:
+                loader = self._loader or loadImageForDatasetGeneration
+                self._image = loader(self._path)
+            return self._image
 
 
 def loadImageForDatasetGeneration(image_path: str):

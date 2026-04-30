@@ -32,6 +32,7 @@ from instance_segmentation.language_prompted_segmentation.abs_language_prompted_
     AbsLanguagePromptedSegmenter,
     LanguagePromptedSegmentationResults,
 )
+from utils.threading_utils import ForwardSerializeLock
 
 # --- SAM3 imports (all within sam3.* namespace) ---
 from sam3 import build_sam3_image_model
@@ -159,9 +160,21 @@ class SAM3BatchedLanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
         self.resize_size = resize_size
         self.resize_max_size = resize_max_size
 
-        # Per-instance query id counter (avoid global mutable state)
+        # Per-instance query id counter (avoid global mutable state). Not
+        # atomic; the segmentation forward lock below serializes
+        # segment_from_prompts so the increment is safe.
         self._query_uid = 1
         self.initialized = False
+        # Defense-in-depth: PyTorch model + non-atomic counter + lazy init.
+        # Concurrent forward passes from multiple host threads on a single
+        # PyTorch model are not safe. Single-threaded today; the lock keeps
+        # this correct under future cross-scene threading and warns once if
+        # the path is ever hit under contention.
+        self._forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.segment_from_prompts",
+            advice="SAM3 batched segmentation cannot be parallelized across "
+                   "host threads on one model; run from a single-threaded driver",
+        )
 
     def initialize(self):
         self.initialized = True
@@ -292,9 +305,10 @@ class SAM3BatchedLanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
         """
         True multi-prompt batching via SAM3 datapoint API.
         """
-        if not self.initialized:
-            self.initialize()
-
+        # Input validation, empty-result short-circuit, and PIL conversion run
+        # outside the lock — they're pure CPU/Python and don't touch the model
+        # or the processor. The lock guards the model interactions and the
+        # non-atomic _query_uid increment + lazy initialize().
         if not isinstance(image, torch.Tensor):
             raise TypeError("image must be a torch.Tensor")
         if image.ndim != 3 or image.shape[0] not in (3, 4):
@@ -312,10 +326,22 @@ class SAM3BatchedLanguagePromptedSegmenter(AbsLanguagePromptedSegmenter):
                 scores=torch.zeros((0,), dtype=torch.float32),
             )
 
-        # Convert to PIL once
+        # Convert to PIL once.
         img_np = image[:3].permute(1, 2, 0).contiguous().cpu().numpy()
         pil = Image.fromarray(img_np, mode="RGB")
 
+        with self._forward_lock.acquire():
+            if not self.initialized:
+                self.initialize()
+            return self._segment_from_prompts_locked(pil, prompts, H, W)
+
+    def _segment_from_prompts_locked(
+        self,
+        pil: Image.Image,
+        prompts: List[str],
+        H: int,
+        W: int,
+    ) -> LanguagePromptedSegmentationResults:
         all_prompt_ids: List[int] = []
         all_masks: List[torch.Tensor] = []
         all_boxes: List[torch.Tensor] = []

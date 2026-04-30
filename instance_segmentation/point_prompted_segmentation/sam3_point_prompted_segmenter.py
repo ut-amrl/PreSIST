@@ -11,6 +11,8 @@ from instance_segmentation.point_prompted_segmentation.abs_point_prompted_segmen
 )
 from sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
 
+from utils.threading_utils import ForwardSerializeLock
+
 
 def _mask_to_box_xyxy(mask: torch.Tensor) -> torch.Tensor:
     ys, xs = torch.where(mask)
@@ -102,6 +104,15 @@ class SAM3PointPromptedSegmenter(AbsPointPromptedSegmenter):
                 device=device,
             )
 
+        # Defense-in-depth: PyTorch predictor with mutable internal state
+        # (set_image / predict / reset_predictor sequence). Single-threaded
+        # today; the lock keeps it correct under future cross-scene threading.
+        self._forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.segment_from_points",
+            advice="SAM3 predictor cannot be parallelized across host threads "
+                   "on one model; run from a single-threaded driver",
+        )
+
     @staticmethod
     def _empty_results(h: int, w: int) -> PointPromptedSegmentationResults:
         return PointPromptedSegmentationResults(
@@ -139,7 +150,26 @@ class SAM3PointPromptedSegmenter(AbsPointPromptedSegmenter):
         if point_labels.ndim != 1 or point_labels.shape[0] != point_coords.shape[0]:
             raise ValueError("Expected point_labels shape (P,).")
 
+        # GPU→CPU image conversion runs outside the lock; it doesn't touch the
+        # predictor. The lock guards only the predictor calls below, where the
+        # set_image / predict / reset_predictor sequence must run atomically
+        # per call (the predictor holds image-conditioning state internally
+        # that interleaving threads would corrupt).
         img_np = image[:3].permute(1, 2, 0).contiguous().cpu().numpy()
+
+        with self._forward_lock.acquire():
+            return self._segment_from_points_locked(
+                img_np, point_coords, point_labels, h, w,
+            )
+
+    def _segment_from_points_locked(
+        self,
+        img_np,
+        point_coords: torch.Tensor,
+        point_labels: torch.Tensor,
+        h: int,
+        w: int,
+    ) -> PointPromptedSegmentationResults:
         self.predictor.set_image(img_np)
 
         all_point_ids: List[int] = []

@@ -8,6 +8,8 @@ from dataset_generation.intermediate_results_logger.debug_data import DebugPaylo
 from instance_segmentation.object_discovery.abs_object_discoverer import AbsObjectDiscoverer
 from transformers import InstructBlipProcessor, InstructBlipForConditionalGeneration
 
+from utils.threading_utils import ForwardSerializeLock
+
 
 
 def _normalize_phrase(s: str) -> str:
@@ -141,6 +143,14 @@ class InstructBLIPObjectDiscoverer(AbsObjectDiscoverer):
             torch_dtype=dtype,
         ).to(self.device)
         self.model.eval()
+        # Defense-in-depth: PyTorch model, not safe under concurrent forward
+        # passes. Single-threaded today; the lock keeps it correct under
+        # future cross-scene threading and warns once on contention.
+        self._forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.identify",
+            advice="InstructBLIP is local-only; can't be parallelized across "
+                   "host threads on one GPU. Run from a single-threaded driver.",
+        )
 
     @torch.no_grad()
     def identify(self, image: torch.Tensor) -> Tuple[List[str], DebugPayload]:
@@ -161,13 +171,14 @@ class InstructBLIPObjectDiscoverer(AbsObjectDiscoverer):
                 else:
                     inputs[k] = v.to(self.device)
 
-        out_ids = self.model.generate(
-            **inputs,
-            do_sample=False,
-            num_beams=self.num_beams,
-            max_new_tokens=self.max_new_tokens,
-            repetition_penalty=1.2,
-        )
+        with self._forward_lock.acquire():
+            out_ids = self.model.generate(
+                **inputs,
+                do_sample=False,
+                num_beams=self.num_beams,
+                max_new_tokens=self.max_new_tokens,
+                repetition_penalty=1.2,
+            )
 
         text = self.processor.batch_decode(out_ids, skip_special_tokens=True)[0].strip()
         # print("InstructBLIPObjectDiscoverer identified text:", text)

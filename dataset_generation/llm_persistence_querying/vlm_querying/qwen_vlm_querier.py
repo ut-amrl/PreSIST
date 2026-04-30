@@ -21,6 +21,8 @@ from PIL import Image
 from transformers import AutoProcessor, AutoTokenizer
 from qwen_vl_utils import process_vision_info
 
+from utils.threading_utils import ForwardSerializeLock
+
 # qwen_vlm_querier.py  (or whatever the file is called)
 import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -165,6 +167,13 @@ class QwenVLMQuerier(AbsVLMQuerier):
         self.vllm_base_url = ""
         self._name_resolved = False
 
+        # Defense-in-depth: serialize concurrent forward passes on the local
+        # PyTorch model. Not taken in vLLM-server mode.
+        self._local_forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.queryVLM (local)",
+            advice="use vLLM-server mode for real concurrency",
+        )
+
         print("Using QwenVLMQuerier with use_vllm_server =", self.use_vllm_server)
 
         if self.use_vllm_server:
@@ -266,14 +275,15 @@ class QwenVLMQuerier(AbsVLMQuerier):
         )
         # target_device = getattr(self.model, "device", None) or torch.device(self.device)
         inputs = inputs.to(self.model.device)
-        generated_ids = self.model.generate(
-            **inputs,
-            do_sample=self.do_sample,
-            max_new_tokens=self.max_new_tokens,
-            temperature=self.temperature,
-            top_p=self.top_p,
-            repetition_penalty=self.repetition_penalty,
-        )
+        with self._local_forward_lock.acquire():
+            generated_ids = self.model.generate(
+                **inputs,
+                do_sample=self.do_sample,
+                max_new_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                repetition_penalty=self.repetition_penalty,
+            )
         generated_trimmed = [
             out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]

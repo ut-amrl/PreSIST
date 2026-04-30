@@ -13,6 +13,8 @@ import requests
 
 from dam import DescribeAnythingModel, disable_torch_init  # from the repo
 
+from utils.threading_utils import ForwardSerializeLock
+
 
 class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
     def __init__(
@@ -125,6 +127,12 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
         ).to(self.device)
         self.dam.eval()
         self.initialized = True
+        # Defense-in-depth: serialize concurrent forward passes on the local
+        # PyTorch DAM model. Not taken in server (use_server=True) mode.
+        self._local_forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.describeObjects (local)",
+            advice="use the DAM batch server for real concurrency",
+        )
 
     # ---------- server helpers ----------
 
@@ -332,7 +340,7 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
             obj_id = int(instances.ids[i].item())
             pil_mask = mask_to_pil(mask)
 
-            with torch.inference_mode():
+            with torch.inference_mode(), self._local_forward_lock.acquire():
                 out = self.dam.get_description(
                     pil_image,
                     pil_mask,

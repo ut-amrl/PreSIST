@@ -6,6 +6,8 @@ from PIL import Image
 
 from persistence_eval.methods.inferencers.closed_set_semantics.closed_set_semantics import ClosedSetSemanticClassList
 
+from utils.threading_utils import ForwardSerializeLock
+
 
 class CachedCLIPAlignment:
     """Stores pre-computed normalized CLIP text embeddings keyed by class name."""
@@ -42,6 +44,14 @@ class CLIPEmbedder:
         self.device = device
         self._model = None
         self._processor = None
+        # Defense-in-depth: PyTorch CLIP model. The lazy _load() is also
+        # serialized through this lock so two concurrent first-callers don't
+        # both download/initialize the model.
+        self._forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.compute_clip_embedding(s)",
+            advice="CLIP forward cannot be parallelized across host threads "
+                   "on one model; run from a single-threaded driver",
+        )
 
     def _load(self) -> None:
         if self._model is not None:
@@ -56,23 +66,25 @@ class CLIPEmbedder:
 
     def compute_clip_embeddings(self, semantic_classes: list[str]) -> torch.Tensor:
         """Returns (N, D) normalized float32 tensor on CPU."""
-        self._load()
-        inputs = self._processor(text=semantic_classes, return_tensors="pt", padding=True)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        with torch.no_grad():
-            embeddings = self._model.get_text_features(**inputs)
-        embeddings = F.normalize(embeddings, dim=-1)
-        return embeddings.cpu().float()
+        with self._forward_lock.acquire():
+            self._load()
+            inputs = self._processor(text=semantic_classes, return_tensors="pt", padding=True)
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            with torch.no_grad():
+                embeddings = self._model.get_text_features(**inputs)
+            embeddings = F.normalize(embeddings, dim=-1)
+            return embeddings.cpu().float()
 
     def compute_clip_embedding_for_image(self, image: Image.Image) -> torch.Tensor:
         """Returns normalized 1D float32 tensor on CPU."""
-        self._load()
-        inputs = self._processor(images=image, return_tensors="pt")
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        with torch.no_grad():
-            embedding = self._model.get_image_features(**inputs)
-        embedding = F.normalize(embedding, dim=-1)
-        return embedding[0].cpu().float()
+        with self._forward_lock.acquire():
+            self._load()
+            inputs = self._processor(images=image, return_tensors="pt")
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            with torch.no_grad():
+                embedding = self._model.get_image_features(**inputs)
+            embedding = F.normalize(embedding, dim=-1)
+            return embedding[0].cpu().float()
 
 
 class CLIPAligner:

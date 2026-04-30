@@ -4,6 +4,8 @@ from transformers import InstructBlipProcessor, InstructBlipForConditionalGenera
 import torch
 from typing import Optional, Tuple
 
+from utils.threading_utils import ForwardSerializeLock
+
 
 
 class InstructBLIPSceneLevelCaptioner(AbstractSceneLevelCaptioner):
@@ -52,6 +54,14 @@ class InstructBLIPSceneLevelCaptioner(AbstractSceneLevelCaptioner):
         self.max_new_tokens = max_new_tokens
         self.num_beams = num_beams
         self.initialized = False
+        # Defense-in-depth: PyTorch-based local model. Single-threaded today;
+        # the lock keeps it correct under future cross-scene threading and
+        # warns once if that ever happens.
+        self._forward_lock = ForwardSerializeLock(
+            label=f"{type(self).__name__}.generateCaption",
+            advice="InstructBLIP is local-only; can't be parallelized across "
+                   "host threads on one GPU. Run from a single-threaded driver.",
+        )
         # self.initialize()
 
 
@@ -101,16 +111,17 @@ class InstructBLIPSceneLevelCaptioner(AbstractSceneLevelCaptioner):
                 else:
                     inputs[k] = v.to(self.device)
 
-        output_ids = self.model.generate(
-            **inputs,
-            do_sample=False,
-            num_beams=self.num_beams,
-            max_new_tokens=self.max_new_tokens,
-            top_p=0.9,
-            repetition_penalty=1.5,
-            length_penalty=1.0,
-            temperature=1.0,
-        )
+        with self._forward_lock.acquire():
+            output_ids = self.model.generate(
+                **inputs,
+                do_sample=False,
+                num_beams=self.num_beams,
+                max_new_tokens=self.max_new_tokens,
+                top_p=0.9,
+                repetition_penalty=1.5,
+                length_penalty=1.0,
+                temperature=1.0,
+            )
 
         caption = self.processor.batch_decode(
             output_ids, skip_special_tokens=True

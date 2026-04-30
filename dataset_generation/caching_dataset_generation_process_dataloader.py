@@ -8,14 +8,59 @@ from dataset_generation.llm_persistence_querying.abs_llm_persistence_querier imp
 from dataset_generation.intermediate_results_logger.abs_intermediate_results_logger import AbsIntermediateResultsLogger
 from dataset_generation.intermediate_results_logger.caching_results_logger2 import CachingResultsLoggerRevised
 from utils.image_utils import LazyImage
+from utils.timing import timer
 
 from abc import ABC, abstractmethod
+import time
+from typing import Optional
+
 import torch
 
 from tqdm import tqdm
 
 class AbstractDatasetGeneratorFromDataloader(ABC):
 
+    def __init__(
+        self,
+        periodic_report_every_n_images: int = 50,
+        periodic_report_every_minutes: float = 20.0,
+        periodic_report_path: Optional[str] = None,
+    ):
+        """
+        periodic_report_every_n_images: dump timing report after this many
+            processed images. Set to 0 to disable the count trigger.
+        periodic_report_every_minutes: dump timing report after this many wall-
+            clock minutes since the last dump. Set to 0 to disable.
+        periodic_report_path: where to write the periodic snapshot. None means
+            stdout only (the default). When a path is given, periodic dumps go
+            to that file (overwriting) and stdout is suppressed for them.
+        """
+        self._periodic_n = periodic_report_every_n_images
+        self._periodic_minutes = periodic_report_every_minutes
+        self._periodic_path = periodic_report_path
+        self._images_since_periodic_report = 0
+        self._last_periodic_report_time = time.monotonic()
+
+    def _maybe_emit_periodic_timing_report(self):
+        self._images_since_periodic_report += 1
+        now = time.monotonic()
+        elapsed_min = (now - self._last_periodic_report_time) / 60.0
+        count_trip = (
+            self._periodic_n > 0
+            and self._images_since_periodic_report >= self._periodic_n
+        )
+        time_trip = (
+            self._periodic_minutes > 0
+            and elapsed_min >= self._periodic_minutes
+        )
+        if not (count_trip or time_trip):
+            return
+        if self._periodic_path is not None:
+            timer.report(output_file_path=self._periodic_path, to_stdout=False)
+        else:
+            timer.report()
+        self._images_since_periodic_report = 0
+        self._last_periodic_report_time = now
 
     def generateDataset(self,
         dataloader: torch.utils.data.DataLoader
@@ -72,6 +117,8 @@ class AbstractDatasetGeneratorFromDataloader(ABC):
                 except Exception as e:
                     print(f"Error processing image {imageInfo.get('image_id', '')} at path {imageInfo.get('path', imageInfo.get('relpath', 'unknown'))}: {e}")
                     # Optionally, you could log this error to a file or logger instead of printing
+                finally:
+                    self._maybe_emit_periodic_timing_report()
                 # out = self.processImage(imageInfo)
                 # print("Done processing image: ", imageInfo.get("image_id", "") + " " + imageInfo.get("path", imageInfo.get("relpath", "unknown")))
                 # if out is not None:
@@ -128,7 +175,15 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
             llmPersistenceQuerier: AbsLLMPersistenceQuerier,
             intermediateLogger: CachingResultsLoggerRevised,
             run_phases: list = None,
+            periodic_report_every_n_images: int = 50,
+            periodic_report_every_minutes: float = 20.0,
+            periodic_report_path: Optional[str] = None,
     ):
+        super().__init__(
+            periodic_report_every_n_images=periodic_report_every_n_images,
+            periodic_report_every_minutes=periodic_report_every_minutes,
+            periodic_report_path=periodic_report_path,
+        )
         self.instanceSegmenter = instanceSegmenter
         self.sceneCaptioner = sceneCaptioner
         self.objectDescriber = objectDescriber
