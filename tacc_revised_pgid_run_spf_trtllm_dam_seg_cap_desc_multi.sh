@@ -75,10 +75,14 @@ fi
 DAM_PORT="${DAM_PORT:-9014}"
 DAM_WORKERS="${DAM_WORKERS:-3}"
 
-CONFIG_NAME="${CONFIG_NAME:-q3_30bt_lang_q3T_pU3_sam3b_maxOb_30_mConf_0p35_mA0p001_dd0p9_capQ38bTproc2_v3_iqr_only_behav}"
-RUN_PHASES="${RUN_PHASES:-segmentation,scene_caption,object_descriptions}"
+#CONFIG_NAME="${CONFIG_NAME:-q3_30bt_lang_q3T_pU3_sam3b_maxOb_30_mConf_0p35_mA0p001_dd0p9_capG431bproc7_v3_iqr_only_behav}"
+CONFIG_NAME="${CONFIG_NAME:-q3_30bt_lang_q3T_pU3_sam3b_maxOb_30_mConf_0p35_mA0p001_dd0p9_capQ38bTproc2_idGemmaBBgCCMTD1HL_v3_iqr_only_behav}"
+#RUN_PHASES="${RUN_PHASES:-segmentation,scene_caption,object_descriptions}"
+RUN_PHASES="${RUN_PHASES:-object_descriptions}"
 
-DATASETS="${DATASETS:-train_mix_0 train_mix_1 train_mix_2 train_mix_3 train_mix_4 train_mix_5 train_mix_6 train_mix_7 train_mix_8 train_mix_9 train_mix_10}"
+#DATASETS="${DATASETS:-train_mix_0 train_mix_1 train_mix_2 train_mix_3 train_mix_4 train_mix_5 train_mix_6 train_mix_7 train_mix_8 train_mix_9 train_mix_10}"
+DATASETS="${DATASETS:-train_mix_3 train_mix_4 train_mix_5 train_mix_6 train_mix_7}"
+#DATASETS="${DATASETS:-train_mix_8 train_mix_9 train_mix_10}"
 
 # Per-phase backend routing. Each var picks which server the corresponding
 # pipeline component talks to:
@@ -86,20 +90,71 @@ DATASETS="${DATASETS:-train_mix_0 train_mix_1 train_mix_2 train_mix_3 train_mix_
 #   gemma -> the Gemma 4 vLLM server on GEMMA_PORT
 #   dam   -> the DAM server on DAM_PORT (object descriptions only)
 # Empty = don't emit overrides for that phase (use whatever the config says).
-LANG_PROMPT_BACKEND="${LANG_PROMPT_BACKEND:-qwen}"
-SCENE_CAPTION_BACKEND="${SCENE_CAPTION_BACKEND:-qwen}"
-OBJECT_DESC_BACKEND="${OBJECT_DESC_BACKEND:-dam}"
+LANG_PROMPT_BACKEND="${LANG_PROMPT_BACKEND:-gemma}"
+SCENE_CAPTION_BACKEND="${SCENE_CAPTION_BACKEND:-gemma}"
+OBJECT_DESC_BACKEND="${OBJECT_DESC_BACKEND:-gemma}"
 PERSISTENCE_BACKEND="${PERSISTENCE_BACKEND:-}"
 
 # Qwen (TRT-LLM or vLLM) and Gemma (vLLM) GPU counts.
 # QWEN_GPUS=0 disables the Qwen server entirely (workers won't be passed
 # the segmenter/captioner vLLM overrides). GEMMA_GPUS=0 disables Gemma.
 # TRTLLM_TP is kept as a back-compat alias for QWEN_GPUS.
-QWEN_GPUS="${QWEN_GPUS:-${TRTLLM_TP:-1}}"
-GEMMA_GPUS="${GEMMA_GPUS:-0}"
-TRTLLM_TP="$QWEN_GPUS"
-GEMMA_TP="$GEMMA_GPUS"
+QWEN_GPUS="${QWEN_GPUS:-${TRTLLM_TP:-0}}"
+GEMMA_GPUS="${GEMMA_GPUS:-8}"
 TOTAL_GPUS="${TOTAL_GPUS:-8}"
+
+# Qwen legacy behavior: QWEN_GPUS also means Qwen TP.
+TRTLLM_TP="$QWEN_GPUS"
+
+# Gemma/vLLM layout:
+#   GEMMA_GPUS                 = total GPUs assigned to Gemma
+#   GEMMA_MIN_GPUS_PER_REPLICA = default TP size if GEMMA_TP is not set
+#   GEMMA_TP                   = GPUs per Gemma replica
+#   GEMMA_DP                   = number of Gemma replicas
+#
+# Examples:
+#   GEMMA_GPUS=8 GEMMA_MIN_GPUS_PER_REPLICA=2 -> TP=2, DP=4
+#   GEMMA_GPUS=4 GEMMA_MIN_GPUS_PER_REPLICA=2 -> TP=2, DP=2
+#   GEMMA_GPUS=8 GEMMA_MIN_GPUS_PER_REPLICA=4 -> TP=4, DP=2
+#   GEMMA_GPUS=8 GEMMA_TP=8 GEMMA_DP=1        -> old behavior
+GEMMA_MIN_GPUS_PER_REPLICA="${GEMMA_MIN_GPUS_PER_REPLICA:-2}"
+
+if [[ "$GEMMA_GPUS" -gt 0 ]]; then
+    if [[ -z "${GEMMA_TP:-}" ]]; then
+        if (( GEMMA_GPUS < GEMMA_MIN_GPUS_PER_REPLICA )); then
+            echo "ERROR: GEMMA_GPUS=$GEMMA_GPUS is less than GEMMA_MIN_GPUS_PER_REPLICA=$GEMMA_MIN_GPUS_PER_REPLICA"
+            exit 1
+        fi
+        GEMMA_TP="$GEMMA_MIN_GPUS_PER_REPLICA"
+    fi
+
+    if (( GEMMA_TP < 1 )); then
+        echo "ERROR: GEMMA_TP must be >= 1; got GEMMA_TP=$GEMMA_TP"
+        exit 1
+    fi
+
+    if (( GEMMA_GPUS % GEMMA_TP != 0 )); then
+        echo "ERROR: GEMMA_GPUS=$GEMMA_GPUS must be divisible by GEMMA_TP=$GEMMA_TP"
+        echo "       Set GEMMA_TP explicitly, or adjust GEMMA_MIN_GPUS_PER_REPLICA."
+        exit 1
+    fi
+
+    GEMMA_DP="${GEMMA_DP:-$((GEMMA_GPUS / GEMMA_TP))}"
+
+    if (( GEMMA_DP < 1 )); then
+        echo "ERROR: GEMMA_DP must be >= 1; got GEMMA_DP=$GEMMA_DP"
+        exit 1
+    fi
+
+    if (( GEMMA_TP * GEMMA_DP != GEMMA_GPUS )); then
+        echo "ERROR: GEMMA_TP=$GEMMA_TP × GEMMA_DP=$GEMMA_DP must equal GEMMA_GPUS=$GEMMA_GPUS"
+        exit 1
+    fi
+else
+    GEMMA_TP=0
+    GEMMA_DP=0
+fi
+
 
 WALL_HOURS="${WALL_HOURS:-48}"
 
@@ -218,7 +273,7 @@ else
     # No segmentation — workers don't need a dedicated GPU. Round-robin them
     # across all GPUs (sharing with the servers) so each still has a single
     # device for any small tensors.
-    NUM_WORKERS="${CPU_WORKERS:-4}"
+    NUM_WORKERS="${CPU_WORKERS:-8}"
     for ((i=0; i<NUM_WORKERS; i++)); do
         PIPELINE_GPU_LIST+=("$((i % TOTAL_GPUS))")
     done
@@ -288,7 +343,7 @@ else
     echo "  Qwen:     disabled (QWEN_GPUS=0)"
 fi
 if [[ -n "$USE_GEMMA" ]]; then
-    echo "  Gemma (vLLM): GPUs $GEMMA_GPU_LIST  (model: $GEMMA_MODEL, port: $GEMMA_PORT)"
+    echo "  Gemma (vLLM): GPUs $GEMMA_GPU_LIST  (model: $GEMMA_MODEL, port: $GEMMA_PORT, min GPUs/replica: $GEMMA_MIN_GPUS_PER_REPLICA, tp: $GEMMA_TP, dp: $GEMMA_DP)"
 else
     echo "  Gemma:    disabled (GEMMA_GPUS=0)"
 fi
@@ -392,8 +447,9 @@ if [[ -n "$USE_GEMMA" ]]; then
     LOG_DIR="$LOG_DIR" \
     ENV_NAME="$GEMMA_ENV_NAME" \
     VLLM_MODEL="$GEMMA_MODEL" \
-    VLLM_PORT="$GEMMA_PORT" \
+    VLLM_API_PORT="$GEMMA_PORT" \
     VLLM_TP="$GEMMA_TP" \
+    VLLM_DP="$GEMMA_DP" \
     VLLM_GPUS="$GEMMA_GPU_LIST" \
     VLLM_DTYPE="$GEMMA_DTYPE" \
     VLLM_QUANT="$GEMMA_QUANT" \
@@ -572,7 +628,7 @@ HYDRA_FULL_ERROR=1 python3 run_llm_labeling_pipeline.py \
   +image_dataset=${dataset} \
   ++dataset_generator.run_phases=[${RUN_PHASES}]${extra_args}"
 
-# add \ ++registry_info.read_only=true to the labeler command if running into sql errors with the registry
+        # add \ ++registry_info.read_only=true to the labeler command if running into sql errors with the registry
 
         CUDA_VISIBLE_DEVICES="$gpu" \
         IMAGE="$IMAGE" \
@@ -642,4 +698,3 @@ else
 fi
 
 exit $OVERALL_EXIT
-

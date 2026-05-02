@@ -21,7 +21,7 @@ HF_CACHE_DIR="${HF_CACHE_DIR:-$SCRATCH/.cache/huggingface}"
 #   - a local path, e.g. /models/gemma-4-27b-it
 #   - a Hugging Face repo id, e.g. google/gemma-4-27b-it
 VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-31B-it}"
-VLLM_PORT="${VLLM_PORT:-9008}"
+VLLM_API_PORT="${VLLM_API_PORT:-9008}"
 VLLM_TP="${VLLM_TP:-1}"
 VLLM_GPUS="${VLLM_GPUS:-0}"
 VLLM_DTYPE="${VLLM_DTYPE:-bfloat16}"
@@ -32,6 +32,37 @@ HF_TOKEN="${HF_TOKEN:-}"
 
 # 1 = pass --reasoning-parser gemma4; 0 = omit it.
 VLLM_ENABLE_THINKING="${VLLM_ENABLE_THINKING:-1}"
+
+
+# Default DP RPC port = API port + 50 (unless explicitly set)
+VLLM_DP_RPC_PORT="${VLLM_DP_RPC_PORT:-$((VLLM_API_PORT + 50))}"
+
+count_csv_items() {
+    local s="${1// /}"   # remove spaces
+    if [[ -z "$s" ]]; then
+        echo 0
+    else
+        awk -F',' '{print NF}' <<< "$s"
+    fi
+}
+
+VLLM_NUM_GPUS="$(count_csv_items "$VLLM_GPUS")"
+
+VLLM_DP="${VLLM_DP:-}"
+
+if [[ -z "$VLLM_DP" ]]; then
+    if (( VLLM_NUM_GPUS % VLLM_TP != 0 )); then
+        echo "ERROR: VLLM_NUM_GPUS=$VLLM_NUM_GPUS is not divisible by VLLM_TP=$VLLM_TP"
+        exit 1
+    fi
+    VLLM_DP=$(( VLLM_NUM_GPUS / VLLM_TP ))
+fi
+
+if (( VLLM_TP * VLLM_DP != VLLM_NUM_GPUS )); then
+    echo "ERROR: VLLM_TP=$VLLM_TP × VLLM_DP=$VLLM_DP does not equal number of visible GPUs=$VLLM_NUM_GPUS"
+    echo "       VLLM_GPUS=$VLLM_GPUS"
+    exit 1
+fi
 
 # Space-separated list of pip packages to upgrade in-env before launch.
 # Defaults to empty: the vllm-gemma env already pins the versions we need
@@ -155,8 +186,10 @@ echo "Starting vLLM (Gemma 4) on GPU(s) [${VLLM_GPUS}]"
 echo "  model:           $VLLM_MODEL"
 echo "  model source:    $MODEL_SOURCE"
 echo "  served name:     $VLLM_SERVED_NAME"
-echo "  port:            $VLLM_PORT"
+echo "  port:            $VLLM_API_PORT"
+echo "  dp port:         $VLLM_DP_RPC_PORT"
 echo "  tp:              $VLLM_TP"
+echo "  dp:              $VLLM_DP"
 echo "  dtype:           $VLLM_DTYPE"
 echo "  quant:           ${VLLM_QUANT:-<none>}"
 echo "  reasoning parser:${VLLM_REASONING_PARSER:-<none>}"
@@ -172,8 +205,10 @@ fi
 
 VLLM_SERVE_ARGS="$VLLM_MODEL \
   --host 0.0.0.0 \
-  --port $VLLM_PORT \
+  --port $VLLM_API_PORT \
+  --data-parallel-rpc-port $VLLM_DP_RPC_PORT \
   --tensor-parallel-size $VLLM_TP \
+  --data-parallel-size $VLLM_DP \
   --gpu-memory-utilization $GPU_MEMORY_UTILIZATION \
   --dtype $VLLM_DTYPE \
   --max-model-len $MAX_SEQ_LEN \
@@ -190,10 +225,10 @@ VLLM_PID=$!
 echo "$VLLM_PID" > "$VLLM_PID_FILE"
 echo "$VLLM_PID" > "$VLLM_PGID_FILE"
 
-echo "Waiting for vLLM on port ${VLLM_PORT} (up to 20 min for first-run download/compile)..."
+echo "Waiting for vLLM on port ${VLLM_API_PORT} (up to 20 min for first-run download/compile)..."
 READY=0
 for i in $(seq 1 240); do
-    if curl -sf "http://127.0.0.1:${VLLM_PORT}/health" >/dev/null 2>&1; then
+    if curl -sf "http://127.0.0.1:${VLLM_API_PORT}/health" >/dev/null 2>&1; then
         echo "vLLM ready (waited ~$((i * 5))s)"
         READY=1
         break

@@ -36,10 +36,13 @@ export JOB_RUN_DIR="${JOB_RUN_DIR:-$JOB_ROOT/run}"
 
 MODELS_DIR="${MODELS_DIR:-$SCRATCH/models}"
 
-VLLM_PORT="${VLLM_PORT:-9008}"
+VLLM_API_PORT="${VLLM_API_PORT:-9008}"
 VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-31B-it}"
 MAX_SEQ_LEN="${MAX_SEQ_LEN:-32768}"
-VLLM_TP="${VLLM_TP:-1}"
+# 4 GPUs total; set TP=2 so the start script derives DP=2 (verifies the
+# DP-from-TP+GPU-count derivation in tacc_start_gemma_vllm_server_pgid.sh).
+VLLM_NUM_GPUS="${VLLM_NUM_GPUS:-4}"
+VLLM_TP="${VLLM_TP:-2}"
 VLLM_DTYPE="${VLLM_DTYPE:-bfloat16}"
 VLLM_QUANT="${VLLM_QUANT:-}"
 VLLM_ENABLE_THINKING="${VLLM_ENABLE_THINKING:-1}"
@@ -62,10 +65,10 @@ else
 fi
 
 ############################################
-# Derive GPU layout from TP
+# Derive GPU layout from VLLM_NUM_GPUS
 ############################################
 
-VLLM_GPUS="${VLLM_GPUS:-$(seq -s, 0 $((VLLM_TP - 1)))}"
+VLLM_GPUS="${VLLM_GPUS:-$(seq -s, 0 $((VLLM_NUM_GPUS - 1)))}"
 
 ############################################
 # Create directories + set cache env vars
@@ -103,8 +106,8 @@ export TMP="${JOB_TMP_DIR}"
 
 unset TRANSFORMERS_CACHE
 
-echo "GPU layout (TP=$VLLM_TP):"
-echo "  vLLM:  GPUs $VLLM_GPUS  (model: $VLLM_MODEL, port: $VLLM_PORT)"
+echo "GPU layout (NUM_GPUS=$VLLM_NUM_GPUS, TP=$VLLM_TP, DP=auto):"
+echo "  vLLM:  GPUs $VLLM_GPUS  (model: $VLLM_MODEL, port: $VLLM_API_PORT)"
 echo "  Log:   $LOG_DIR"
 echo "  Job root: $JOB_ROOT"
 echo
@@ -155,7 +158,7 @@ MODELS_DIR="$MODELS_DIR" \
 HF_CACHE_DIR="$HF_CACHE_DIR" \
 LOG_DIR="$LOG_DIR" \
 VLLM_MODEL="$VLLM_MODEL" \
-VLLM_PORT="$VLLM_PORT" \
+VLLM_API_PORT="$VLLM_API_PORT" \
 VLLM_TP="$VLLM_TP" \
 VLLM_GPUS="$VLLM_GPUS" \
 VLLM_DTYPE="$VLLM_DTYPE" \
@@ -173,8 +176,8 @@ VLLM_PGID_FILE="$VLLM_PGID_FILE" \
 ############################################
 
 echo
-echo "Querying http://localhost:${VLLM_PORT}/v1/models ..."
-MODELS_RESPONSE="$(curl -sf "http://localhost:${VLLM_PORT}/v1/models" 2>&1)"
+echo "Querying http://localhost:${VLLM_API_PORT}/v1/models ..."
+MODELS_RESPONSE="$(curl -sf "http://localhost:${VLLM_API_PORT}/v1/models" 2>&1)"
 if [ -z "$MODELS_RESPONSE" ]; then
     echo "ERROR: empty response from /v1/models"
     exit 1
@@ -213,7 +216,7 @@ print(json.dumps(body))
 CHAT_RESPONSE="$(curl -sf -X POST \
     -H "Content-Type: application/json" \
     -d "$REQ_BODY" \
-    "http://localhost:${VLLM_PORT}/v1/chat/completions" 2>&1)" || {
+    "http://localhost:${VLLM_API_PORT}/v1/chat/completions" 2>&1)" || {
     echo "ERROR: /v1/chat/completions request failed"
     echo "$CHAT_RESPONSE"
     exit 1
