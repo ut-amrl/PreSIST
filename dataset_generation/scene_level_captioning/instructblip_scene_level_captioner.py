@@ -81,7 +81,7 @@ class InstructBLIPSceneLevelCaptioner(AbstractSceneLevelCaptioner):
         self.model.eval()
 
     @torch.no_grad()
-    def generateCaption(self, image: torch.Tensor) -> Tuple[str, DebugPayload]:
+    def generateCaption(self, image: torch.Tensor, image_id: str) -> Tuple[str, DebugPayload]:
         """
         Generate a scene-level caption for the given image using InstructBLIP.
         Takes in a torch tensor image (C, H, W) or (B, C, H, W) and returns (caption, DebugPayload).

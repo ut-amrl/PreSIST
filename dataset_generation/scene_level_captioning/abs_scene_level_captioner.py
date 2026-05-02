@@ -15,7 +15,13 @@ class AbstractSceneLevelCaptioner(ABC):
         return self.name
 
     @abstractmethod
-    def generateCaption(self, image) -> Tuple[str, DebugPayload]:
-        """Returns (caption, DebugPayload). Subclasses with no debug data may
-        return (caption, DebugPayload.empty())."""
+    def generateCaption(self, image, image_id: str) -> Tuple[str, DebugPayload]:
+        """Returns (caption, DebugPayload).
+
+        Subclasses obtain a DebugPayload via
+        ``DebugPayloadFactory.instance().create("scene_caption", image_id)``,
+        add entries to it, and return it alongside the caption. The caller
+        (the logger) is responsible for calling ``flush()`` on the payload
+        once it has been written.
+        """
         pass

@@ -15,7 +15,13 @@ class AbstractObjectDescriber(ABC):
         return self.name
 
     @abstractmethod
-    def describeObjects(self, image, instances) -> Tuple[dict, DebugPayload]:
-        """Returns (descriptions, DebugPayload). Subclasses with no debug data may
-        return (descriptions, DebugPayload.empty())."""
+    def describeObjects(self, image, instances, image_id: str) -> Tuple[dict, DebugPayload]:
+        """Returns (descriptions, DebugPayload).
+
+        Subclasses obtain a DebugPayload via
+        ``DebugPayloadFactory.instance().create("object_descriptions", image_id)``,
+        add entries to it, and return it alongside the descriptions. The
+        caller (the logger) is responsible for calling ``flush()`` on the
+        payload once it has been written.
+        """
         pass

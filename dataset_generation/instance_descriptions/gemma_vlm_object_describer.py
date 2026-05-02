@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import binary_dilation
 
 from dataset_generation.instance_descriptions.abs_object_describer import AbstractObjectDescriber
-from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload, DebugPayloadFactory
 from dataset_generation.llm_persistence_querying.gemma.gemma_chat_engine import (
     GemmaChatEngine,
     GemmaChatRequest,
@@ -213,6 +213,7 @@ class GemmaVLMObjectDescriber(AbstractObjectDescriber):
         self,
         image: torch.Tensor,
         instances: SegmentationResults,
+        image_id: str,
     ) -> Tuple[Dict[int, str], DebugPayload]:
         """
         Describe each segmented object by sending two images to the Gemma VL model:
@@ -243,7 +244,7 @@ class GemmaVLMObjectDescriber(AbstractObjectDescriber):
         print(f"Input image resolution: {pil_image.width}x{pil_image.height}")
         descriptions: Dict[int, str] = {}
         reasoning_by_id: Dict[str, str] = {}
-        debug_payload = DebugPayload()
+        debug_payload = DebugPayloadFactory.instance().create("object_descriptions", image_id)
         total = len(instances.masks)
         if total == 0:
             return descriptions, debug_payload
@@ -252,10 +253,11 @@ class GemmaVLMObjectDescriber(AbstractObjectDescriber):
         # images and request payloads in memory at once. Each chunk builds its
         # request specs, fans them out via chat_many, collects results, and
         # then drops its references — bounding peak request-side memory at
-        # ~chunk_size objects' worth. Note: debug_payload still references
-        # every overlay image until describeObjects returns (this matches the
-        # pre-refactor behavior, which also accumulated the full scene's worth
-        # of debug images by the end of the loop).
+        # ~chunk_size objects' worth. The debug_payload no longer pins
+        # references either: when configured, image-kind add() defaults to
+        # immediate write so the per-object overlays are released as soon as
+        # the chunk's request fan-out finishes; when disabled, add() is a
+        # no-op and the references are dropped immediately.
         chunk_size = max(1, self.chunk_size)
         result_idx = 0
         for chunk_start in range(0, total, chunk_size):

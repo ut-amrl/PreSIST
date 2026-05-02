@@ -1,0 +1,6 @@
+You are shown three images:
+1) An image with an object of interest highlighted in cyan and the background blurred. Matches the full image size.
+2) An image zoomed in closer to the object of interest, also with the object of interest highlighted with a cyan outline.
+3) The full scene without any modifications.
+
+The outlined object is the object you should focus on in your assessment, using its surroundings only for contextual information. The object of interest is defined strictly as the pixels inside the highlighted cyan region. The highlighted region may contain holes or gaps; any objects visible inside these holes (e.g., cars or people) are NOT part of the object and must not be described as the primary subject. If the mask includes multiple objects or surfaces, but one object or surface clearly represents most of the masked region, prioritize describing that entity over smaller overlaps with the mask. Likewise, if most of the mask corresponds to a surface rather than the objects on that surface, describe the surface itself.

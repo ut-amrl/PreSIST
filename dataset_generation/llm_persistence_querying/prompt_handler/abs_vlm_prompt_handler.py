@@ -25,7 +25,7 @@ class AbsVLMPromptHandler(ABC):
         time_and_date: Optional[str],
         image: torch.Tensor,
         instances: SegmentationResults,
-        object_id: int,
+        object_id: str,
     ) -> Tuple[str, List[Image.Image]]:
         """
         Build the per-object prompt and the corresponding image list to send to the VLM.

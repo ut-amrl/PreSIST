@@ -34,8 +34,14 @@ HF_TOKEN="${HF_TOKEN:-}"
 VLLM_ENABLE_THINKING="${VLLM_ENABLE_THINKING:-1}"
 
 # Space-separated list of pip packages to upgrade in-env before launch.
-# Set PIP_UPGRADE_PACKAGES="" to skip the upgrade entirely.
-PIP_UPGRADE_PACKAGES="${PIP_UPGRADE_PACKAGES:-transformers mistral_common}"
+# Defaults to empty: the vllm-gemma env already pins the versions we need
+# (vllm nightly + transformers 5.x + mistral_common), so re-upgrading on
+# every launch wastes time and risks pulling in incompatible new releases.
+# Set PIP_UPGRADE_PACKAGES="transformers mistral_common" if bootstrapping
+# a fresh env that hasn't had those packages upgraded yet.
+# Use ${VAR-default} (no colon) so an explicit empty string disables the
+# upgrade; ${VAR:-default} would treat empty as "unset" and re-apply the default.
+PIP_UPGRADE_PACKAGES="${PIP_UPGRADE_PACKAGES-}"
 
 VLLM_LOG="${VLLM_LOG:-logs/spf/vllm_gemma_${SLURM_JOB_ID:-interactive}.out}"
 VLLM_PID_FILE="${VLLM_PID_FILE:-logs/spf/vllm_gemma_${SLURM_JOB_ID:-interactive}.pid}"

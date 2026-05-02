@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 import torch
 import numpy as np
 from utils.mask_utils import dedupe_mask_indices_by_iou, filter_mask_indices_by_min_area
-from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload, DebugPayloadFactory
 
 
 # =========================
@@ -125,20 +125,30 @@ class AbsInstanceSegmenter(ABC):
         """Returns the name of this segmenter."""
         return self.name
 
-    def segmentInstances(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
+    def segmentInstances(self, image: torch.Tensor, image_id: str) -> Tuple[SegmentationResults, DebugPayload]:
         """
         Args:
             image: torch.Tensor, shape (C, H, W), dtype=uint8, RGB.
+            image_id: stable identifier for this image (used by debug-output
+                paths).
 
         Returns:
-            (SegmentationResults, DebugPayload)
+            (SegmentationResults, DebugPayload). The caller (the logger) is
+            responsible for calling ``flush()`` on the payload once it has
+            been written.
         """
         self._validateImage(image)
-        raw_results, debug_payload = self.segmentInstancesRaw(image)
+        debug_payload = DebugPayloadFactory.instance().create("segmentation", image_id)
+        # ``segmentInstancesRaw`` still returns ``(results, sub_debug)`` for
+        # backward compat with subclasses. No segmenter currently produces
+        # actual debug data — sub_debug is typically ``DebugPayload.empty()``
+        # — but if a subclass later returns real entries, merging here lets
+        # the configured payload pick them up under the segmentation phase
+        # without changing every subclass signature.
+        raw_results, sub_debug = self.segmentInstancesRaw(image)
         if not isinstance(raw_results, SegmentationResults):
             raise TypeError("segmentInstancesRaw() must return SegmentationResults.")
-        if debug_payload is None:
-            debug_payload = DebugPayload.empty()
+        debug_payload.merge(sub_debug)
         processed = self._postprocessSegmentationResults(image=image, results=raw_results)
         return processed, debug_payload
 

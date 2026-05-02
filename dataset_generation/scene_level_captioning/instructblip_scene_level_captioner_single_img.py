@@ -66,7 +66,7 @@ def run_instructblip_on_image(
     img_tensor = img_tensor.to(device)
 
     # ---- generate caption ----
-    caption = captioner.generateCaption(img_tensor)
+    caption, _debug = captioner.generateCaption(img_tensor, image_id="single_img")
 
     # Print to console
     print(f"Image: {image_path}")

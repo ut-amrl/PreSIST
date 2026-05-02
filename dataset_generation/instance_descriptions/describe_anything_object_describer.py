@@ -322,6 +322,7 @@ class DescribeAnythingObjectDescriber(AbstractObjectDescriber):
         self,
         image: torch.Tensor,
         instances: SegmentationResults,
+        image_id: str,
     ) -> Tuple[Dict[int, str], DebugPayload]:
         """
         Describe objects in the image based on the provided instances.

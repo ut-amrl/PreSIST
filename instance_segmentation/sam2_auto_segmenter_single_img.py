@@ -121,7 +121,7 @@ def main(image_path: str, checkpoint: str, model_cfg: str, device: str, output_o
     )
 
     # Segment instances
-    results = segmenter.segmentInstances(img_tensor)
+    results, _debug = segmenter.segmentInstances(img_tensor, image_id="single_img")
 
     # Overlay segmentation results
     overlay_img = overlay_segmentation(

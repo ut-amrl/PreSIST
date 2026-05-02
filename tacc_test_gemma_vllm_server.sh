@@ -195,7 +195,7 @@ echo "Served model id: $SERVED_NAME"
 echo
 echo "Sending chat completion (enable_thinking=${VLLM_ENABLE_THINKING}) ..."
 
-REQ_BODY="$(python3 -c '
+REQ_BODY="$(SERVED_NAME="$SERVED_NAME" VLLM_ENABLE_THINKING="$VLLM_ENABLE_THINKING" python3 -c '
 import json, os
 body = {
     "model": os.environ["SERVED_NAME"],
@@ -208,7 +208,7 @@ body = {
 if os.environ.get("VLLM_ENABLE_THINKING", "1") == "1":
     body["chat_template_kwargs"] = {"enable_thinking": True}
 print(json.dumps(body))
-' SERVED_NAME="$SERVED_NAME" VLLM_ENABLE_THINKING="$VLLM_ENABLE_THINKING")"
+')"
 
 CHAT_RESPONSE="$(curl -sf -X POST \
     -H "Content-Type: application/json" \

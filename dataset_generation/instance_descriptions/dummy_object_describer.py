@@ -24,13 +24,8 @@ class DummyObjectDescriber(AbstractObjectDescriber):
         self,
         image: torch.Tensor,
         instances: SegmentationResults,
+        image_id: str,
     ) -> Tuple[Dict[int, str], DebugPayload]:
-        """
-        Describe objects in the image based on the provided instances.
-
-        Returns (descriptions, DebugPayload).
-        """
+        """Describe objects in the image based on the provided instances."""
         descriptions: Dict[int, str] = {}
-
-
         return descriptions, DebugPayload.empty()

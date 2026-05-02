@@ -13,7 +13,13 @@ class AbsRelationshipDescriber(ABC):
         return self.name
 
     @abstractmethod
-    def describeRelationships(self, image, instances, objectDescriptions) -> Tuple[object, DebugPayload]:
-        """Returns (relationships, DebugPayload). Subclasses with no debug data may
-        return (relationships, DebugPayload.empty())."""
+    def describeRelationships(self, image, instances, objectDescriptions, image_id: str) -> Tuple[object, DebugPayload]:
+        """Returns (relationships, DebugPayload).
+
+        Subclasses obtain a DebugPayload via
+        ``DebugPayloadFactory.instance().create("relationships", image_id)``,
+        add entries to it, and return it alongside the relationships. The
+        caller (the logger) is responsible for calling ``flush()`` on the
+        payload once it has been written.
+        """
         pass

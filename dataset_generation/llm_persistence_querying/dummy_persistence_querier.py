@@ -27,8 +27,9 @@ class DummyPersistenceQuerier(AbsLLMPersistenceQuerier):
         object_descriptions,
         relationship_descriptions,
         time_and_date,
-        image: torch.Tensor,
-        instances: SegmentationResults,
+        image,
+        instances,
+        image_id: str,
     ):
         prompt = ""
         response = ""

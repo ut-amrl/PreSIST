@@ -92,20 +92,16 @@ class VerboseVLMPersistencePromptHandler(AbsVLMPromptHandler):
         time_and_date: Optional[str],
         image: torch.Tensor,
         instances: SegmentationResults,
-        object_id: int,
+        object_id: str,
     ) -> Tuple[str, List[Image.Image]]:
         _ = relationship_descriptions  # currently unused, reserved for future prompt variants
 
-        matches = (instances.ids == object_id).nonzero(as_tuple=True)[0]
+        matches = (instances.ids == int(object_id)).nonzero(as_tuple=True)[0]
         if len(matches) == 0:
             raise ValueError(f"Object id {object_id} not found in instances.ids")
         object_index = int(matches[0].item())
 
-        # Try to get the object description using the object_id directly; if that fails, use the string version of the object_id (in case keys are strings)
-        try:
-            object_description = object_descriptions[object_id]
-        except KeyError:
-            object_description = object_descriptions[str(object_id)]
+        object_description = object_descriptions[object_id]
 
         other_descriptions: Optional[Dict[Any, str]] = None
         if self.include_other_descriptions and object_descriptions:

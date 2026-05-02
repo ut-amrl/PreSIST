@@ -347,7 +347,7 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
         # --- Segmentation (run when needed by any later phase) ---
         if ("segmentation" in run):
             try:
-                segmentationLambda = lambda: self.instanceSegmenter.segmentInstances(lazy_image.get())
+                segmentationLambda = lambda: self.instanceSegmenter.segmentInstances(lazy_image.get(), image_id=ctx.image_id)
                 instances = self.intermediateLogger.getOrGenerateSegmentationResults(ctx, segmentationLambda)
             except Exception as e:
                 print(f"Skipping image {img_id}: segmentation failed or skipped — {e}")
@@ -355,7 +355,7 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
 
         if ("scene_caption" in run):
             try:
-                captionLambda = lambda: self.sceneCaptioner.generateCaption(lazy_image.get())
+                captionLambda = lambda: self.sceneCaptioner.generateCaption(lazy_image.get(), image_id=ctx.image_id)
                 sceneCaption = self.intermediateLogger.getOrGenerateSceneCaption(ctx, captionLambda)
             except Exception as e:
                 print(f"Skipping image {img_id}: scene caption failed or skipped — {e}")
@@ -364,7 +364,7 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
 
         if ("object_descriptions" in run):
             try:
-                objectDescriptionLambda = lambda: self.objectDescriber.describeObjects(lazy_image.get(), instances)
+                objectDescriptionLambda = lambda: self.objectDescriber.describeObjects(lazy_image.get(), instances, image_id=ctx.image_id)
                 objectDescriptions = self.intermediateLogger.getOrGenerateObjectDescriptions(ctx, objectDescriptionLambda)
             except Exception as e:
                 print(f"Skipping image {img_id}: object descriptions failed or skipped — {e}")
@@ -372,7 +372,7 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
 
         if ("relationships" in run):
             try:
-                relationshipDescriberLambda = lambda: self.relationshipDescriber.describeRelationships(lazy_image.get(), instances, objectDescriptions)
+                relationshipDescriberLambda = lambda: self.relationshipDescriber.describeRelationships(lazy_image.get(), instances, objectDescriptions, image_id=ctx.image_id)
                 relationshipDescriptions = self.intermediateLogger.getOrGenerateRelationshipDescriptions(ctx, relationshipDescriberLambda)
             except Exception as e:
                 print(f"Skipping image {img_id}: relationship descriptions failed or skipped — {e}")
@@ -386,7 +386,8 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
                     relationshipDescriptions,
                     timeAndDate,
                     image=lazy_image.get(),
-                    instances=instances
+                    instances=instances,
+                    image_id=ctx.image_id,
                 )
                 prompts, rawResponse, persistenceParameterEstimates = self.intermediateLogger.getOrGenerateLLMPromptsAndOutput(ctx, persistenceParamLambda)
                 return instances, persistenceParameterEstimates

@@ -143,7 +143,7 @@ class LanguageGroundedWithPointRepromptSegmenter(AbsInstanceSegmenter):
     def segmentInstancesRaw(self, image: torch.Tensor) -> Tuple[SegmentationResults, DebugPayload]:
         _, h, w = image.shape
 
-        first_pass, _first_pass_debug = self.language_grounded_segmenter.segmentInstances(image)
+        first_pass, _first_pass_debug = self.language_grounded_segmenter.segmentInstances(image, image_id="__nested__")
         # print(f"Number of masks after language grounded segmentation: {len(first_pass)}")
 
 

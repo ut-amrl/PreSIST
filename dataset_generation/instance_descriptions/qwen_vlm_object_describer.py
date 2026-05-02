@@ -22,7 +22,7 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import binary_dilation
 
 from dataset_generation.instance_descriptions.abs_object_describer import AbstractObjectDescriber
-from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload, DebugPayloadFactory
 from dataset_generation.llm_persistence_querying.vlm_querying.qwen_vlm_querier import QwenVLMQuerier
 from instance_segmentation.abs_instance_segmenter import SegmentationResults
 from utils.image_utils import image_tensor_to_pil
@@ -155,6 +155,7 @@ class QwenVLMObjectDescriber(AbstractObjectDescriber):
         self,
         image: torch.Tensor,
         instances: SegmentationResults,
+        image_id: str,
     ) -> Tuple[Dict[int, str], DebugPayload]:
         """
         Describe each segmented object by sending two images to the Qwen VL model:
@@ -172,7 +173,7 @@ class QwenVLMObjectDescriber(AbstractObjectDescriber):
         # Display the image resolution
         print(f"Input image resolution: {pil_image.width}x{pil_image.height}")
         descriptions: Dict[int, str] = {}
-        debug_payload = DebugPayload()
+        debug_payload = DebugPayloadFactory.instance().create("object_descriptions", image_id)
         total = len(instances.masks)
 
         for i, mask in enumerate(instances.masks):

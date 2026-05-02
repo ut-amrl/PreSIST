@@ -421,6 +421,7 @@ def _build_text_lines(
     lines: List[str] = []
     if img_data.image_path:
         lines += _wrap_block("Source Image", img_data.image_path)
+    lines += _wrap_block("Object ID", obj_id)
     if include_caption and img_data.scene_caption:
         lines += _wrap_block("Scene Caption", img_data.scene_caption)
         if img_data.scene_caption_reasoning:
@@ -589,6 +590,9 @@ def _build_combined_text(
 
     if img_data.image_path:
         sections.append(_format_section("Source Image", img_data.image_path))
+
+    if obj_id is not None:
+        sections.append(_format_section("Object ID", obj_id))
 
     if include_caption and img_data.scene_caption:
         sections.append(_format_section("Scene Caption", img_data.scene_caption))

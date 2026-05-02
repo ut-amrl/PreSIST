@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 
 from instance_segmentation.abs_instance_segmenter import SegmentationResults
-from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload, DebugPayloadFactory
 from dataset_generation.llm_persistence_querying.abs_llm_persistence_querier import AbsLLMPersistenceQuerier
 from dataset_generation.llm_persistence_querying.vlm_querying.abs_vlm_querier import AbsVLMQuerier
 from dataset_generation.llm_persistence_querying.prompt_handler.abs_vlm_prompt_handler import AbsVLMPromptHandler
@@ -57,23 +57,24 @@ class ChainedVLMPersistenceQuerier(AbsLLMPersistenceQuerier):
         time_and_date: Optional[str],
         image: torch.Tensor,
         instances: SegmentationResults,
+        image_id: str,
     ) -> Tuple[Dict[str, str], Dict[str, str], List[Dict[str, Any]], DebugPayload]:
         """
         For each object: ask prompt handler for (prompt, images), call VLM, parse response,
         assign id. Returns (prompts_dict, responses_dict, persistence_parameter_estimates, DebugPayload)
         where dicts map object_id (str) -> prompt/response.
         """
+        debug_payload = DebugPayloadFactory.instance().create("persistence", image_id)
         if not len(instances):
-            return {}, {}, [], DebugPayload.empty()
+            return {}, {}, [], debug_payload
 
         prompts_dict: Dict[str, str] = {}
         responses_dict: Dict[str, str] = {}
         persistence_parameter_estimates: List[Dict[str, Any]] = []
-        debug_payload = DebugPayload()
 
         # for i in range(len(instances)):
         for i in tqdm(range(len(instances)), desc="Querying VLM for objects in scene", leave=False):
-            obj_id = int(instances.ids[i].item())
+            obj_id = str(int(instances.ids[i].item()))
 
             prompt, images_for_vlm = self.vlm_prompt_handler.buildPromptAndImagesForObject(
                 scene_caption,
@@ -93,8 +94,8 @@ class ChainedVLMPersistenceQuerier(AbsLLMPersistenceQuerier):
                 parsed["id"] = obj_id
                 persistence_parameter_estimates.append(parsed)
 
-                prompts_dict[str(obj_id)] = prompt
-                responses_dict[str(obj_id)] = response
+                prompts_dict[obj_id] = prompt
+                responses_dict[obj_id] = response
             except Exception as e:
                 print(f"Skipping object id: Error processing object {obj_id} ({i+1}/{len(instances)}): {e}")
                 print("----------------------------------------------------------------------------------------------------------")

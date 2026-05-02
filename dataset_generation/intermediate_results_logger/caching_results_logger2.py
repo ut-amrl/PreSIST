@@ -5,8 +5,7 @@ from typing import Any, Optional
 from dataset_generation.intermediate_results_logger.abs_intermediate_results_logger import AbsIntermediateResultsLogger
 from dataset_generation.intermediate_results_logger.debug_data import (
     DebugConfig,
-    DebugPayload,
-    DebugWriter,
+    DebugPayloadFactory,
 )
 import os
 from PIL import Image
@@ -96,6 +95,8 @@ class CachingResultsLoggerRevised:
         self.relationshipDescriberTimerName = f"Timer::rel_desc::{self.relationshipDescriberName}"
         self.llmQuerierTimerName = f"Timer::llm_querier::{self.llmQuerierName}"
 
+        self._maybe_configure_debug_factory()
+
     def setConfigFileName(self, configFileName):
         self.configFileName = configFileName
 
@@ -107,6 +108,31 @@ class CachingResultsLoggerRevised:
         os.makedirs(os.path.dirname(timingOutputFilePath), exist_ok=True)
         timer.set_output_file(timingOutputFilePath)
 
+        self._maybe_configure_debug_factory()
+
+    def _maybe_configure_debug_factory(self):
+        # Configure the debug factory once both component names and the config
+        # file name are set; tolerate either setter being called first.
+        if (
+            self.configFileName is None
+            or self.segmenterName is None
+            or self.sceneCaptionerName is None
+            or self.objectDescriberName is None
+            or self.relationshipDescriberName is None
+        ):
+            return
+        DebugPayloadFactory.instance().configure(
+            debug_config=self.debug_config,
+            base_log_directory=self.baseLogDirectory,
+            config_file_name=self.configFileName,
+            component_names={
+                "segmenter": self.segmenterName,
+                "sceneCaptioner": self.sceneCaptionerName,
+                "objectDescriber": self.objectDescriberName,
+                "relationshipDescriber": self.relationshipDescriberName,
+            },
+        )
+
 
     def createDirectoryIfNotExists(self, dirPath):
         # For each part of the path, create directory if it does not exist
@@ -117,22 +143,6 @@ class CachingResultsLoggerRevised:
         for subDirName in subDirNames:
             dirPath = os.path.join(dirPath, subDirName)
         return dirPath
-
-
-    def _emit_debug(self, phase_name, debug_payload, debug_dir):
-        if not self.debug_config.enabled:
-            return
-        if not self.debug_config.is_phase_enabled(phase_name):
-            return
-        if debug_payload is None or debug_payload.is_empty():
-            return
-        try:
-            DebugWriter(debug_dir).write(
-                debug_payload,
-                kinds_filter=self.debug_config.kinds_filter(),
-            )
-        except Exception as e:
-            print(f"[debug-data] failed for {phase_name}: {e}")
 
 
     def getFinalOutputDirectory(self, ctx: ImageContext):
@@ -219,8 +229,13 @@ class CachingResultsLoggerRevised:
         # Throw an error (just for now -- only want to process cached data)
         # raise ValueError("Segmentation results not found and forceRegen is False.")
         # Otherwise, compute segmentation results
-        with timer.time_block(self.segmenterTimerName):
-            segmentationResults, debug_payload = segmentationLambda()
+        debug_payload = None
+        try:
+            with timer.time_block(self.segmenterTimerName):
+                segmentationResults, debug_payload = segmentationLambda()
+        finally:
+            if debug_payload is not None:
+                debug_payload.flush()
 
         # Make sure directory exists
         # Create directory if it does not exist
@@ -234,11 +249,6 @@ class CachingResultsLoggerRevised:
 
         # Save segmentation results to file
         segmentationResults.saveToFile(segmentationResultsFilePath, imagePath=ctx.img_file_name)
-        self._emit_debug(
-            "segmentation",
-            debug_payload,
-            os.path.join(segmentationResultsDir, "debug"),
-        )
         return segmentationResults
 
 
@@ -263,8 +273,13 @@ class CachingResultsLoggerRevised:
             return caption
 
         # Otherwise, compute caption
-        with timer.time_block(self.sceneCaptionerTimerName):
-            caption, debug_payload = captionLambda()
+        debug_payload = None
+        try:
+            with timer.time_block(self.sceneCaptionerTimerName):
+                caption, debug_payload = captionLambda()
+        finally:
+            if debug_payload is not None:
+                debug_payload.flush()
 
         # Save caption to a JSON file
         # Make sure directory exists
@@ -276,11 +291,6 @@ class CachingResultsLoggerRevised:
                 "imagePath": ctx.img_file_name
             }, f, indent=2, ensure_ascii=False)
 
-        self._emit_debug(
-            "scene_caption",
-            debug_payload,
-            os.path.join(captionDir, "debug"),
-        )
         return caption
 
 
@@ -310,8 +320,18 @@ class CachingResultsLoggerRevised:
             return objectDescriptions
 
         # Otherwise, compute descriptions
-        with timer.time_block(self.objectDescriberTimerName):
-            objectDescriptions, debug_payload = descriptionsLambda()
+        debug_payload = None
+        try:
+            with timer.time_block(self.objectDescriberTimerName):
+                objectDescriptions, debug_payload = descriptionsLambda()
+        finally:
+            if debug_payload is not None:
+                debug_payload.flush()
+
+        # Normalize keys to str so callers see the same shape regardless of
+        # whether the dict came from the describer (int-keyed) or a JSON
+        # cache reload (str-keyed). Downstream queriers depend on this.
+        objectDescriptions = {str(k): v for k, v in objectDescriptions.items()}
 
         # Save object descriptions to a JSON file
         # Make sure directory exists
@@ -324,22 +344,17 @@ class CachingResultsLoggerRevised:
             }
             json.dump(descriptionsOutputData, f, indent=2, ensure_ascii=False)
 
-        self._emit_debug(
-            "object_descriptions",
-            debug_payload,
-            os.path.join(descriptionsDir, "debug"),
-        )
         return objectDescriptions
 
     def getOrGenerateRelationshipDescriptions(self, ctx: ImageContext, relationshipLambda):
 
         # For now, just return the computed relationships without caching
-        relationshipDescriptions, debug_payload = relationshipLambda()
-        self._emit_debug(
-            "relationships",
-            debug_payload,
-            os.path.join(self.getRelationshipDescriberResultsDirectory(ctx), "debug"),
-        )
+        debug_payload = None
+        try:
+            relationshipDescriptions, debug_payload = relationshipLambda()
+        finally:
+            if debug_payload is not None:
+                debug_payload.flush()
         return relationshipDescriptions
 
 
@@ -389,8 +404,13 @@ class CachingResultsLoggerRevised:
             return prompts, rawResponse, persistenceParameters
 
         # Otherwise, compute prompts and persistence parameters
-        with timer.time_block(self.llmQuerierTimerName):
-            prompts, rawResponse, persistenceParameters, debug_payload = llmLambda()
+        debug_payload = None
+        try:
+            with timer.time_block(self.llmQuerierTimerName):
+                prompts, rawResponse, persistenceParameters, debug_payload = llmLambda()
+        finally:
+            if debug_payload is not None:
+                debug_payload.flush()
 
         # Save prompts and persistence parameters to their respective files
         self.createDirectoryIfNotExists(llmDataDir)
@@ -408,11 +428,6 @@ class CachingResultsLoggerRevised:
 
         writePersistenceData(persistenceParamsPath, persistenceParameters=persistenceParameters, imgFileName=ctx.img_file_name)
 
-        self._emit_debug(
-            "persistence",
-            debug_payload,
-            os.path.join(llmDataDir, "debug"),
-        )
         return prompts, rawResponse, persistenceParameters
 
     # def logObjectDescriptions(self, objectDescriptions):

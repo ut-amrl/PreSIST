@@ -34,7 +34,16 @@ class ConfidenceThresholdSegmentationWrapper(AbsInstanceSegmenter):
         Args:
             image: torch.Tensor, shape (C, H, W), dtype=uint8, RGB.
         Returns:
-            (SegmentationResults, DebugPayload) from the wrapped segmenter before
-            this wrapper's own post-processing is applied.
+            (SegmentationResults, DebugPayload) — the wrapped segmenter's
+            payload would already have been flushed by its own
+            ``segmentInstances`` call if it produced any debug data, but at
+            this nesting level we're inside the outer wrapper's own
+            ``segmentInstancesRaw`` (which has no image_id), so we just
+            return an empty payload and let the outer ``segmentInstances``
+            create its own configured payload.
         """
-        return self.base_segmenter.segmentInstances(image)
+        # Use a sentinel image_id since this nested call's payload is
+        # discarded; the outer wrapper's own segmentInstances() (called by
+        # the logger) is what will write debug for the segmentation phase.
+        results, _ = self.base_segmenter.segmentInstances(image, image_id="__nested__")
+        return results, DebugPayload.empty()

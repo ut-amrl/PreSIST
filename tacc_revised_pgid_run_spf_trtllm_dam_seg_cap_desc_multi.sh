@@ -53,6 +53,7 @@ GEMMA_DTYPE="${GEMMA_DTYPE:-bfloat16}"
 GEMMA_QUANT="${GEMMA_QUANT:-}"
 GEMMA_ENABLE_THINKING="${GEMMA_ENABLE_THINKING:-1}"
 GEMMA_ENV_NAME="${GEMMA_ENV_NAME:-vllm-gemma}"
+QWEN_ENV_NAME="${QWEN_ENV_NAME:-vllm2}"
 
 HF_TOKEN_FILE="${HF_TOKEN_FILE:-$HF_CACHE_DIR/token}"
 
@@ -171,16 +172,29 @@ backend_available() {
     esac
 }
 
-for pair in \
-    "LANG_PROMPT_BACKEND=$LANG_PROMPT_BACKEND:lang prompt" \
-    "SCENE_CAPTION_BACKEND=$SCENE_CAPTION_BACKEND:scene caption" \
-    "OBJECT_DESC_BACKEND=$OBJECT_DESC_BACKEND:object description" \
-    "PERSISTENCE_BACKEND=$PERSISTENCE_BACKEND:persistence estimation"; do
-    var_part="${pair%:*}"
-    label="${pair##*:}"
+# Phase identifiers (must match what the pipeline understands; see
+# run_llm_labeling_pipeline.py and evaluation_utils/visualize_debug_outputs.py).
+phase_enabled() {
+    case ",$RUN_PHASES," in
+        *",$1,"*) return 0 ;;
+        *)        return 1 ;;
+    esac
+}
+
+# Format: VAR_NAME=value:human label:phase identifier in RUN_PHASES
+for entry in \
+    "LANG_PROMPT_BACKEND=$LANG_PROMPT_BACKEND:lang prompt:segmentation" \
+    "SCENE_CAPTION_BACKEND=$SCENE_CAPTION_BACKEND:scene caption:scene_caption" \
+    "OBJECT_DESC_BACKEND=$OBJECT_DESC_BACKEND:object description:object_descriptions" \
+    "PERSISTENCE_BACKEND=$PERSISTENCE_BACKEND:persistence estimation:persistence"; do
+    IFS=':' read -r var_part label phase <<< "$entry"
     val="${var_part#*=}"
     name="${var_part%%=*}"
     [[ -z "$val" ]] && continue
+    if ! phase_enabled "$phase"; then
+        echo "  Skipping backend check for $name=$val (phase '$phase' not in RUN_PHASES)"
+        continue
+    fi
     if ! backend_available "$val"; then
         echo "ERROR: $name=$val (for $label) but the corresponding server is not enabled."
         echo "       Enable it (QWEN_GPUS/GEMMA_GPUS > 0, or use object_descriptions phase for DAM) or unset $name."
@@ -189,14 +203,26 @@ for pair in \
 done
 
 PIPELINE_GPU_LIST=()
-for i in $(seq "$PIPELINE_GPU_START" $((TOTAL_GPUS - 1))); do
-    PIPELINE_GPU_LIST+=("$i")
-done
-NUM_WORKERS=${#PIPELINE_GPU_LIST[@]}
-
-if [ "$NUM_WORKERS" -lt 1 ]; then
-    echo "ERROR: No GPUs left for pipeline workers (QWEN_GPUS=$QWEN_GPUS, GEMMA_GPUS=$GEMMA_GPUS, DAM=${USE_DAM:+1}, TOTAL_GPUS=$TOTAL_GPUS)."
-    exit 1
+if phase_enabled segmentation; then
+    # Segmentation needs a dedicated GPU per worker — use only the GPUs not
+    # already claimed by the LLM/DAM servers.
+    for i in $(seq "$PIPELINE_GPU_START" $((TOTAL_GPUS - 1))); do
+        PIPELINE_GPU_LIST+=("$i")
+    done
+    NUM_WORKERS=${#PIPELINE_GPU_LIST[@]}
+    if [ "$NUM_WORKERS" -lt 1 ]; then
+        echo "ERROR: No GPUs left for pipeline workers (QWEN_GPUS=$QWEN_GPUS, GEMMA_GPUS=$GEMMA_GPUS, DAM=${USE_DAM:+1}, TOTAL_GPUS=$TOTAL_GPUS)."
+        exit 1
+    fi
+else
+    # No segmentation — workers don't need a dedicated GPU. Round-robin them
+    # across all GPUs (sharing with the servers) so each still has a single
+    # device for any small tensors.
+    NUM_WORKERS="${CPU_WORKERS:-4}"
+    for ((i=0; i<NUM_WORKERS; i++)); do
+        PIPELINE_GPU_LIST+=("$((i % TOTAL_GPUS))")
+    done
+    echo "NOTE: segmentation not in RUN_PHASES — running $NUM_WORKERS workers sharing GPUs [${PIPELINE_GPU_LIST[*]}]."
 fi
 
 mkdir -p \
@@ -300,10 +326,11 @@ if [[ -n "$USE_QWEN" ]]; then
             echo "ERROR: vLLM start script not found or not executable: $VLLM_START_SCRIPT"
             exit 1
         fi
-        echo "Starting Qwen vLLM server via $VLLM_START_SCRIPT ..."
+        echo "Starting Qwen vLLM server via $VLLM_START_SCRIPT (env: $QWEN_ENV_NAME) ..."
         MODELS_DIR="$MODELS_DIR" \
         HF_CACHE_DIR="$HF_CACHE_DIR" \
         LOG_DIR="$LOG_DIR" \
+        ENV_NAME="$QWEN_ENV_NAME" \
         VLLM_MODEL="$TRTLLM_MODEL" \
         VLLM_PORT="$TRTLLM_PORT" \
         VLLM_TP="$TRTLLM_TP" \
@@ -515,22 +542,26 @@ run_worker() {
             extra_args+=" ++${prefix}.vllm_port=${port}"
         }
 
-        if [[ -n "$LANG_PROMPT_BACKEND" ]]; then
+        # Only emit overrides for phases actually in RUN_PHASES — otherwise
+        # we'd be reconfiguring components the worker won't run.
+        if [[ -n "$LANG_PROMPT_BACKEND" ]] && phase_enabled segmentation; then
             emit_vllm_overrides "dataset_generator.instanceSegmenter.object_discoverer" "$LANG_PROMPT_BACKEND"
         fi
-        if [[ -n "$SCENE_CAPTION_BACKEND" ]]; then
+        if [[ -n "$SCENE_CAPTION_BACKEND" ]] && phase_enabled scene_caption; then
             emit_vllm_overrides "dataset_generator.sceneCaptioner" "$SCENE_CAPTION_BACKEND"
         fi
-        case "$OBJECT_DESC_BACKEND" in
-            dam)
-                extra_args+=" ++dataset_generator.objectDescriber.server_port=${DAM_PORT}"
-                ;;
-            qwen|gemma)
-                emit_vllm_overrides "dataset_generator.objectDescriber" "$OBJECT_DESC_BACKEND"
-                ;;
-            "") ;;
-        esac
-        if [[ -n "$PERSISTENCE_BACKEND" ]]; then
+        if phase_enabled object_descriptions; then
+            case "$OBJECT_DESC_BACKEND" in
+                dam)
+                    extra_args+=" ++dataset_generator.objectDescriber.server_port=${DAM_PORT}"
+                    ;;
+                qwen|gemma)
+                    emit_vllm_overrides "dataset_generator.objectDescriber" "$OBJECT_DESC_BACKEND"
+                    ;;
+                "") ;;
+            esac
+        fi
+        if [[ -n "$PERSISTENCE_BACKEND" ]] && phase_enabled persistence; then
             emit_vllm_overrides "dataset_generator.llmPersistenceQuerier.llmQuerier" "$PERSISTENCE_BACKEND"
         fi
 

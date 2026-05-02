@@ -116,7 +116,7 @@ def run_dam_on_image(
         model_cfg=sam_model_cfg,
         device=device,
     )
-    seg: SegmentationResults = segmenter.segmentInstances(img_tensor)
+    seg, _seg_debug = segmenter.segmentInstances(img_tensor, image_id="single_img")
 
     # optional score thresholding
     if getattr(seg, "scores", None) is not None and score_thresh > 0:
@@ -147,7 +147,7 @@ def run_dam_on_image(
     )
 
     # ---- run DAM and save overlays ----
-    descriptions: Dict[int, str] = describer.describeObjects(img_tensor, seg)
+    descriptions, _debug = describer.describeObjects(img_tensor, seg, image_id="single_img")
 
     for i, mask_t in enumerate(seg.masks):
         obj_id = int(seg.ids[i].item()) if getattr(seg, "ids", None) is not None else i

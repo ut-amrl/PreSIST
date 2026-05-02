@@ -1,6 +1,6 @@
 import torch
 
-from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayloadFactory
 from dataset_generation.llm_persistence_querying.abs_llm_persistence_querier import AbsLLMPersistenceQuerier
 from dataset_generation.llm_persistence_querying.llm_querying.abs_llm_querier import AbsLLMQuerier
 from dataset_generation.llm_persistence_querying.prompt_handler.abs_prompt_handler import AbsPromptHandler
@@ -73,12 +73,13 @@ class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
         time_and_date,
         image: torch.Tensor,
         instances: SegmentationResults,
+        image_id: str,
     ):
 
         prompts = []
         responses = []
         persistence_parameter_estimates = []
-        debug_payload = DebugPayload()
+        debug_payload = DebugPayloadFactory.instance().create("persistence", image_id)
         for obj_desc_group, _ in self.divideIntoObjectGroups(object_descriptions, instances):
 
             prompt = self.prompt_handler.generatePrompt(

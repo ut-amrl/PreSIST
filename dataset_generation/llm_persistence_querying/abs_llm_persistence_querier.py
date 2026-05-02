@@ -24,13 +24,19 @@ class AbsLLMPersistenceQuerier(ABC):
         relationshipDescriptions: dict,
         timeAndDate: Optional[str],
         image: torch.Tensor,
-        instances: SegmentationResults
+        instances: SegmentationResults,
+        image_id: str,
     ) -> Tuple[Any, Any, Any, DebugPayload]:
         """
         Estimate persistence parameters for each object.
 
         Returns (prompts, rawResponse, persistenceParameters, DebugPayload).
-        Subclasses with no debug data may return DebugPayload.empty() in the last slot.
+
+        Subclasses obtain a DebugPayload via
+        ``DebugPayloadFactory.instance().create("persistence", image_id)``,
+        add entries to it, and return it alongside the other outputs. The
+        caller (the logger) is responsible for calling ``flush()`` on the
+        payload once it has been written.
 
         image: (C, H, W) tensor for the scene.
         instances: SegmentationResults (masks, ids, etc.) for the scene.

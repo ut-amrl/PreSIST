@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 from PIL import Image
 
-from dataset_generation.intermediate_results_logger.debug_data import DebugPayload
+from dataset_generation.intermediate_results_logger.debug_data import DebugPayload, DebugPayloadFactory
 from dataset_generation.llm_persistence_querying.gemma.gemma_chat_engine import (
     GemmaChatEngine,
 )
@@ -111,7 +111,7 @@ class GemmaVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
                 top_p=self.top_p,
             )
 
-    def generateCaption(self, image: torch.Tensor) -> Tuple[str, DebugPayload]:
+    def generateCaption(self, image: torch.Tensor, image_id: str) -> Tuple[str, DebugPayload]:
         if image.ndim == 3:
             pil = _chw_uint8_to_pil(image)
         elif image.ndim == 4:
@@ -132,7 +132,7 @@ class GemmaVLSceneLevelCaptioner(AbstractSceneLevelCaptioner):
                 )
 
         print(f"GemmaVLSceneLevelCaptioner caption: {result.text[:200]}")
-        debug = DebugPayload()
+        debug = DebugPayloadFactory.instance().create("scene_caption", image_id)
         if result.reasoning:
             debug.add("reasoning_trace", result.reasoning, kind="text")
         return result.text, debug

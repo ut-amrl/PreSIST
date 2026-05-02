@@ -48,5 +48,5 @@ class DummySceneLevelCaptioner(AbstractSceneLevelCaptioner):
         super().__init__("DummySceneLevelCaptioner")
 
     @torch.no_grad()
-    def generateCaption(self, image: torch.Tensor) -> Tuple[str, DebugPayload]:
+    def generateCaption(self, image: torch.Tensor, image_id: str) -> Tuple[str, DebugPayload]:
         return "", DebugPayload.empty()
