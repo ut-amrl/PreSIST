@@ -101,13 +101,10 @@ class GemmaLLMQuerier(AbsLLMQuerier):
         query_time = time() - start_time
         self.totalQueryTime += query_time
         self.numQueries += 1
-        print(
-            f"Query time: {query_time:.2f}s "
-            f"(average over {self.numQueries} queries: "
-            f"{self.totalQueryTime / self.numQueries:.2f}s)"
-        )
 
         debug = DebugPayload()
+        debug.add("prompt", prompt, kind="text")
+        debug.add("raw_response", result.text, kind="text")
         if result.reasoning:
             debug.add("reasoning_trace", result.reasoning, kind="text")
         return result.text, debug

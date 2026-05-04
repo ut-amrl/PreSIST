@@ -268,7 +268,7 @@ RUN_PHASE_DEPENDENCIES_REVERSE = {
     "scene_caption": ["scene_caption"],
     "object_descriptions": ["segmentation", "object_descriptions"],
     "relationships": ["segmentation", "object_descriptions", "relationships"],
-    "persistence": ["segmentation", "scene_caption", "object_descriptions", "relationships", "  persistence"],
+    "persistence": ["segmentation", "scene_caption", "object_descriptions", "relationships", "persistence"],
 }
 
 class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGeneratorFromDataloader):

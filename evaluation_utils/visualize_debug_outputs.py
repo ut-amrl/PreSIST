@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import textwrap
 from dataclasses import dataclass, field
@@ -77,6 +78,20 @@ class _ImageData:
     persistence_by_id: Dict[str, dict] = field(default_factory=dict)
     persistence_reasoning_by_id: Dict[str, str] = field(default_factory=dict)
     persistence_group_reasoning: Optional[str] = None  # shared across objects.
+
+    # Per-batch persistence debug data (LLM/group format only). One entry per
+    # batch the chained querier sent. Empty when the persistence stage didn't
+    # emit batched debug entries (e.g. legacy runs or the per-object VLM path).
+    persistence_batches: List["_PersistenceBatch"] = field(default_factory=list)
+
+
+@dataclass
+class _PersistenceBatch:
+    idx: int
+    obj_ids: List[str]
+    prompt: Optional[str] = None
+    raw_response: Optional[str] = None
+    reasoning: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -200,10 +215,73 @@ def _load_persistence(read_root: str, config_file_name: str, image_id: str):
     debug_dir = os.path.join(base, "debug")
     per_obj_reasoning = _read_json_dict_entries(debug_dir, prefix="reasoning_traces")
     group_reasoning = None
+    batches: List[_PersistenceBatch] = []
     if not per_obj_reasoning:
-        group_reasoning = _read_text_debug_entry(debug_dir, prefix="reasoning_trace")
+        batches = _load_persistence_batches(debug_dir)
+        if not batches:
+            group_reasoning = _read_text_debug_entry(debug_dir, prefix="reasoning_trace")
 
-    return by_id, per_obj_reasoning, group_reasoning
+    return by_id, per_obj_reasoning, group_reasoning, batches
+
+
+_BATCH_TAG_RE = re.compile(r"^(?P<key>.+)_batch_(?P<idx>\d+)$")
+
+
+def _load_persistence_batches(debug_dir: str) -> List[_PersistenceBatch]:
+    """Group manifest entries with names ``<key>_batch_NNN`` into per-batch
+    records. ``key`` is one of ``prompt``, ``raw_response``, ``reasoning_trace``,
+    or ``batch_obj_ids``. Returns batches sorted by index; empty if the
+    persistence debug dir doesn't carry per-batch entries."""
+    if not os.path.isdir(debug_dir):
+        return []
+    by_idx: Dict[int, Dict[str, Tuple[str, str]]] = {}  # idx -> key -> (kind, path)
+    for name, kind, path in _read_manifest_entries(debug_dir):
+        m = _BATCH_TAG_RE.match(name)
+        if not m:
+            continue
+        key = m.group("key")
+        idx = int(m.group("idx"))
+        by_idx.setdefault(idx, {})[key] = (kind, path)
+    if not by_idx:
+        return []
+
+    batches: List[_PersistenceBatch] = []
+    for idx in sorted(by_idx):
+        entries = by_idx[idx]
+        obj_ids: List[str] = []
+        if "batch_obj_ids" in entries:
+            kind, path = entries["batch_obj_ids"]
+            if kind == "json":
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                    if isinstance(loaded, list):
+                        obj_ids = [str(x) for x in loaded]
+                except Exception as e:
+                    log.warning("failed to read batch_obj_ids for batch %d: %s", idx, e)
+        batches.append(
+            _PersistenceBatch(
+                idx=idx,
+                obj_ids=obj_ids,
+                prompt=_read_text_entry(entries.get("prompt")),
+                raw_response=_read_text_entry(entries.get("raw_response")),
+                reasoning=_read_text_entry(entries.get("reasoning_trace")),
+            )
+        )
+    return batches
+
+
+def _read_text_entry(entry: Optional[Tuple[str, str]]) -> Optional[str]:
+    if entry is None:
+        return None
+    kind, path = entry
+    if kind != "text":
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +624,136 @@ def _render_composite(
         log.debug("truncated composite text for %s", out_path)
 
 
+_BATCH_FIG_MAX_H_IN = 80.0  # safety cap on figure height before we truncate.
+
+
+def _size_text_column(lines: List[str], target_h_in: float) -> Tuple[float, float]:
+    """Pick (width_in, height_in) for a text column so it accommodates ``lines``,
+    aiming for roughly ``target_h_in`` tall. Width grows in _MIN_TEXT_W_IN
+    increments up to _MAX_TEXT_W_IN; if even at max width the lines don't fit
+    in target_h_in, the returned height grows to fit them."""
+    n = max(1, len(lines))
+    target_lines_per_col = max(1, int(target_h_in / _LINE_HEIGHT_IN))
+    n_cols = max(1, int(np.ceil(n / target_lines_per_col)))
+    n_cols = min(n_cols, 4)
+    width_in = min(_MAX_TEXT_W_IN, max(_MIN_TEXT_W_IN, n_cols * _MIN_TEXT_W_IN))
+    cols_at_width = max(1, int(width_in / _MIN_TEXT_W_IN))
+    needed_lines_per_col = int(np.ceil(n / cols_at_width))
+    height_in = max(target_h_in, needed_lines_per_col * _LINE_HEIGHT_IN + 0.5)
+    return width_in, height_in
+
+
+def _truncate_to_height(lines: List[str], cap_h_in: float, cols: int) -> List[str]:
+    max_lines = int((cap_h_in - 0.5) * cols / _LINE_HEIGHT_IN)
+    if len(lines) <= max_lines:
+        return lines
+    keep = max(1, max_lines - 2)
+    return lines[:keep] + ["", "(truncated; see split-files for full text)"]
+
+
+def _render_batch_composite(
+    image_rgb: np.ndarray,
+    overlay_rgb: np.ndarray,
+    descriptions_lines: List[str],
+    persistence_lines: List[str],
+    reasoning_lines: List[str],
+    out_path: str,
+) -> None:
+    """Persistence-batch layout: 3 columns. Left column has the mask overlay
+    (top) and parsed persistence parameters (bottom). Middle column has the
+    object descriptions / context. Right column has the LLM reasoning trace.
+    Figure grows tall to fit all content; truncation only kicks in as a
+    last-resort safety against absurd figure heights."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    H, W = overlay_rgb.shape[:2]
+    image_panel_h_in = _IMAGE_PANEL_W_IN * (H / W)
+
+    pers_h_in = max(1.5, len(persistence_lines) * _LINE_HEIGHT_IN + 0.5)
+    left_h_in = image_panel_h_in + pers_h_in
+
+    has_reasoning = bool(reasoning_lines)
+    desc_w_in, desc_h_in = _size_text_column(descriptions_lines, left_h_in)
+    if has_reasoning:
+        reason_w_in, reason_h_in = _size_text_column(reasoning_lines, left_h_in)
+    else:
+        reason_w_in, reason_h_in = 0.0, 0.0
+
+    fig_h = max(left_h_in, desc_h_in, reason_h_in)
+
+    # Safety cap: truncate the worst offender to keep the figure manageable.
+    if fig_h > _BATCH_FIG_MAX_H_IN:
+        desc_cols = max(1, int(desc_w_in / _MIN_TEXT_W_IN))
+        reason_cols = max(1, int(reason_w_in / _MIN_TEXT_W_IN)) if has_reasoning else 0
+        if desc_h_in >= reason_h_in and desc_h_in >= left_h_in:
+            descriptions_lines = _truncate_to_height(
+                descriptions_lines, _BATCH_FIG_MAX_H_IN, desc_cols
+            )
+            log.debug("truncated batch descriptions text for %s", out_path)
+        elif has_reasoning and reason_h_in >= left_h_in:
+            reasoning_lines = _truncate_to_height(
+                reasoning_lines, _BATCH_FIG_MAX_H_IN, reason_cols
+            )
+            log.debug("truncated batch reasoning text for %s", out_path)
+        else:
+            cap = _BATCH_FIG_MAX_H_IN - image_panel_h_in
+            persistence_lines = _truncate_to_height(persistence_lines, cap, 1)
+            pers_h_in = max(1.5, len(persistence_lines) * _LINE_HEIGHT_IN + 0.5)
+            left_h_in = image_panel_h_in + pers_h_in
+            log.debug("truncated batch persistence text for %s", out_path)
+        desc_w_in, desc_h_in = _size_text_column(descriptions_lines, left_h_in)
+        if has_reasoning:
+            reason_w_in, reason_h_in = _size_text_column(reasoning_lines, left_h_in)
+        fig_h = max(left_h_in, desc_h_in, reason_h_in)
+
+    n_cols = 3 if has_reasoning else 2
+    width_ratios = [_IMAGE_PANEL_W_IN, desc_w_in] + ([reason_w_in] if has_reasoning else [])
+    fig_w = sum(width_ratios)
+
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    outer = fig.add_gridspec(1, n_cols, width_ratios=width_ratios)
+    left_gs = outer[0, 0].subgridspec(2, 1, height_ratios=[image_panel_h_in, pers_h_in])
+
+    ax_img = fig.add_subplot(left_gs[0, 0])
+    ax_img.imshow(overlay_rgb)
+    ax_img.axis("off")
+
+    ax_pers = fig.add_subplot(left_gs[1, 0])
+    ax_pers.axis("off")
+    ax_pers.set_xlim(0, 1)
+    ax_pers.set_ylim(0, 1)
+    ax_pers.text(
+        0.0, 1.0, "\n".join(persistence_lines),
+        va="top", ha="left", family="monospace", fontsize=_TEXT_FONT_SIZE,
+    )
+
+    ax_desc = fig.add_subplot(outer[0, 1])
+    ax_desc.axis("off")
+    ax_desc.set_xlim(0, 1)
+    ax_desc.set_ylim(0, 1)
+    ax_desc.text(
+        0.0, 1.0, "\n".join(descriptions_lines),
+        va="top", ha="left", family="monospace", fontsize=_TEXT_FONT_SIZE,
+    )
+
+    if has_reasoning:
+        ax_reason = fig.add_subplot(outer[0, 2])
+        ax_reason.axis("off")
+        ax_reason.set_xlim(0, 1)
+        ax_reason.set_ylim(0, 1)
+        ax_reason.text(
+            0.0, 1.0, "\n".join(reasoning_lines),
+            va="top", ha="left", family="monospace", fontsize=_TEXT_FONT_SIZE,
+        )
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # Split-files writer
 # ---------------------------------------------------------------------------
@@ -667,6 +875,209 @@ def _write_split_image_scene(image_dir: str, img_data: _ImageData, *, scene_only
         _write_text(os.path.join(image_dir, "info.txt"), blob)
     if img_data.image_rgb is not None:
         _write_image(os.path.join(image_dir, "scene_image.png"), img_data.image_rgb)
+
+
+# ---------------------------------------------------------------------------
+# Per-batch persistence rendering
+# ---------------------------------------------------------------------------
+
+
+_BATCH_PALETTE = [
+    (0, 255, 255), (255, 165, 0), (0, 255, 0), (255, 0, 255),
+    (255, 255, 0), (0, 128, 255), (255, 0, 128), (128, 255, 128),
+    (255, 128, 128), (128, 128, 255),
+]
+
+
+def _color_for_index(i: int) -> Tuple[int, int, int]:
+    return _BATCH_PALETTE[i % len(_BATCH_PALETTE)]
+
+
+def _render_batch_overlay(
+    image_rgb: np.ndarray,
+    seg: SegmentationResults,
+    obj_ids: List[str],
+) -> np.ndarray:
+    """Overlay all batch object masks on ``image_rgb`` with per-object distinct
+    contour colors and a centroid id label."""
+    import cv2
+
+    id_to_idx: Dict[str, int] = {
+        str(int(seg.ids[k].item())): k for k in range(len(seg.ids))
+    }
+    overlay = image_rgb.copy()
+    for slot, obj_id in enumerate(obj_ids):
+        idx = id_to_idx.get(str(obj_id))
+        if idx is None:
+            log.warning("batch obj_id %s not found in segmentation", obj_id)
+            continue
+        color = _color_for_index(slot)
+        m = seg.masks[idx].detach().cpu().numpy()
+        if m.ndim == 3 and m.shape[0] == 1:
+            m = m[0]
+        if m.dtype != bool:
+            m = m > 0.5
+        if not m.any():
+            continue
+        tint = np.zeros_like(overlay)
+        tint[m] = color
+        overlay = cv2.addWeighted(overlay, 1.0, tint, 0.35, 0)
+        contours, _ = cv2.findContours(
+            m.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+        )
+        cv2.drawContours(overlay, contours, -1, color, thickness=2)
+        ys, xs = np.where(m)
+        cy, cx = int(ys.mean()), int(xs.mean())
+        cv2.putText(overlay, str(obj_id), (cx, cy), cv2.FONT_HERSHEY_SIMPLEX,
+                    1.8, (0, 0, 0), thickness=9, lineType=cv2.LINE_AA)
+        cv2.putText(overlay, str(obj_id), (cx, cy), cv2.FONT_HERSHEY_SIMPLEX,
+                    1.8, color, thickness=3, lineType=cv2.LINE_AA)
+    return overlay
+
+
+def _build_batch_descriptions_lines(
+    *,
+    batch: _PersistenceBatch,
+    img_data: _ImageData,
+    include_caption: bool,
+) -> List[str]:
+    """Middle-column content: context + per-object descriptions for the batch."""
+    lines: List[str] = []
+    if img_data.image_path:
+        lines += _wrap_block("Source Image", img_data.image_path)
+    lines += _wrap_block(
+        f"Persistence Batch {batch.idx:03d}",
+        f"{len(batch.obj_ids)} object(s): {', '.join(batch.obj_ids) or '(none)'}",
+    )
+    if include_caption and img_data.scene_caption:
+        lines += _wrap_block("Scene Caption", img_data.scene_caption)
+    for obj_id in batch.obj_ids:
+        desc = img_data.descriptions.get(obj_id) or "(no description)"
+        lines += _wrap_block(f"Object {obj_id}", desc)
+    return lines
+
+
+def _build_batch_reasoning_lines(batch: _PersistenceBatch) -> List[str]:
+    """Right-column content: the LLM's reasoning trace for this batch. Returns
+    an empty list when there is no reasoning, signalling the renderer to drop
+    the column entirely."""
+    if not batch.reasoning:
+        return []
+    return _wrap_block("Reasoning Trace", batch.reasoning)
+
+
+def _build_batch_persistence_lines(
+    *,
+    batch: _PersistenceBatch,
+    img_data: _ImageData,
+) -> List[str]:
+    """Below-image content: per-object parsed persistence parameters."""
+    lines: List[str] = ["Persistence Parameters", "-" * len("Persistence Parameters"), ""]
+    if not batch.obj_ids:
+        lines.append("(no objects in batch)")
+        return lines
+    for obj_id in batch.obj_ids:
+        pers = img_data.persistence_by_id.get(obj_id)
+        if pers is None:
+            body = "(no parsed persistence)"
+        else:
+            body = json.dumps(pers, ensure_ascii=False)
+        lines += _wrap_block(f"Object {obj_id}", body)
+    return lines
+
+
+def _build_batch_combined_text(
+    *,
+    batch: _PersistenceBatch,
+    img_data: _ImageData,
+    include_caption: bool,
+) -> str:
+    sections: List[str] = []
+    if img_data.image_path:
+        sections.append(_format_section("Source Image", img_data.image_path))
+    sections.append(_format_section(
+        f"Persistence Batch {batch.idx:03d}",
+        f"{len(batch.obj_ids)} object(s): {', '.join(batch.obj_ids) or '(none)'}",
+    ))
+    if include_caption and img_data.scene_caption:
+        sections.append(_format_section("Scene Caption", img_data.scene_caption))
+    for obj_id in batch.obj_ids:
+        sub: List[str] = []
+        desc = img_data.descriptions.get(obj_id)
+        if desc:
+            sub.append(f"description: {desc}")
+        desc_reason = img_data.description_reasoning.get(obj_id)
+        if desc_reason:
+            sub.append(f"description_reasoning: {desc_reason}")
+        pers = img_data.persistence_by_id.get(obj_id)
+        if pers is not None:
+            sub.append("persistence: " + json.dumps(pers, indent=2, ensure_ascii=False))
+        body = "\n\n".join(sub) if sub else "(no description / no parsed persistence)"
+        sections.append(_format_section(f"Object {obj_id}", body))
+    if batch.prompt:
+        sections.append(_format_section("Prompt", batch.prompt))
+    if batch.reasoning:
+        sections.append(_format_section("Reasoning Trace", batch.reasoning))
+    if batch.raw_response:
+        sections.append(_format_section("Raw Response", batch.raw_response))
+    return _SECTION_SEP.join(sections)
+
+
+def _write_split_persistence_batch(
+    out_dir: str,
+    overlay_rgb: np.ndarray,
+    batch: _PersistenceBatch,
+    img_data: _ImageData,
+    *,
+    include_caption: bool,
+) -> None:
+    _write_image(os.path.join(out_dir, "mask_overlay.png"), overlay_rgb)
+    blob = _build_batch_combined_text(
+        batch=batch, img_data=img_data, include_caption=include_caption
+    )
+    if blob:
+        _write_text(os.path.join(out_dir, "info.txt"), blob)
+    # The full prompt and raw response can be very large; keep them as their
+    # own files so they're easy to diff/grep without scrolling info.txt.
+    if batch.prompt:
+        _write_text(os.path.join(out_dir, "prompt.txt"), batch.prompt)
+    if batch.raw_response:
+        _write_text(os.path.join(out_dir, "raw_response.txt"), batch.raw_response)
+    if batch.reasoning:
+        _write_text(os.path.join(out_dir, "reasoning_trace.txt"), batch.reasoning)
+
+
+def _persistence_batch_paths_exist(
+    base: str,
+    image_id: str,
+    stem: str,
+    *,
+    write_composite: bool,
+    write_split_files: bool,
+) -> bool:
+    needed: List[str] = []
+    if write_composite:
+        needed.append(
+            os.path.join(base, "batches", "composite", image_id, f"{stem}.png")
+        )
+    if write_split_files:
+        needed.append(
+            os.path.join(base, "batches", "split", image_id, stem, "info.txt")
+        )
+    return bool(needed) and all(os.path.exists(p) for p in needed)
+
+
+def _chunk_batch_for_viz(obj_ids: List[str], cap) -> List[List[str]]:
+    """Split a persistence batch's obj_ids into viz-sized chunks. ``cap`` may
+    be ``float('inf')`` to disable splitting. Always returns at least one chunk
+    (possibly empty, for a batch with no recorded ids — still useful so the
+    prompt/response/reasoning get a composite)."""
+    if not obj_ids:
+        return [[]]
+    if cap == float("inf") or len(obj_ids) <= cap:
+        return [list(obj_ids)]
+    cap = int(cap)
+    return [obj_ids[i:i + cap] for i in range(0, len(obj_ids), cap)]
 
 
 # ---------------------------------------------------------------------------
@@ -843,6 +1254,9 @@ def main(cfg: DictConfig) -> None:
     max_objects_per_image = viz.get("max_objects_per_image")
     if max_objects_per_image is None:
         max_objects_per_image = float("inf")
+    max_objects_per_batch_image = viz.get("max_objects_per_batch_image", 10)
+    if max_objects_per_batch_image is None:
+        max_objects_per_batch_image = float("inf")
     max_images = viz.get("max_images", 40)
     if max_images is None:
         max_images = float("inf")
@@ -889,6 +1303,12 @@ def main(cfg: DictConfig) -> None:
     # the caption name is unknown but only persistence asked for it, just skip
     # the caption section silently.
     load_caption = (PHASE_SCENE in phases) or (PHASE_PERS in phases and bool(scene_captioner_name))
+    # Same opportunistic-load pattern for descriptions: persistence batches show
+    # per-object descriptions, so load them when persistence is requested and a
+    # describer is resolvable. Stays silent when describer_name is missing.
+    load_descriptions = (PHASE_DESC in phases) or (
+        PHASE_PERS in phases and bool(describer_name)
+    )
 
     object_subpath = _object_pathway_subpath(phases, segmenter_name or "", describer_name or "", config_file_name or "")
     scene_only_subpath = _scene_only_subpath(phases, scene_captioner_name or "")
@@ -947,7 +1367,7 @@ def main(cfg: DictConfig) -> None:
                     img_data.image_path = _resolve_image_path(image_path, read_root)
                     img_data.image_rgb = _load_image_rgb(img_data.image_path)
 
-        if PHASE_DESC in phases:
+        if load_descriptions:
             descs, desc_reasoning, desc_query_images = _load_object_descriptions(
                 read_root, segmenter_name, describer_name, image_id
             )
@@ -956,10 +1376,13 @@ def main(cfg: DictConfig) -> None:
             img_data.description_query_images_by_id = desc_query_images
 
         if PHASE_PERS in phases:
-            by_id, per_obj_reason, group_reason = _load_persistence(read_root, config_file_name, image_id)
+            by_id, per_obj_reason, group_reason, batches = _load_persistence(
+                read_root, config_file_name, image_id
+            )
             img_data.persistence_by_id = by_id
             img_data.persistence_reasoning_by_id = per_obj_reason
             img_data.persistence_group_reasoning = group_reason
+            img_data.persistence_batches = batches
 
         emitted_for_this_image = 0
 
@@ -996,6 +1419,17 @@ def main(cfg: DictConfig) -> None:
 
             # Scene caption is folded into each per-object info.txt now —
             # no separate per-image scene file in object-pathway split mode.
+
+            # In persistence mode we render per-object outputs in the same style
+            # as the per-batch view (single-object overlay + descriptions +
+            # persistence + reasoning), pulling prompt/reasoning/raw_response
+            # from whichever batch contains the object.
+            persistence_mode = PHASE_PERS in phases
+            batch_by_obj_id: Dict[str, _PersistenceBatch] = {}
+            if persistence_mode:
+                for b in img_data.persistence_batches:
+                    for oid in b.obj_ids:
+                        batch_by_obj_id[oid] = b
 
             ids = img_data.seg.ids
             masks = img_data.seg.masks
@@ -1039,45 +1473,151 @@ def main(cfg: DictConfig) -> None:
                 if PHASE_PERS in phases and img_data.persistence_by_id and obj_id not in img_data.persistence_by_id:
                     log.warning("persistence entry missing for image_id=%s obj_id=%s", image_id, obj_id)
 
-                overlay_rgb = overlay_single_mask(
-                    torch.from_numpy(img_data.image_rgb).permute(2, 0, 1),
-                    masks[i],
-                    alpha_mask=0.55,
-                    alpha_img=0.45,
-                    color_bgr=(0, 255, 255),
-                )
-                overlay_rgb = _draw_mask_border(
-                    overlay_rgb, masks[i], color_rgb=(0, 255, 255), thickness=3
-                )
+                if persistence_mode:
+                    parent = batch_by_obj_id.get(obj_id)
+                    if parent is None:
+                        log.warning(
+                            "no persistence batch contains image_id=%s obj_id=%s; "
+                            "rendering without prompt/reasoning context",
+                            image_id, obj_id,
+                        )
+                    sub_batch = _PersistenceBatch(
+                        idx=parent.idx if parent else -1,
+                        obj_ids=[obj_id],
+                        prompt=parent.prompt if parent else None,
+                        raw_response=parent.raw_response if parent else None,
+                        reasoning=parent.reasoning if parent else None,
+                    )
+                    overlay_rgb = _render_batch_overlay(
+                        img_data.image_rgb, img_data.seg, [obj_id]
+                    )
+                    if write_composite:
+                        desc_lines = _build_batch_descriptions_lines(
+                            batch=sub_batch, img_data=img_data,
+                            include_caption=include_caption_in_panel,
+                        )
+                        pers_lines = _build_batch_persistence_lines(
+                            batch=sub_batch, img_data=img_data,
+                        )
+                        reason_lines = _build_batch_reasoning_lines(sub_batch)
+                        out_path = os.path.join(
+                            base, "composite", image_id, f"obj_{obj_id}.png"
+                        )
+                        _render_batch_composite(
+                            img_data.image_rgb, overlay_rgb,
+                            desc_lines, pers_lines, reason_lines, out_path,
+                        )
+                    if write_split_files:
+                        split_dir = os.path.join(base, "split", image_id, f"obj_{obj_id}")
+                        _write_split_persistence_batch(
+                            split_dir, overlay_rgb, sub_batch, img_data,
+                            include_caption=include_caption_in_panel,
+                        )
+                else:
+                    overlay_rgb = overlay_single_mask(
+                        torch.from_numpy(img_data.image_rgb).permute(2, 0, 1),
+                        masks[i],
+                        alpha_mask=0.55,
+                        alpha_img=0.45,
+                        color_bgr=(0, 255, 255),
+                    )
+                    overlay_rgb = _draw_mask_border(
+                        overlay_rgb, masks[i], color_rgb=(0, 255, 255), thickness=3
+                    )
 
-                if write_composite:
-                    text_lines = _build_text_lines(
-                        include_caption=include_caption_in_panel,
-                        img_data=img_data,
-                        obj_id=obj_id,
-                    )
-                    out_path = os.path.join(base, "composite", image_id, f"obj_{obj_id}.png")
-                    query_imgs = _load_query_image_arrays(img_data, obj_id)
-                    _render_composite(
-                        img_data.image_rgb,
-                        overlay_rgb,
-                        text_lines,
-                        out_path,
-                        query_images=query_imgs or None,
-                    )
+                    if write_composite:
+                        text_lines = _build_text_lines(
+                            include_caption=include_caption_in_panel,
+                            img_data=img_data,
+                            obj_id=obj_id,
+                        )
+                        out_path = os.path.join(base, "composite", image_id, f"obj_{obj_id}.png")
+                        query_imgs = _load_query_image_arrays(img_data, obj_id)
+                        _render_composite(
+                            img_data.image_rgb,
+                            overlay_rgb,
+                            text_lines,
+                            out_path,
+                            query_images=query_imgs or None,
+                        )
 
-                if write_split_files:
-                    split_dir = os.path.join(base, "split", image_id, f"obj_{obj_id}")
-                    _write_split_object(
-                        split_dir,
-                        overlay_rgb,
-                        img_data,
-                        obj_id,
-                        include_caption=include_caption_in_panel,
-                    )
+                    if write_split_files:
+                        split_dir = os.path.join(base, "split", image_id, f"obj_{obj_id}")
+                        _write_split_object(
+                            split_dir,
+                            overlay_rgb,
+                            img_data,
+                            obj_id,
+                            include_caption=include_caption_in_panel,
+                        )
 
                 emitted_for_this_image += 1
                 objects_emitted += 1
+
+        # ----- per-batch persistence outputs -----
+        if (
+            PHASE_PERS in phases
+            and img_data.persistence_batches
+            and img_data.seg is not None
+            and img_data.image_rgb is not None
+        ):
+            pers_base = os.path.join(
+                write_root, _Logger.FULL_RESULTS_DIR, config_file_name
+            )
+            for batch in img_data.persistence_batches:
+                chunks = _chunk_batch_for_viz(batch.obj_ids, max_objects_per_batch_image)
+                for sub_idx, sub_obj_ids in enumerate(chunks):
+                    suffix = "" if len(chunks) == 1 else f"_v{sub_idx:02d}"
+                    stem = f"batch_{batch.idx:03d}{suffix}"
+
+                    if existing_mode != EXISTING_FORCE and _persistence_batch_paths_exist(
+                        pers_base, image_id, stem,
+                        write_composite=write_composite,
+                        write_split_files=write_split_files,
+                    ):
+                        if existing_mode == EXISTING_SKIP_COUNT:
+                            emitted_for_this_image += 1
+                        continue
+
+                    sub_batch = _PersistenceBatch(
+                        idx=batch.idx,
+                        obj_ids=sub_obj_ids,
+                        prompt=batch.prompt,
+                        raw_response=batch.raw_response,
+                        reasoning=batch.reasoning,
+                    )
+
+                    overlay_rgb = _render_batch_overlay(
+                        img_data.image_rgb, img_data.seg, sub_obj_ids
+                    )
+
+                    if write_composite:
+                        desc_lines = _build_batch_descriptions_lines(
+                            batch=sub_batch,
+                            img_data=img_data,
+                            include_caption=include_caption_in_panel,
+                        )
+                        pers_lines = _build_batch_persistence_lines(
+                            batch=sub_batch, img_data=img_data,
+                        )
+                        reason_lines = _build_batch_reasoning_lines(sub_batch)
+                        out_path = os.path.join(
+                            pers_base, "batches", "composite", image_id, f"{stem}.png"
+                        )
+                        _render_batch_composite(
+                            img_data.image_rgb, overlay_rgb,
+                            desc_lines, pers_lines, reason_lines, out_path,
+                        )
+
+                    if write_split_files:
+                        split_dir = os.path.join(
+                            pers_base, "batches", "split", image_id, stem
+                        )
+                        _write_split_persistence_batch(
+                            split_dir, overlay_rgb, sub_batch, img_data,
+                            include_caption=include_caption_in_panel,
+                        )
+                    emitted_for_this_image += 1
 
         if emitted_for_this_image > 0:
             images_emitted += 1

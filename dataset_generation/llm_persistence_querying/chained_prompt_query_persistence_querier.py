@@ -16,6 +16,8 @@ class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
             promptHandler: AbsPromptHandler,
             llmQuerier: AbsLLMQuerier,
             maxObjsPerQuery: Optional[int] = 50,
+            errorOnMissingObjectIds: bool = True,
+            useSpatialGrouping: bool = False,
     ):
         """
         A persistence querier that uses a prompt handler to create prompts,
@@ -37,6 +39,8 @@ class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
         self.prompt_handler = promptHandler
         self.llm_querier = llmQuerier
         self.maxObjsPerQuery = maxObjsPerQuery
+        self.errorOnMissingObjectIds = errorOnMissingObjectIds
+        self.useSpatialGrouping = useSpatialGrouping
         self._per_query_timer_name = (
             f"Timer::{llmQuerier.__class__.__name__}_persistence_llm_query"
             + querier_timer_suffix(
@@ -54,7 +58,10 @@ class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
         if (self.maxObjsPerQuery is None) or (len(object_descriptions) <= self.maxObjsPerQuery):
             return [(object_descriptions, instances)]
 
-        instanceGroups = instances.divideIntoSubsets(self.maxObjsPerQuery)
+        if self.useSpatialGrouping:
+            instanceGroups = instances.divideIntoSpatialSubsets(self.maxObjsPerQuery)
+        else:
+            instanceGroups = instances.divideIntoSubsets(self.maxObjsPerQuery)
         objDescGroups = []
         for instanceGroup in instanceGroups:
             obj_ids = set([str(id.item()) for id in instanceGroup.ids])
@@ -80,7 +87,9 @@ class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
         responses = []
         persistence_parameter_estimates = []
         debug_payload = DebugPayloadFactory.instance().create("persistence", image_id)
-        for obj_desc_group, _ in self.divideIntoObjectGroups(object_descriptions, instances):
+        for batch_idx, (obj_desc_group, _) in enumerate(
+            self.divideIntoObjectGroups(object_descriptions, instances)
+        ):
 
             prompt = self.prompt_handler.generatePrompt(
                 scene_caption,
@@ -88,15 +97,44 @@ class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
                 relationship_descriptions,
                 time_and_date
             )
-            print("Sending prompt to LLM...")
-            print(prompt)
+            # print("Sending prompt to LLM...")
+            # print(prompt)
             with timer.time_block(self._per_query_timer_name):
                 response, sub_debug = self.llm_querier.queryLLM(prompt)
-            debug_payload.merge(sub_debug)
-            print("Received response from LLM:")
-            print(response)
-            print("Parsing persistence parameters from response...")
+
+            batch_tag = f"batch_{batch_idx:03d}"
+            debug_payload.add(
+                f"batch_obj_ids_{batch_tag}",
+                sorted(str(k) for k in obj_desc_group.keys()),
+                kind="json",
+            )
+            if sub_debug is not None:
+                for rec in sub_debug:
+                    debug_payload.add(
+                        f"{rec.name}_{batch_tag}",
+                        rec.value,
+                        kind=rec.kind,
+                        defer=rec.defer,
+                    )
+            # print("Received response from LLM:")
+            # print(response)
+            # print("Parsing persistence parameters from response...")
             parsed = self.prompt_handler.parsePersistenceParamsFromLLMResponse(response)
+
+            input_ids = {str(k) for k in obj_desc_group.keys()}
+            # print(f"Input ids for persistence query {image_id}, {batch_idx}: {sorted(input_ids)}")
+            output_ids = {str(p.get("id")) for p in parsed if isinstance(p, dict) and p.get("id") is not None}
+            # print(f"Output ids for persistence query {image_id}, {batch_idx}: {sorted(output_ids)}")
+            missing_ids = input_ids - output_ids
+            # print(f"Missing ids for persistence query {image_id}, {batch_idx}: {sorted(missing_ids)}")
+            if missing_ids:
+                msg = (
+                    f"[persistence] image {image_id}: {len(missing_ids)} of {len(input_ids)} "
+                    f"input object ids missing from LLM output: {sorted(missing_ids)}"
+                )
+                if self.errorOnMissingObjectIds:
+                    raise ValueError(msg)
+                print(f"WARNING {msg}")
 
             prompts.append(prompt)
             responses.append(response)
@@ -112,5 +150,8 @@ class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
         for estimate in persistence_parameter_estimates:
             mergedPersistenceParameterEstimates.extend(estimate)
 
+        mergedPersistenceParameterEstimates.sort(
+            key=lambda d: str(d.get("id", "")) if isinstance(d, dict) else ""
+        )
 
         return [mergedPrompt], mergedResponse, mergedPersistenceParameterEstimates, debug_payload
