@@ -608,6 +608,7 @@ def _render_composite(
         ha="left",
         family="monospace",
         fontsize=_TEXT_FONT_SIZE,
+        parse_math=False,
     )
 
     if bot_gs is not None:
@@ -728,6 +729,7 @@ def _render_batch_composite(
     ax_pers.text(
         0.0, 1.0, "\n".join(persistence_lines),
         va="top", ha="left", family="monospace", fontsize=_TEXT_FONT_SIZE,
+        parse_math=False,
     )
 
     ax_desc = fig.add_subplot(outer[0, 1])
@@ -737,6 +739,7 @@ def _render_batch_composite(
     ax_desc.text(
         0.0, 1.0, "\n".join(descriptions_lines),
         va="top", ha="left", family="monospace", fontsize=_TEXT_FONT_SIZE,
+        parse_math=False,
     )
 
     if has_reasoning:
@@ -747,6 +750,7 @@ def _render_batch_composite(
         ax_reason.text(
             0.0, 1.0, "\n".join(reasoning_lines),
             va="top", ha="left", family="monospace", fontsize=_TEXT_FONT_SIZE,
+            parse_math=False,
         )
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

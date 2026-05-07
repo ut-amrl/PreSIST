@@ -1,0 +1,62 @@
+defaults:
+  - dataset_generator: caching_dataset_generation_process
+  - registry_info: registry_default
+  - dataloader: dataloader_default
+  # - override dataset_generator/instanceSegmenter: semanticsamautosegmenter_cache
+  - override dataset_generator/instanceSegmenter: languagegroundedsegmenter
+  - override dataset_generator/sceneCaptioner: gemma_vl_vllm
+  - override dataset_generator/objectDescriber: gemma_vlm_object_describer_blur_bg_context_crop_mask
+  - override dataset_generator/llmPersistenceQuerier/llmQuerier: gemma4_llm_querier
+  - _self_
+
+# output_root_dir: "./debug_outputs_single_imgs/"
+
+# Same as seg_langSam3Q8T_capG31bp7_idG31b3imgL_pG31bv3iqr_only_behav3 but with
+# maxObjsPerQuery=20 so scenes fan out into multiple parallel persistence calls.
+
+dataset_generator:
+  llmPersistenceQuerier:
+    useSpatialGrouping: true
+    maxObjsPerQuery: 20
+    llmQuerier:
+      max_new_tokens: 16384
+      enable_thinking: false
+      name: gemma4_31b
+    promptHandler:
+      prompt_template_file: "prompt_files/llm_querier/v3_iqr_behav4.txt"
+      name: v3_iqr_behav4
+  # Update the captioner prompt and name
+  sceneCaptioner:
+    enable_thinking: false
+    prompt_file: prompt_files/scene_level_captioner/process_long7.txt
+    max_new_tokens: 16384
+    name: gemma_cap_proc_long7
+  instanceSegmenter:
+    object_discoverer:
+      _target_: instance_segmentation.object_discovery.qwen_object_discoverer.QwenVLObjectDiscoverer
+      name: "qwenvl37bT_disc_maxObj30_u3"
+      model_name: "Qwen/Qwen3-VL-8B-Thinking"
+      max_objects: 30
+      prompt_file: "prompt_files/object_discoverer/u3.txt"
+      max_new_tokens: 30000
+    language_segmenter:
+      _target_: instance_segmentation.language_prompted_segmentation.sam3_batch_language_prompted_segmenter.SAM3BatchedLanguagePromptedSegmenter
+      name: sam3b32
+      score_thresh: 0.35
+    min_area_perc: 0.001
+    confidence_threshold: 0.35
+    dedupe_iou_threshold: 0.9
+    name_suffix: "_s0p35_mA0p001_dedupe0p9"
+  objectDescriber:
+    name: gemmaVLMDesc_blur_bg_context_crop_mask_t3_cmd1_no_holes_longPrompt
+    crop_mask_outline_thickness: 3
+    crop_mask_dilation_px: 1
+    prefix_file: "prompt_files/instance_describer/format_prefix/pref_bgBlur_crop_with_mask_full_no_hole.txt"
+    prompt_file: "prompt_files/instance_describer/movement_and_relationships2.txt"
+
+
+
+
+hydra:
+  searchpath:
+    - file:///workspace/sam2/sam2

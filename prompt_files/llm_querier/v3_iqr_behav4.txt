@@ -1,0 +1,206 @@
+You are an expert in analyzing behavior patterns and their effects on the environment. Your goal is to estimate how long each object is likely to persist in the location, pose, and articulated/configuration state described for it.
+
+You will receive:
+- A scene-level description
+- A list of objects with IDs and natural-language descriptions
+
+The scene and object descriptions were generated from an image, but you do not see the image directly. Use only the scene caption and object descriptions as evidence.
+
+For EACH object, estimate how long it is likely to remain effectively unchanged in the described location, pose, and articulated/configuration state.
+
+Persistence definition:
+Use the scene caption and object description as the reference state. An object persists only while it remains effectively unchanged in the described location, pose, and articulated/configuration state.
+
+An object stops persisting when it undergoes a nontrivial, detectable change in position, orientation, pose, or articulated/configuration state compared with the described reference state. This threshold is small: movement of a few centimeters counts if it would be detectable from the described scene state. Ignore negligible jitter, slight non-rigid deformation, leaves fluttering, grass swaying, tiny fabric wrinkles, minor lighting changes, shadow changes, texture changes, scuffs, scrapes, dirt, small debris, and other minor surface-appearance changes.
+
+For articulated or configuration-changing objects, movement of the articulated/configurable part counts as movement of the object. Examples include a door opening or closing, a drawer sliding, a lid opening or closing, a vehicle door changing angle, a hand moving, a person shifting pose, or an object folding or unfolding.
+
+For people, animals, and visible body parts, any meaningful body-part movement counts as movement of that object. A walking person, moving hand, reaching arm, or person manipulating an object should therefore have sub-second persistence.
+
+Return a JSON array where each element includes:
+- "id": the object id, integer or string
+- "p25_persistence_hours": positive float
+- "p75_persistence_hours": positive float
+- "persistence_uncertainty": one of ["low", "medium", "high"]
+- "persistence_conf": float in [0.0, 1.0] — confidence in the answer, reflecting how predictable and well-supported the estimate is. This should never be exactly 1 or 0 to avoid overconfidence.
+- "persistence_factors": object with:
+  - "base_processes": array of short phrases naming the main process or processes that could change the object and their rough timescales
+  - "shorter": array of short phrases naming factors that make those processes likely to affect this object sooner
+  - "longer": array of short phrases naming factors that make those processes less likely to affect this object soon
+  - "uncertain": array of short phrases naming uncertainties that affect the estimate
+- "notes": short sentence explaining reasoning, max 1 sentence
+
+Decision procedure:
+For each object:
+1. Identify the main process or processes that could change its described location, pose, or articulated/configuration state, along with rough timescales in short phrases.
+2. Identify factors that make those processes more likely to affect this object sooner.
+3. Identify factors that make those processes less likely to affect this object soon.
+4. Identify uncertainties that affect the estimate.
+5. Choose p25 and p75 from the relevant processes and factors, not from a fixed object category.
+
+Use this evidence priority order:
+1. Direct evidence in the object description of current motion, active manipulation, or articulated/configuration movement.
+2. Direct evidence in the object description of nearby interaction or imminent interaction.
+3. Object-specific state: parked, stored, stacked, displayed, installed, rooted, fixed, constrained, occupied, or unattended.
+4. Scene description pertaining to this object. Scene-level descriptions may pertain more generally to other similar entities in the same image, so object descriptions should take precedence.
+5. Scene-level activity and turnover.
+6. Generic object-category priors.
+
+Use the scene caption for environment-level processes and rough timescales. Use the object description for the specific object’s current state and local cues. If it is unclear whether a scene-level process or timeline applies to this specific object, preserve that uncertainty rather than assuming immediate applicability.
+
+When persistence depends on an unobserved future process, estimate both the typical timescale of that process and how likely it is to affect this specific object.
+
+If the scene caption or object description uses uncertain language about object identity, current state, interaction, fixedness, attachment, or whether a process applies, reflect that uncertainty in the interval and confidence.
+
+Distinguish the time until the first object in a region might be moved from the time until this specific object is likely to be moved. For scenes with many similar objects, estimate persistence for an average object of this type and location, then adjust based on this object’s specific cues.
+
+Weak process downweighting:
+- Generic maintenance, cleaning, restocking, price updates, store turnover, landscaping, seasonal change, promotional cycles, or nearby activity should not dominate the estimate unless that process is likely to alter this specific object’s described location, pose, physical configuration, articulated state, attachment, boundary, or gross silhouette.
+- If the process mainly affects nearby objects, information content, surface marks, leaves, tags, products, contents, or objects on top of this object, treat it as weak or uncertain rather than using it as the main base process.
+
+When considering processes and activities suggested by the context, estimate whether and when they would affect this specific object. For example:
+- Fork at an occupied table: consider how often someone would reach for the fork.
+- Used fork at an empty table at a restaurant: consider how quickly the table would be cleared.
+- Objects around a person eating at a table or working at a coffee shop: consider meal duration or time spent working.
+- Car at a stoplight: consider stoplight timing.
+- Car parked outside a grocery store: consider how long someone would spend in a grocery store.
+- Small table at a cafe: consider how often it would be rearranged or moved for cleaning, compared with a large home dining room table or conference room table.
+
+Quantile definition:
+- "p25_persistence_hours" is the time, in hours, by which there is approximately a 25% chance the object has undergone a nontrivial, detectable change in location, pose, or articulated/configuration state compared with the described reference state.
+- "p75_persistence_hours" is the time, in hours, by which there is approximately a 75% chance the object has undergone a nontrivial, detectable change in location, pose, or articulated/configuration state compared with the described reference state.
+- "p75_persistence_hours" must be greater than "p25_persistence_hours".
+- The p25 and p75 values should be meaningfully separated so they represent uncertainty about persistence rather than two nearly identical point estimates.
+- Unless the object’s persistence is extremely predictable, "p75_persistence_hours" should usually be at least 2x "p25_persistence_hours".
+- For very uncertain objects, "p75_persistence_hours" may be 5x to 100x "p25_persistence_hours" or more.
+- For very predictable actively moving objects with sub-second persistence, "p75_persistence_hours" should still usually be at least 1.5x "p25_persistence_hours".
+
+Range phrase calibration:
+- Do not automatically interpret broad duration phrases at their minimum edge.
+- "Days to weeks" can range from about 1 day to 1 week up to several days to several weeks.
+- "Weeks to months" can range from about 1 week to 1 month up to several weeks to several months, and often implies more than the shortest possible reading.
+- "Months to years" can range from about 1 month to 1 year up to several months to multiple years.
+- Choose p25 and p75 from the underlying process timescale and likelihood of affecting this specific object, not from the shortest possible reading of the phrase.
+
+Important time conversions:
+Important time conversions:
+- 0.1 seconds = 0.0000278 hours
+- 1 second = 0.000278 hours
+- 20 seconds = 0.0056 hours
+- 1 minute = 0.0167 hours
+- 10 minutes = 0.167 hours
+- 1 hour = 1 hour
+- 1 day = 24 hours
+- 1 week = 168 hours
+- 1 month ≈ 720 hours
+- 3 months ≈ 2160 hours
+- 6 months ≈ 4320 hours
+- 1 year ≈ 8760 hours
+- 5 years ≈ 43800 hours
+
+High-priority rule for active motion and people:
+If the object is a person, animal, visible body part, or object being actively handled, assign very short persistence unless the description strongly indicates unusual stillness or that the object is actually a static depiction such as a mannequin, statue, poster, or image.
+
+For walking people, actively moving animals, active hands/arms, people interacting with objects, and objects described as actively moving or that are being carried, pushed, pulled, lifted, handled, or otherwise manipulated:
+- "p25_persistence_hours" should usually be between 0.00001 and 0.00006
+- "p75_persistence_hours" should usually be between 0.00005 and 0.000278
+- "p75_persistence_hours" should usually be at least 1.5x "p25_persistence_hours"
+- "p75_persistence_hours" should usually be less than 0.000278
+
+For people and animals who are seated or standing still but awake, and no current motion is described, assume normal micro-movements and posture changes will occur soon:
+- "p25_persistence_hours" should usually be between 0.00005 and 0.000278
+- "p75_persistence_hours" should usually be between 0.000278 and 0.0056
+- "p75_persistence_hours" should usually be meaningfully greater than "p25_persistence_hours"
+- Only use longer-than-0.0056-hour p75 estimates for people or animals when the description strongly suggests unusual stillness, such as sleeping, posing for a photo, lying motionless, being physically constrained, or being a static depiction rather than a real being.
+
+General guidelines:
+- Consider the typical timescale for the object's likely persistence and then convert to hours.
+- Do not infer imminent movement merely because an object is movable.
+- Shorten estimates only when the scene caption or object description provides evidence of active motion, active use, nearby or imminent interaction, traffic flow, ongoing manipulation, or another process likely to alter this specific object’s location, pose, or articulated/configuration state soon.
+- Lengthen estimates when the object is parked, stored, stacked, displayed, installed, part of furniture, part of infrastructure, rooted, or physically constrained, but only to the degree supported by the scene and object description.
+- Objects that have some fixed components but can still move should not be treated as fully immovable. For example, the persistence estimate for a door concerns how long until it moves on its hinge.
+
+Structural and fixed objects:
+- Structural or immovable objects such as walls, countertops, floors, ceilings, buildings, roads, and fixed poles should have very large persistence values, typically 10000 to 200000 hours.
+- Distinguish truly fixed infrastructure from movable-but-stable objects such as posters, potted plants, large furniture, and display items. Movable-but-stable objects can have long persistence times, but should usually not be as high as truly fixed infrastructure.
+
+Vehicles:
+- Vehicles described as currently moving or in active traffic flow should have very short persistence, usually sub-second to a few seconds depending on whether they are actively moving or temporarily stopped.
+- Vehicles stopped at a light, in a queue, or at a crosswalk should usually have persistence of seconds to tens of seconds.
+- Parked vehicles should be estimated based on the environment, activity level, nearby people, likely trip purpose, and whether there are cues of imminent use. For example, a parked car outside a grocery store may persist for a shorter time than one in a residential or low-turnover parking area, unless nearby interaction cues suggest otherwise.
+
+Stationary but movable objects:
+- For objects that appear currently stationary but are capable of moving, estimate persistence based on typical patterns for the object in the described environment.
+- A chair at an occupied desk may move sooner than a chair at an empty office desk at night.
+- Utensils at an occupied kitchen counter may move sooner than utensils in an unoccupied kitchen.
+- A car at a grocery store may move sooner than a car at an office building.
+
+Retail, stored, stacked, and grouped objects:
+- For retail merchandise, displayed goods, stocked items, shelved objects, boxed objects, binned objects, and grouped/stored objects, estimate based on shelf/display turnover, customer interaction, employee restocking, and the object’s position in the arrangement.
+- Frontmost, exposed, topmost, or actively accessed items may move sooner.
+- Constrained, buried, rear, lower, boxed, or organized-display items may persist longer.
+- Do not assume all stacked, stored, shelved, boxed, binned, or grouped objects have the same timescale.
+- Consider the persistence duration for an average object of this type and location, rather than the first object in the area that might move.
+
+Retail signs, labels, and fixtures:
+- Estimate persistence for the physical object, not the information printed on it. A price, promotion, category name, advertisement, or text changing does not end persistence unless the physical tag, sign, poster, panel, rail, holder, bracket, or fixture is removed, replaced, repositioned, or reconfigured.
+- Product labels attached to merchandise inherit the product’s movement timescale.
+- Loose paper tags and temporary promotional signs may be days-to-weeks or weeks-to-months.
+- Shelf-edge label holders, price rails, brackets, mounted panels, case-header signs, aisle signs, department signs, overhead signs, wall signs, and store/kiosk brand signage should usually be months-to-years unless explicitly temporary, loose, seasonal, freestanding, or actively being changed.
+
+Holders, fixtures, and support objects:
+- For holders, rails, brackets, frames, trays, bins, display stands, racks, cases, shelves, and other support or fixture objects, changes to the objects or information they hold do not end persistence for the holder itself.
+- Estimate the holder or fixture based on when that physical object is moved, removed, replaced, adjusted, opened/closed, or physically reconfigured.
+
+Food, tools, personal items, and active-use loose objects:
+- For food, utensils, dishes, tools, personal items, and small loose objects in eating, cooking, cleaning, work, or other active-use contexts, estimate persistence based on whether the object is being handled, is within reach of an active person, appears recently used, is part of an ongoing task, or is unattended.
+- Actively handled objects should usually have very short persistence; nearby but unhandled objects may persist longer depending on the activity and environment.
+
+Rooted vegetation and established landscaping:
+- Estimate based on processes that would substantially change the object or region’s described location, pose, boundary, gross silhouette, or physical configuration, such as removal, major pruning, mowing for grass-like regions, major breakage, or major landscaping work.
+- Ignore ordinary wind motion, small leaf/branch motion, grass sway, seasonal leaf/color changes, watering, minor trimming, and routine maintenance that does not substantially change the described state.
+- For mature trees, large tree canopies, tree trunks, large street trees, and established background trees, downweight generic landscaping or pruning unless active work, damage, removal, construction, or deliberate shaping/topiary is described.
+- Mature trees and large established trees should usually be months-to-years scale, not days-to-weeks scale.
+
+Support surfaces:
+- For support surfaces such as ground, floors, counters, or shelves, estimate how long the surface region itself remains substantially unchanged in location and physical configuration.
+- Do not shorten estimates for minor surface appearance changes or objects moving on top of the surface; count only substantial displacement, deformation, damage, or physical alteration of the surface itself.
+- For granular, compressible, or markable support surfaces such as dirt, sand, gravel, snow, carpet, grass, turf, dusty floors, or athletic fields, do not count ordinary footprints, scuffs, track marks, compression, loose debris shifts, or surface marks as ending persistence unless the region’s gross shape, boundary, height/topography, or physical configuration is substantially changed.
+
+Attached, contained, worn, and content objects:
+- For attached objects, contained objects, worn items, and contents, consider both the parent/support object’s timescale and any independent process that could change the attached or contained object’s location, pose, or articulated/configuration state.
+- The object stops persisting when either the attached/contained object independently changes location, pose, or articulated/configuration state, or the parent/support object moves or changes enough to affect it.
+- If independent change is likely soon, use the shorter process.
+- If independent change is possible but unlikely or uncertain, p25 may reflect that possibility while p75 may remain closer to the parent/support timescale.
+
+Confidence and uncertainty:
+- "persistence_conf" must match "persistence_uncertainty":
+  - low: 0.65 to 0.90
+  - medium: 0.35 to 0.70
+  - high: 0.10 to 0.45
+- Do not output a confidence outside the range for the selected uncertainty label.
+- Use "low" uncertainty for confidence above 0.70, and "high" uncertainty for confidence below 0.45.
+- "persistence_conf" should be high when the object state and context strongly determine the estimate, even if the estimate is very short. For example, a walking person can have high confidence with very short persistence.
+- "persistence_conf" should be lower when the object identity, current state, interaction cues, scene context, process timing, or object involvement are ambiguous.
+- If uncertain, set "persistence_uncertainty" to "high" and use a wider p25–p75 interval.
+- Do not invent details not stated in the scene description or object descriptions.
+
+Before finalizing, check:
+1. The response is valid JSON only.
+2. Every object has exactly one output entry.
+3. "p75_persistence_hours" is greater than "p25_persistence_hours" and is meaningfully separated. Usually p75 should be at least 2x p25, except for very predictable sub-second active motion where p75 should still be at least 1.5x p25.
+4. The numeric estimates match the persistence factors and notes.
+5. People, animals, visible body parts, and actively handled objects usually have very short persistence. Active ones should usually have "p75_persistence_hours" less than 0.000278. Awake standing or seated people should usually have "p75_persistence_hours" less than 0.0056 unless unusual stillness is explicitly described.
+6. Fixed structural objects are not given short persistence unless there is a specific articulation or other active process, such as construction, described.
+7. The notes do not rely on facts absent from the input.
+8. "persistence_conf" is consistent with "persistence_uncertainty".
+
+Respond with ONLY valid JSON. No commentary or explanation outside the JSON.
+
+Scene description:
+$scene_caption
+
+Objects:
+$objects_block
+
+JSON answer:
