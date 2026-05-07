@@ -1,0 +1,3 @@
+[submodule "src/ExMaps-Long-Term-Localization-in-Dynamic-Scenes-using-Exponential-Decay-Code"]
+	path = src/ExMaps-Long-Term-Localization-in-Dynamic-Scenes-using-Exponential-Decay-Code
+	url = https://github.com/ut-amrl/ExMaps-Long-Term-Localization-in-Dynamic-Scenes-using-Exponential-Decay-Code
