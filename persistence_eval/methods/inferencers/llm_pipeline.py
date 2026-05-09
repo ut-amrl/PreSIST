@@ -77,11 +77,11 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
         self._save_visualization(group)
         instances = self._build_segmentation_results(group.masks, group.image.shape[-2:])
 
-
+        image_id = group.image_path or f"anchor_t{group.anchor_time}_{'_'.join(group.track_ids)}"
 
         describer_ctx = timer.time_block(f"Timer::obj_desc::{type(self._describer).__name__}") if self._describer_warmed_up else nullcontext()
         with describer_ctx:
-            object_descriptions = self._describer.describeObjects(group.image, instances)
+            object_descriptions, _ = self._describer.describeObjects(group.image, instances, image_id=image_id)
         self._describer_warmed_up = True
 
         # self._maybe_debug(group, "", object_descriptions, "", "")
@@ -89,7 +89,7 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
 
         captioner_ctx = timer.time_block(f"Timer::scene_cap::{type(self._captioner).__name__}") if self._captioner_warmed_up else nullcontext()
         with captioner_ctx:
-            scene_caption = self._captioner.generateCaption(group.image)
+            scene_caption, _ = self._captioner.generateCaption(group.image, image_id=image_id)
         self._captioner_warmed_up = True
 
         # print("Object descriptions:", object_descriptions)
@@ -101,13 +101,14 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
         for attempt in range(3):
             try:
                 with querier_ctx:
-                    _, _, raw_estimates = self._querier.estimatePersistenceParameters(
+                    _, _, raw_estimates, _ = self._querier.estimatePersistenceParameters(
                         scene_caption,
                         object_descriptions,
                         {},    # relationship descriptions — always empty at inference time
                         None,  # time_and_date
                         group.image,
                         instances,
+                        image_id,
                     )
                 break
             except ValueError as e:

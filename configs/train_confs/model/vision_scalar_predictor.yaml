@@ -1,0 +1,26 @@
+# @package model
+
+defaults:
+  - cross_attn_pooler: mask_downsample_soft
+  - _self_
+
+name: vision_scalar_predictor
+_target_: persistence_parameter_networks.models.vision_scalar_predictor.VisionScalarPredictor
+
+backbone_cfg:
+  _target_: persistence_parameter_networks.models.img_encoders.selavpr.rich_img_encoder.RichOutputSelaEncoderArgs
+
+  foundation_model_path: "pretrained_models/dinov2_vitl14_pretrain.pth"
+  registers: false
+  resume: false
+  image_size: 518
+
+  freeze_dino: true
+  use_adapter: true
+  pretrained_adapter_path: null
+  freeze_pre_sela: false
+  use_local: False
+
+attn_dim: null
+num_heads: 8
+ff_hidden: 512

@@ -49,8 +49,8 @@ class PersistenceParameterInferencer(Protocol):
 class EpisodeProvider(Protocol):
     """
     Given a (track_id, anchor_time) from an InferenceArtifact, returns one or more
-    EvaluationContexts supplying prior observations, query horizons, and ground truth.
-    Multiple contexts per artifact can represent different prediction horizon sets.
+    EvaluationContexts supplying query horizons and ground truth. Multiple contexts
+    per artifact can represent different prediction horizon sets.
     """
     def get_contexts(self, track_id: str, anchor_time: float) -> Iterable[EvaluationContext]: ...
 
@@ -72,33 +72,53 @@ class PersistenceFilter(Protocol):
     def predict(
         self,
         survival_fn: SurvivalFunction,
-        prior_observations: list[BinaryObservationEvent],
+        anchor_time: float,
         query_times: torch.Tensor,
+        observations: list[BinaryObservationEvent] | None = None,
     ) -> torch.Tensor:
         """
         Returns predicted_prob for each query_time (shape (Q,) → shape (Q,)).
-        query_times are dt in seconds from anchor_time.
+        query_times are dt in seconds from anchor_time. anchor_time pins the
+        survival function's reference point. observations is the (optional)
+        evidence list folded in for every query in this call; the caller is
+        responsible for any causal masking.
         """
         ...
+
+
+class PersistencePredictor(Protocol):
+    """
+    Top-level abstraction over (artifact -> per-query-time probabilities).
+
+    Subsumes the (SurvivalFunctionGenerator, PersistenceFilter) pair: implementations
+    receive the full InferenceArtifact, so per-instance context that doesn't fit a
+    parametric survival form (raw image refs, scene captions, cached probabilities)
+    can flow through artifact.estimate.metadata.
+    """
+    def predict(
+        self,
+        artifact: InferenceArtifact,
+        query_times: torch.Tensor,
+        observations: list[BinaryObservationEvent] | None = None,
+    ) -> torch.Tensor: ...
 
 
 class MetricAccumulator(Protocol):
     """
     Streaming metric accumulator: update() is called once per (artifact, context) pair,
     compute() returns final MetricResults after all updates. Accumulators may stratify
-    results by query horizon, prior observation count/span, or metadata keys by returning
-    multiple MetricResults with different MetricResult.group dicts.
+    results by query horizon or metadata keys by returning multiple MetricResults with
+    different MetricResult.group dicts.
     """
     def update(
         self,
         predicted_probs: torch.Tensor,             # (Q,) float64
         ground_truth: torch.Tensor,                # (Q,) float64, NaN if unknown
         query_times: torch.Tensor,                 # (Q,) float64, dt from anchor_time (s)
-        num_prior_observations: int,
-        prior_observation_timespan_s: float,       # anchor_time - first_prior_obs.timestamp
         inference_latency_ms: float,
         filter_latency_ms: float,
         metadata: dict,
+        effective_horizons: torch.Tensor | None = None,
     ) -> None: ...
 
     def compute(self) -> list[MetricResult]: ...

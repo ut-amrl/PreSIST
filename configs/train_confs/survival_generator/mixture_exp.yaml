@@ -1,0 +1,9 @@
+# @package survival_generator
+#
+# Reads list-valued {weights, lambdas} from estimate.params and builds a
+# K-component exponential mixture survival function. Param shape is the
+# direct output of MixtureExponentialTrainer, no rescaling required.
+
+_target_: persistence_eval.methods.survival.mixture.MixtureExponentialGenerator
+time_scale_factor: 1.0
+name: mixture_exp

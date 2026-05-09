@@ -1,0 +1,21 @@
+defaults:
+  - trainer: persistence_fit_single_exp
+  - train_dataset: annotation_tool_pklot_repaired_train
+  - _self_
+
+# 'class' or 'location' — determines bucket boundaries for the trainer.
+grouping: location
+
+experiment:
+  name: perpetua_single_exp_${grouping}
+  subsample_fraction: 1.0
+  subsample_seed: 0
+
+paths:
+  # Where Perpetua trained models live (separate from the standard eval
+  # output root used by eval_persistence.py).
+  model_root: /workspace/data/output/perpetua/
+  model_dir: ${paths.model_root}/${experiment.name}/frac${dot_to_p:${experiment.subsample_fraction}}_seed${experiment.subsample_seed}
+
+runtime:
+  seed: ${experiment.subsample_seed}

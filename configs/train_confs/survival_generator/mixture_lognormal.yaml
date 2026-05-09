@@ -1,0 +1,5 @@
+# @package survival_generator
+
+_target_: persistence_eval.methods.survival.mixture.MixtureLogNormalGenerator
+time_scale_factor: 1.0
+name: mixture_lognormal

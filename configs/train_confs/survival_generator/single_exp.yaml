@@ -1,0 +1,9 @@
+# @package survival_generator
+#
+# Single-exponential survival keyed on `mean` (lifetime). The single-exp
+# trainer emits both `mean` and `lambda_`; this generator uses `mean`.
+# time_scale_factor: 1.0 because durations are stored in seconds end-to-end.
+
+_target_: persistence_eval.methods.survival.exponential.ExponentialSurvivalFunctionGenerator
+time_scale_factor: 1.0
+name: single_exp_mle

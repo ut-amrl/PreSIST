@@ -1,0 +1,12 @@
+# @package predictor
+#
+# Composes the existing SurvivalFunctionGenerator + AbsPersistenceFilter pair
+# into the AbsPersistencePredictor interface. Inner choices are still selected
+# via the top-level `survival_generator` and `persistence_filter` config groups,
+# which we interpolate here — so existing eval configs only need to add
+# `- predictor: survival_based` to their defaults list.
+
+_target_: persistence_eval.methods.predictors.survival_based.SurvivalBasedPredictor
+name: survival_based
+survival_generator: ${survival_generator}
+persistence_filter: ${persistence_filter}

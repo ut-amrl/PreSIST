@@ -1,0 +1,24 @@
+# @package predictor
+#
+# Direct-VLM persistence predictor (Qwen-VL backend, prompt-template based).
+# Pair with `inferencer: direct_vlm_query`. Prior observations are ignored.
+
+_target_: persistence_eval.methods.predictors.direct_vlm.DirectVLMPredictor
+name: direct_vlm
+
+querier:
+  _target_: dataset_generation.llm_persistence_querying.prompted_direct_future_existence_vlm_querier.PromptedDirectFutureExistenceVLMQuerier
+  name: prompted_direct_future_existence_qwen3vl
+  prompt_template_file: "prompt_files/llm_querier/direct_future_existence.txt"
+  mask_style: blur_bg_outline_fg
+  mask_highlight_color: [0, 255, 0]
+  vlmQuerier:
+    _target_: dataset_generation.llm_persistence_querying.vlm_querying.qwen_vlm_querier.QwenVLMQuerier
+    name: qwen_vl_30b_instruct
+    model_name: "Qwen/Qwen3-VL-30B-A3B-Instruct"
+    torch_dtype: torch.bfloat16
+    device_map: "auto"
+    max_new_tokens: 4096
+    temperature: 0.2
+    top_p: 0.9
+    repetition_penalty: 1.05

@@ -1,0 +1,13 @@
+# @package train_dataset
+#
+# Train manifest for the Perpetua-style trainers against the *repaired*
+# PUCPR annotations. Defaults to the canonical 70/30 temporal split produced
+# by generate_temporal_split.py; override `manifest_path` if you regenerate
+# at a different fraction or move the splits dir.
+
+name: pklot_pucpr_repaired_train
+manifest_path: /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired/splits/70_30/train_through_2012-10-29.json
+cell_size_px: 128
+class_id: 0
+host_root: /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/new_pklot
+container_root: /workspace/data/input/new_pklot

@@ -1,0 +1,8 @@
+# @package inferencer.llmPersistenceQuerier
+defaults:
+  - llmQuerier: gemma4_31b_llm
+  - promptHandler: v3_iqr_behav4
+
+_target_: dataset_generation.llm_persistence_querying.chained_prompt_query_persistence_querier.ChainedPromptQueryPersistenceQuerier
+useSpatialGrouping: true
+maxObjsPerQuery: 20

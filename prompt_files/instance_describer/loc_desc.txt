@@ -1,0 +1,1 @@
+<image>\nDescribe the object in the highlighted region. Describe its location (ex. in open space, put away, parked vs in unconstrained space, etc.) and what entities may interact with it in the very near future (ex. person approaching or nearby, car heading towards it).

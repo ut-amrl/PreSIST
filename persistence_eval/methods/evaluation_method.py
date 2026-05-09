@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from persistence_eval.core.protocols import PersistenceFilter, SurvivalFunctionGenerator
+from persistence_eval.core.protocols import PersistencePredictor
 
 
 @dataclass
@@ -12,5 +12,4 @@ class EvaluationMethod:
     Does not require an inferencer — use when separating inference from eval.
     """
     name: str
-    survival_generator: SurvivalFunctionGenerator
-    persistence_filter: PersistenceFilter
+    predictor: PersistencePredictor

@@ -4,6 +4,7 @@ defaults:
   - inferencer: closed_set_clip
   - survival_generator: weibull
   - persistence_filter: rosen
+  - predictor: survival_based
   - benchmark: pucpr_images
   - eval_scenario: dynamic_anchor_only
   - analysis: basic

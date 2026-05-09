@@ -15,9 +15,20 @@ class ClosedSetCLIPInferencer(AbsPersistenceParameterInferencer):
         self.semanticClassPersistenceParamLookup = semanticClassPersistenceParamLookup
 
     def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]:
+        id_to_class = self.clipAligner.class_list.id_to_class
         estimates = []
         for i in range(len(group.masks)):
             class_id = self.clipAligner.find_closest_class(group.image, group.masks[i])
-            params = self.semanticClassPersistenceParamLookup.get_params_for_id(class_id)
-            estimates.append(params)
+            shared = self.semanticClassPersistenceParamLookup.get_params_for_id(class_id)
+            # Copy so we don't mutate the cached lookup entry shared across episodes.
+            estimate = PersistenceParameterEstimate(
+                params=shared.params,
+                confidence=shared.confidence,
+                metadata={
+                    **shared.metadata,
+                    "anchor_class_id": int(class_id),
+                    "anchor_class_name": id_to_class.get(class_id, str(class_id)),
+                },
+            )
+            estimates.append(estimate)
         return estimates

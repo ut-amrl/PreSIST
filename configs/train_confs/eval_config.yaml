@@ -4,6 +4,7 @@ defaults:
   - inferencer: learned_model    # /model: and /model/cross_attn_pooler: are composed inside this file
   - survival_generator: weibull
   - persistence_filter: rosen
+  - predictor: survival_based
   - benchmark: persistence_filter
   - analysis: basic
   - _self_

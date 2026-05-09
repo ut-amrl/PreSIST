@@ -95,8 +95,10 @@ def run_precomputer(
     vllm_port: int,
     force_recompute: bool = False,
     save_every: int = 10,
+    querier_backend: str = "qwen",
+    enable_thinking: bool = False,
+    vllm_dtype: str = "auto",
 ) -> None:
-    from dataset_generation.llm_persistence_querying.llm_querying.qwen_llm_querier import QwenLLMQuerier
     import os
 
     class_list = ClosedSetSemanticClassList(class_text_file=class_list_file)
@@ -118,13 +120,28 @@ def run_precomputer(
         print("Nothing to do.")
         return
 
-    querier = QwenLLMQuerier(
-        name="persistence_precomputer",
-        model_name=model_name,
-        use_vllm_server=use_vllm,
-        vllm_port=vllm_port,
-        max_new_tokens=max_tokens,
-    )
+    if querier_backend == "qwen":
+        from dataset_generation.llm_persistence_querying.llm_querying.qwen_llm_querier import QwenLLMQuerier
+        querier = QwenLLMQuerier(
+            name="persistence_precomputer",
+            model_name=model_name,
+            use_vllm_server=use_vllm,
+            vllm_port=vllm_port,
+            max_new_tokens=max_tokens,
+        )
+    elif querier_backend == "gemma":
+        from dataset_generation.llm_persistence_querying.llm_querying.gemma_llm_querier import GemmaLLMQuerier
+        querier = GemmaLLMQuerier(
+            name="persistence_precomputer",
+            model_name=model_name,
+            use_vllm_server=use_vllm,
+            vllm_port=vllm_port,
+            max_new_tokens=max_tokens,
+            enable_thinking=enable_thinking,
+            torch_dtype=vllm_dtype,
+        )
+    else:
+        raise ValueError(f"Unknown querier_backend: {querier_backend!r} (expected 'qwen' or 'gemma')")
 
     failures: list[str] = []
     queries_since_save = 0
@@ -177,6 +194,9 @@ if __name__ == "__main__":
     parser.add_argument("--vllm_port", type=int, default=9001)
     parser.add_argument("--force_recompute", action="store_true", help="Re-query all classes even if output file already exists.")
     parser.add_argument("--save_every", type=int, default=10, help="Write results to disk after every N successful queries.")
+    parser.add_argument("--querier", choices=["qwen", "gemma"], default="qwen", help="Which LLM querier backend to use.")
+    parser.add_argument("--enable_thinking", action="store_true", help="(Gemma only) Enable thinking mode (requires server with --reasoning-parser gemma4).")
+    parser.add_argument("--vllm_dtype", default="auto", help="dtype string used to derive vLLM served-model-name (e.g. 'bfloat16'). Must match server.")
     args = parser.parse_args()
 
     output_param_keys = args.output_param_keys if args.output_param_keys is not None else args.param_keys
@@ -195,4 +215,7 @@ if __name__ == "__main__":
         max_tokens=args.max_tokens,
         force_recompute=args.force_recompute,
         save_every=args.save_every,
+        querier_backend=args.querier,
+        enable_thinking=args.enable_thinking,
+        vllm_dtype=args.vllm_dtype,
     )

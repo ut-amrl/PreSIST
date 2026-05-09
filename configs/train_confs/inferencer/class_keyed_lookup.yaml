@@ -1,0 +1,11 @@
+# @package inferencer
+#
+# Hardcoded single-class lookup for datasets where every track belongs to one
+# semantic class (e.g. PKLot = "car"). Reads class-keyed params JSON written
+# by train_persistence_models.py with `grouping=class`.
+
+_target_: persistence_eval.methods.inferencers.class_keyed_lookup_inferencer.ClassKeyedLookupInferencer
+class_lookup_file: ${paths.model_dir}/persistence_params.json
+class_id: 0
+class_name: car
+name: class_keyed_lookup

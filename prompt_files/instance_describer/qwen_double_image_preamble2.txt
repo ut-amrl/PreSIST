@@ -1,0 +1,5 @@
+You are shown two images:
+1) The full scene
+2) The same image with the object of interest outlined and background blurred.
+
+Use the outlined image to identify the object. Use the full scene for context.

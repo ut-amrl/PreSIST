@@ -1,0 +1,43 @@
+# Layer Perpetua-style training/eval deps onto the live-saved SPF image.
+#
+# The dependency dry-run (see docs/perpetua_correspondence.md) showed zero
+# upgrades/downgrades against the *running* environment, so we layer onto the
+# saved live container — NOT the drifted committed Dockerfile.
+#
+# Default base: spf_with_datasets:saved, produced by
+#   ./docker_start_datasets_plus_spf.sh --save_from_spf
+# which commits the running spf_container into that tag. Run that once before
+# building this image. Override at build time if needed:
+#   podman build --build-arg BASE_IMAGE=other:tag -f PerpetuaDockerfile -t spf_perpetua:latest .
+
+ARG BASE_IMAGE=spf_with_datasets:saved
+
+FROM ${BASE_IMAGE}
+
+# JAX on CPU only — torch keeps the GPU. flax brings in its own pin set
+# (orbax-checkpoint, optax, tensorstore, etc.) but the dry-run confirmed no
+# conflicts with the existing torch/numpy/scipy installation.
+#
+# The remaining packages are pulled by upstream perpetua-code's module-level
+# imports (PrettyTable in metrics, SciencePlots in viz, etc.). We install them
+# explicitly because upstream's setup.py omits install_requires and we can't
+# run their requirements.txt directly without downgrading our pinned
+# numpy/scipy/torch stack.
+RUN pip install --no-cache-dir \
+        "jax[cpu]" \
+        flax \
+        prettytable \
+        SciencePlots \
+        scikit-learn \
+        tqdm \
+        pandas \
+        matplotlib \
+        PyYAML
+
+# Vendored Perpetua reference implementation, installed editable so changes
+# to src/perpetua-code/ during development don't require a rebuild.
+COPY src/perpetua-code /opt/perpetua-code
+RUN pip install --no-cache-dir -e /opt/perpetua-code
+
+# Default JAX to CPU regardless of how it's invoked.
+ENV JAX_PLATFORMS=cpu

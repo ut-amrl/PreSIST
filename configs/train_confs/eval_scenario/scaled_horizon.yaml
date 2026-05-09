@@ -1,0 +1,9 @@
+# @package eval_scenario
+# Alternate observation-conditioned eval. Each query at dt_q from anchor sees
+# observations strictly earlier than t_q − min(recency_cap, dt_q/2). Reporting
+# bins by per-query effective horizon.
+_target_: persistence_eval.sampling.scaled_horizon_episode_provider.ScaledHorizonEpisodeProvider
+name: scaled_horizon
+query_horizons: [1.0, 3.0, 5.0, 10.0, 30.0, 60.0, 300.0]
+recency_cap: 60.0
+require_disappearance_observed: false

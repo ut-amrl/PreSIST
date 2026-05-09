@@ -4,6 +4,7 @@ defaults:
   - inferencer: constant_params_general_purpose
   - survival_generator: general_purpose
   - persistence_filter: rosen
+  - predictor: survival_based
   - benchmark: pucpr_images
   - eval_scenario: dynamic_anchor_only
   - analysis: basic

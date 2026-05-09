@@ -4,6 +4,7 @@ defaults:
   - inferencer: llm_pipeline_gemma_desc
   - survival_generator: weibull_pucpr_llm
   - persistence_filter: rosen
+  - predictor: survival_based
   - benchmark: pucpr_images
   - eval_scenario: dynamic_anchor_only
   - analysis: basic

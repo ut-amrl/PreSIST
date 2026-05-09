@@ -25,14 +25,22 @@ class SemanticClassPersistenceParamLookup:
     def load_params_from_file(self, file_path: str) -> None:
         with open(file_path, "r") as f:
             data = json.load(f)
-        self.id_to_params = {
-            int(class_id): PersistenceParameterEstimate(
+        result: dict[int, PersistenceParameterEstimate] = {}
+        for class_id, entry in data.items():
+            try:
+                key = int(class_id)
+            except ValueError:
+                # Non-integer keys (e.g. the "__global__" fallback entry the
+                # location-keyed trainer writes alongside class ids) are not
+                # meaningful in a class-keyed lookup; skip them silently so the
+                # same params JSON works for both class and location consumers.
+                continue
+            result[key] = PersistenceParameterEstimate(
                 params=entry["params"],
                 confidence=entry.get("confidence"),
                 metadata=entry.get("metadata", {}),
             )
-            for class_id, entry in data.items()
-        }
+        self.id_to_params = result
 
     def save_params_to_file(self, file_path: str) -> None:
         data = {

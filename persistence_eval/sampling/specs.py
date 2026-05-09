@@ -7,6 +7,4 @@ from dataclasses import dataclass, field
 class EpisodeSamplerSpec:
     anchor_strategy: str = "all_positive"     # "all_positive" | "first_positive" | "random_positive"
     query_horizons: list[float] = field(default_factory=lambda: [1.0, 3.0, 5.0])
-    include_prior_history: bool = True
-    max_prior_observations: int | None = None
     require_disappearance_observed: bool = False

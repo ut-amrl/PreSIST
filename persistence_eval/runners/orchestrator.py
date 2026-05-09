@@ -72,6 +72,7 @@ class BenchmarkOrchestrator:
 
         # Dataset views — _recursive_=False so Hydra doesn't try to instantiate
         # image_mask_view/track_view sub-configs (they need `backing`, passed below).
+        print("Creating dataset views")
         backing = hydra.utils.instantiate(cfg.benchmark_dataset, _recursive_=False)
         image_mask_view = (
             hydra.utils.instantiate(cfg.benchmark_dataset.image_mask_view, backing=backing)
@@ -88,6 +89,7 @@ class BenchmarkOrchestrator:
         dataset_mode = cfg.benchmark.get("dataset_mode", "grouped")
         inference_dataset = InferenceDataset(image_mask_view, mode=dataset_mode)
 
+        print("Creating episode provider")
         # Episode provider: prefer top-level eval_scenario, fall back to benchmark.sampler
         if hasattr(cfg, "eval_scenario"):
             episode_provider = hydra.utils.instantiate(cfg.eval_scenario, track_dataset=track_view)
@@ -97,10 +99,9 @@ class BenchmarkOrchestrator:
                 track_dataset=track_view,
                 query_horizons=list(sampler_cfg.get("query_horizons", [1.0, 3.0, 5.0])),
                 require_disappearance_observed=sampler_cfg.get("require_disappearance_observed", False),
-                include_prior_history=sampler_cfg.get("include_prior_history", True),
-                max_prior_observations=sampler_cfg.get("max_prior_observations", None),
             )
 
+        print("Creating inferencer")
         # Inferencer
         inferencer_cfg = cfg.inferencer
         model_cfg = cfg.get("model", None)
@@ -120,13 +121,13 @@ class BenchmarkOrchestrator:
         else:
             method_name = cfg.inferencer.get("name") or cfg.inferencer.get("_target_", "unknown").split(".")[-1]
 
+        print("Creating predictor")
+
         # EvaluationMethod
-        survival_gen = hydra.utils.instantiate(cfg.survival_generator)
-        pfilter = hydra.utils.instantiate(cfg.persistence_filter)
+        predictor = hydra.utils.instantiate(cfg.predictor)
         eval_method = EvaluationMethod(
             name=method_name,
-            survival_generator=survival_gen,
-            persistence_filter=pfilter,
+            predictor=predictor,
         )
         benchmark_method = BenchmarkMethod(evaluation_method=eval_method, inferencer=inferencer)
 
@@ -143,6 +144,7 @@ class BenchmarkOrchestrator:
             MeanImageTotalLatencyMs(),
             *extra_metrics,
         ]
+        print("Creating analysis objects")
         metric_suite = CompositeMetricSuite(raw_metrics)
         accumulators = [BatchingMetricAccumulator(metric_suite)]
 
@@ -152,9 +154,9 @@ class BenchmarkOrchestrator:
         # Output paths
         ts = cfg.runtime.get("timestamp") or make_timestamp()
         dataset_name = cfg.benchmark_dataset.get("name") or track_view.name
-        surv_name = cfg.survival_generator.get("name") or cfg.survival_generator.get("_target_", "surv").split(".")[-1]
+        pred_name = cfg.predictor.get("name") or cfg.predictor.get("_target_", "pred").split(".")[-1]
         ep_name = cfg.eval_scenario.get("name") if hasattr(cfg, "eval_scenario") else ""
-        eval_type = f"{surv_name}__{ep_name}" if ep_name else surv_name
+        eval_type = f"{pred_name}__{ep_name}" if ep_name else pred_name
         layout = resolve_output_layout(
             output_root=Path(cfg.paths.output_root),
             dataset_name=dataset_name,
@@ -167,6 +169,7 @@ class BenchmarkOrchestrator:
             else None
         )
 
+        print("Creating orchestrator")
         return BenchmarkOrchestrator(
             inference_dataset=inference_dataset,
             episode_provider=episode_provider,
@@ -203,6 +206,7 @@ class BenchmarkOrchestrator:
 
         eval_dir = inference_dir / "evaluation_runs" / self._eval_type_name / self._timestamp
         eval_dir.mkdir(parents=True, exist_ok=True)
+        print("Starting analysis ")
         self._analysis.analyze(metric_results, batch, eval_dir)
         return batch, metric_results
 

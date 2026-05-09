@@ -1,0 +1,9 @@
+# @package survival_generator
+#
+# Single-lognormal survival keyed on raw (logmu, std) emitted by the
+# single-lognormal MLE trainer. Names match upstream Perpetua
+# (priors.log_survival_lognormal(t, logmu, std)).
+
+_target_: persistence_eval.methods.survival.single_lognormal_mle.LogNormalFromMuSigmaGenerator
+time_scale_factor: 1.0
+name: single_lognormal_mle

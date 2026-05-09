@@ -1,0 +1,4 @@
+# @package trainer
+
+_target_: persistence_eval.methods.training.fit_single_lognormal.SingleLogNormalTrainer
+name: single_lognormal

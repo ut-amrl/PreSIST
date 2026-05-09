@@ -1,0 +1,13 @@
+You are estimating whether a specific object will still exist at its current location at various future times.
+
+You are shown two images of the same scene: (1) the original image, and (2) a view that highlights the object of interest. Evaluate persistence for THAT object only.
+
+For EACH of the time horizons below (seconds from now), independently estimate the probability the highlighted object still exists at this location at that future time. Probabilities should be floats in [0.0, 1.0]. Probability should be non-increasing as the horizon grows, but you may keep it flat when the object is essentially permanent.
+
+Horizons (seconds):
+{query_times_block}
+
+Respond with ONLY a JSON array — one entry per horizon, in the SAME ORDER as listed above:
+[{{"dt_seconds": <horizon>, "prob": <float in [0,1]>}}, ...]
+
+No markdown, no explanation, no extra text.

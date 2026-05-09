@@ -1,0 +1,5 @@
+# @package trainer
+
+_target_: persistence_eval.methods.training.fit_single_exponential.SingleExponentialTrainer
+name: single_exponential
+# `grouping` is forwarded by TrainingOrchestrator from cfg.grouping.

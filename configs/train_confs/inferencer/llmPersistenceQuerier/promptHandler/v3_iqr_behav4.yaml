@@ -1,0 +1,4 @@
+# @package inferencer.llmPersistenceQuerier.promptHandler
+name: v3IqrBehav4
+_target_: dataset_generation.llm_persistence_querying.prompt_handler.verbose_prompt_handler.VerbosePersistencePromptHandler
+prompt_template_file: "prompt_files/llm_querier/v3_iqr_behav4.txt"

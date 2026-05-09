@@ -1,0 +1,39 @@
+# @package predictor
+#
+# Direct-VLM persistence predictor backed by Gemma 4 VL via GemmaChatEngine.
+# Mirrors the rich overlay options of GemmaVLMObjectDescriber. Pair with
+# `inferencer: direct_vlm_query`. Prior observations are ignored.
+
+_target_: persistence_eval.methods.predictors.direct_vlm.DirectVLMPredictor
+name: direct_vlm_gemma
+
+querier:
+  _target_: dataset_generation.llm_persistence_querying.gemma_direct_future_existence_vlm_querier.GemmaDirectFutureExistenceVLMQuerier
+  name: gemma_direct_future_existence
+  model_name: "google/gemma-4-31B-it"
+  use_vllm_server: true
+  enable_thinking: false
+  vllm_url_root: "http://localhost"
+  vllm_port: 9008
+  vllm_url_suffix: "/v1"
+  vllm_api_key: "EMPTY"
+  vllm_request_timeout_s: 240.0
+  # Must match the dtype the running vLLM server was launched with — used to
+  # derive the served model name (e.g. "gemma-4-31b-it__bfloat16").
+  torch_dtype: torch.bfloat16
+  max_new_tokens: 4096
+  temperature: 0.2
+  top_p: 0.9
+  # --- overlay appearance (defaults match GemmaVLMObjectDescriber) ---
+  mask_style: blur_bg_outline_fg
+  mask_highlight_color: [0, 255, 255]
+  mask_dilation_px: 5
+  blur_radius: 8
+  mask_background_dim_factor: 0.35
+  mask_outline_thickness: 1
+  highlight_alpha: 0.0
+  include_zoomed_crop: false
+  include_context_crop: false
+  include_box_image: false
+  include_arrow_image: false
+  include_full_img_last: false

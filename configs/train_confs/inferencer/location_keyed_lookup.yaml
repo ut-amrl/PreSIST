@@ -1,0 +1,11 @@
+# @package inferencer
+#
+# Per-location params lookup keyed by space_id-or-cell. Reads location-keyed
+# params JSON written by train_persistence_models.py with `grouping=location`,
+# plus a track_id->location_key sidecar built by build_track_location_index.py
+# from the test manifest.
+
+_target_: persistence_eval.methods.inferencers.location_keyed_lookup_inferencer.LocationKeyedLookupInferencer
+location_lookup_file: ${paths.model_dir}/persistence_params.json
+track_id_to_location_file: ???   # set per benchmark_dataset (test manifest sidecar path)
+name: location_keyed_lookup

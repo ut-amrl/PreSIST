@@ -29,9 +29,8 @@ class CompositeMetricSuite(Metric):
 class AbsMetricAccumulator(ABC):
     """
     Streaming accumulator: update() once per (artifact, context) pair, compute() at end.
-    Implementations may stratify results by bucketizing query_times, num_prior_observations,
-    prior_observation_timespan_s, or metadata keys and returning multiple MetricResults
-    with different MetricResult.group dicts.
+    Implementations may stratify results by bucketizing query_times or metadata keys
+    and returning multiple MetricResults with different MetricResult.group dicts.
     """
 
     @abstractmethod
@@ -40,11 +39,10 @@ class AbsMetricAccumulator(ABC):
         predicted_probs: torch.Tensor,             # (Q,) float64
         ground_truth: torch.Tensor,                # (Q,) float64, NaN if unknown
         query_times: torch.Tensor,                 # (Q,) float64, dt from anchor_time (s)
-        num_prior_observations: int,
-        prior_observation_timespan_s: float,       # anchor_time - first_prior_obs.timestamp
         inference_latency_ms: float,
         filter_latency_ms: float,
         metadata: dict,
+        effective_horizons: torch.Tensor | None = None,  # (Q,) float64; None for primary eval
     ) -> None: ...
 
     @abstractmethod
@@ -68,6 +66,7 @@ class BatchingMetricAccumulator(AbsMetricAccumulator):
         self._ground_truth: list[float] = []
         self._inference_latency: list[float] = []
         self._filter_latency: list[float] = []
+        self._effective_horizons: list[float] = []
         self._metadata: list[dict] = []
 
     def update(
@@ -75,11 +74,10 @@ class BatchingMetricAccumulator(AbsMetricAccumulator):
         predicted_probs: torch.Tensor,
         ground_truth: torch.Tensor,
         query_times: torch.Tensor,
-        num_prior_observations: int,
-        prior_observation_timespan_s: float,
         inference_latency_ms: float,
         filter_latency_ms: float,
         metadata: dict,
+        effective_horizons: torch.Tensor | None = None,
     ) -> None:
         per_q_lat = filter_latency_ms / max(len(query_times), 1)
         episode_id = f"{metadata.get('track_id', '')}:{metadata.get('anchor_time', '')}"
@@ -90,6 +88,9 @@ class BatchingMetricAccumulator(AbsMetricAccumulator):
             self._ground_truth.append(ground_truth[i].item())
             self._inference_latency.append(inference_latency_ms)
             self._filter_latency.append(per_q_lat)
+            self._effective_horizons.append(
+                float(effective_horizons[i]) if effective_horizons is not None else float("nan")
+            )
             self._metadata.append(metadata)
 
     def compute(self) -> list[MetricResult]:
@@ -102,6 +103,7 @@ class BatchingMetricAccumulator(AbsMetricAccumulator):
             ground_truth=torch.tensor(self._ground_truth, dtype=torch.float64),
             inference_latency_ms=torch.tensor(self._inference_latency, dtype=torch.float64),
             filter_latency_ms=torch.tensor(self._filter_latency, dtype=torch.float64),
+            effective_horizons=torch.tensor(self._effective_horizons, dtype=torch.float64),
             metadata=self._metadata,
         )
         return self._metric.compute(batch)
@@ -113,4 +115,5 @@ class BatchingMetricAccumulator(AbsMetricAccumulator):
         self._ground_truth.clear()
         self._inference_latency.clear()
         self._filter_latency.clear()
+        self._effective_horizons.clear()
         self._metadata.clear()

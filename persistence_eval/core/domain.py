@@ -67,6 +67,11 @@ class ImageMaskGroup:
     track_ids: list[str]
     anchor_time: float     # absolute seconds (same for all masks — same frame)
     image_path: str | None = None
+    # Per-track absolute mask file paths (parallel to masks/track_ids), when the
+    # dataset stores masks on disk — lets inferencers reference them directly
+    # instead of re-serialising the mask tensor. None for datasets whose masks
+    # are computed at iter time and have no file backing.
+    mask_paths: list[str] | None = None
 
 
 @dataclass
@@ -76,25 +81,50 @@ class EvaluationContext:
     Produced by EpisodeProvider.get_contexts() from an InferenceArtifact's track_id and
     anchor_time. Ground truth (bounds) is carried here but never passed to the filter —
     it is only used to compute labels after prediction.
+
+    For the primary (anchor-only) eval, observations is empty and effective_horizons
+    is None (the reporting layer treats h_eff = query_dt). For the scaled-horizon
+    alternate eval, observations is the post-anchor obs prefix visible to *every*
+    query in this context (the episode provider groups queries by shared prefix so
+    causal masking happens before the filter sees anything), and effective_horizons
+    carries the per-query h_eff for binning.
     """
-    prior_observations: list[BinaryObservationEvent]   # history strictly before anchor_time
     query_times: list[float]                           # dt from anchor_time (seconds)
     bounds: TrackTemporalBounds
+    observations: list[BinaryObservationEvent] = field(default_factory=list)
+    effective_horizons: list[float] | None = None      # per query; same length as query_times
     metadata: dict = field(default_factory=dict)
 
 
 @dataclass
 class PersistenceParameterEstimate:
     """
-    Generic key→time mapping output by an inferencer, e.g.:
-      {"t50": 100.0, "t90": 300.0}  — two-percentile Weibull fit
-      {"mean": 80.0}                — exponential (mean lifetime) fit
-    Survival generators declare which keys they require and raise
-    IncompatibleEstimateError if keys are absent.
+    Generic key→param mapping output by an inferencer, e.g.:
+      {"t50": 100.0, "t90": 300.0}                 — two-percentile Weibull fit
+      {"mean": 80.0}                               — exponential (mean lifetime)
+      {"weights": [0.5, 0.5], "lambdas": [..]}     — mixture exponential
+    Values are scalar floats for single-component fits, or lists of floats
+    (one entry per mixture component) for mixtures. Survival generators
+    declare which keys they require and raise IncompatibleEstimateError if
+    keys are absent.
     """
-    params: dict[str, float]
+    params: dict[str, float | list[float]]
     confidence: float | None = None
     metadata: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        for key, value in self.params.items():
+            if isinstance(value, list):
+                if not all(isinstance(v, (int, float)) for v in value):
+                    raise TypeError(
+                        f"PersistenceParameterEstimate.params[{key!r}] is a list but"
+                        f" contains non-numeric entries: {value!r}"
+                    )
+            elif not isinstance(value, (int, float)):
+                raise TypeError(
+                    f"PersistenceParameterEstimate.params[{key!r}] must be a float"
+                    f" or list[float]; got {type(value).__name__}"
+                )
 
 
 @dataclass
@@ -126,6 +156,8 @@ class EvaluationBatch:
     Flat tensor representation of all prediction records from one evaluation run.
     All tensor fields have shape (N,) and are float64.
     ground_truth is NaN where the label was unknown (TrackTemporalBounds.exists_at returned None).
+    effective_horizons is NaN for the primary anchor-only eval and equal to
+    `query_times − dt_to_last_visible_obs` for the scaled-horizon alt eval.
     metadata is a parallel list of per-record dicts for grouping / reporting.
     """
     episode_ids: list[str]
@@ -134,6 +166,7 @@ class EvaluationBatch:
     ground_truth: torch.Tensor       # 0.0 / 1.0; NaN = unknown
     inference_latency_ms: torch.Tensor
     filter_latency_ms: torch.Tensor
+    effective_horizons: torch.Tensor   # NaN where unset (primary eval)
     metadata: list[dict]
 
     def __len__(self) -> int:

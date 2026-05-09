@@ -11,11 +11,10 @@ class TrackBasedEpisodeProvider:
     Builds EvaluationContexts for inference artifacts by looking up track data.
     Eagerly indexes all tracks at construction so get_contexts() is an O(1) dict lookup.
 
-    For each (track_id, anchor_time) pair the provider yields one EvaluationContext:
-      - prior_observations: all track observations with timestamp < anchor_time,
-        optionally capped to max_prior_observations most-recent entries.
-      - query_times: the fixed list of dt offsets supplied at construction.
-      - bounds: the TrackTemporalBounds for the track.
+    For each (track_id, anchor_time) pair the provider yields one EvaluationContext
+    with the fixed list of dt offsets supplied at construction and the track's
+    TrackTemporalBounds. The persistence filter is anchor-only — observations are
+    not passed to it; ground truth comes from bounds.
 
     Artifacts whose track_id is not present in the dataset are silently skipped
     (get_contexts yields nothing).
@@ -27,12 +26,8 @@ class TrackBasedEpisodeProvider:
         query_horizons: list[float],
         *,
         require_disappearance_observed: bool = False,
-        include_prior_history: bool = True,
-        max_prior_observations: int | None = None,
     ) -> None:
         self._query_horizons = list(query_horizons)
-        self._include_prior = include_prior_history
-        self._max_prior = max_prior_observations
 
         self._lookup: dict[str, tuple[list[BinaryObservationEvent], TrackTemporalBounds]] = {}
         for track_id, observations, bounds in track_dataset.iter_tracks():
@@ -45,17 +40,9 @@ class TrackBasedEpisodeProvider:
         if entry is None:
             return
 
-        observations, bounds = entry
-
-        if self._include_prior:
-            prior = [o for o in observations if o.timestamp < anchor_time]
-            if self._max_prior is not None:
-                prior = prior[-self._max_prior:]
-        else:
-            prior = []
+        _, bounds = entry
 
         yield EvaluationContext(
-            prior_observations=prior,
             query_times=self._query_horizons,
             bounds=bounds,
         )

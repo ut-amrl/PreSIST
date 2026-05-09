@@ -1,0 +1,38 @@
+# @package predictor
+#
+# Per-horizon variant of `predictor: direct_vlm_gemma`. Issues one Gemma VLM
+# call per query horizon (parallel via chat_many) instead of asking for all
+# horizons in a single response. Pair with `inferencer: direct_vlm_query`.
+
+_target_: persistence_eval.methods.predictors.direct_vlm.DirectVLMPredictor
+name: direct_vlm_gemma_per_horizon
+
+querier:
+  _target_: dataset_generation.llm_persistence_querying.per_horizon_gemma_direct_future_existence_vlm_querier.PerHorizonGemmaDirectFutureExistenceVLMQuerier
+  name: gemma_direct_future_existence_per_horizon
+  model_name: "google/gemma-4-31B-it"
+  use_vllm_server: true
+  enable_thinking: false
+  vllm_url_root: "http://localhost"
+  vllm_port: 9008
+  vllm_url_suffix: "/v1"
+  vllm_api_key: "EMPTY"
+  vllm_request_timeout_s: 240.0
+  torch_dtype: torch.bfloat16
+  max_new_tokens: 256
+  temperature: 0.2
+  top_p: 0.9
+  max_concurrency: 16
+  # --- overlay appearance (defaults match GemmaVLMObjectDescriber) ---
+  mask_style: blur_bg_outline_fg
+  mask_highlight_color: [0, 255, 255]
+  mask_dilation_px: 5
+  blur_radius: 8
+  mask_background_dim_factor: 0.35
+  mask_outline_thickness: 1
+  highlight_alpha: 0.0
+  include_zoomed_crop: false
+  include_context_crop: false
+  include_box_image: false
+  include_arrow_image: false
+  include_full_img_last: false

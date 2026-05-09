@@ -1,0 +1,12 @@
+# @package inferencer
+#
+# Inferencer paired with `predictor: direct_vlm`. Caches each track's mask as
+# an npz alongside the inference run dir; the predictor reloads it together
+# with the original image at evaluation time.
+#
+# This inferencer does NOT call any captioning or description model — the
+# direct-VLM querier handles whatever visual context it needs from image+mask
+# alone (matching the AbsDirectFutureExistenceVLMQuerier interface).
+
+_target_: persistence_eval.methods.inferencers.direct_vlm_query.DirectVLMQueryInferencer
+name: direct_vlm_query

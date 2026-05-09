@@ -1,0 +1,10 @@
+You are estimating whether one specific object will still exist at its current location at a single future time.
+
+You are shown several images of the same scene. The highlighted region (cyan outline) marks the object of interest; evaluate persistence for THAT object only.
+
+Estimate the probability the highlighted object still exists at this location {horizon_seconds:.3f} seconds from now ({horizon_pretty}). Probability is a float in [0, 1].
+
+Respond with ONLY a JSON object on a single line:
+{{"prob": <float in [0,1]>}}
+
+No markdown, no explanation, no extra text.

@@ -1,0 +1,28 @@
+# @package trainer
+#
+# Mirrors upstream `select_and_refine_model`: K-sweep + AIC selection +
+# low-weight pruning + perturbation refinement. See
+# persistence_eval/methods/training/fit_mixture_exponential.py.
+
+_target_: persistence_eval.methods.training.fit_mixture_exponential.MixtureExponentialTrainer
+name: mixture_exponential
+
+# Model selection.
+params_range: [2, 3, 4]
+num_retrain_attempts: 5
+prune_threshold: 1.0e-2
+perturbation_scale_lambda: 0.01
+perturbation_scale_pi: 0.1
+rng_seed: 42
+
+# Per-K EM convergence.
+delta_log_evidence_rel: 1.0e-5
+min_iters: 5
+n_iter: 200
+
+# Observation model (must match the matching MixturePersistenceFilter).
+p_m: 0.1
+p_f: 0.05
+
+# Bucket-level fallback.
+min_mixture_samples: 20

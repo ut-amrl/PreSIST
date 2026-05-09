@@ -1,0 +1,36 @@
+Respond in 4 sections:
+
+1) Observations (directly visible only)
+List 3–5 verifiable features:
+- support/contact
+- position using visible cues (e.g., painted lines, edges, gaps — not labels like "parking space")
+- orientation
+- nearby agents/objects
+
+Only include what is clearly visible. If uncertain, say "unclear".
+
+3) Evidence check
+Compare observations to the default:
+- What supports it?
+- What contradicts it?
+
+Explicitly check for violations of expected position or alignment (e.g., not within visible boundaries).
+
+3) Evidence check
+Compare the observations to the default expectation:
+- What evidence supports it?
+- What evidence contradicts it?
+
+4) Inference
+Based on the evidence (not just the default):
+- Is the object currently moving or static?
+- Is it likely to move soon?
+
+Justify each conclusion using observations.
+If evidence is weak or mixed, reflect that in your answer.
+
+Rules:
+- Use default expectations as a starting point, not a conclusion
+- Prioritize direct visual evidence over assumptions
+- Do not ignore contradictions
+- If evidence is insufficient, say so

@@ -1,0 +1,10 @@
+# @package eval_scenario
+_target_: persistence_eval.sampling.percentile_horizon_episode_provider.PercentileHorizonEpisodeProvider
+name: percentile_horizons
+percentile: 90.0
+num_query_times: 20
+spacing: power
+power_exponent: 2.0
+t_min: 0.0
+max_query_inflation: 1.0
+require_disappearance_observed: false

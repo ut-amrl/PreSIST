@@ -1,0 +1,14 @@
+# @package benchmark_dataset
+name: pucpr_new_pklot_PUCPR_test
+_target_: persistence_eval.datasets.annotation_tool.AnnotationToolBackingDataset
+manifest_path: /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR/splits/70_30/test_from_2012-10-30.json
+max_anchor_observations: 1000
+shuffle_seed: 42
+host_root: /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/new_pklot
+container_root: /workspace/data/input/new_pklot
+
+image_mask_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolImageMaskView
+
+track_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolTrackView

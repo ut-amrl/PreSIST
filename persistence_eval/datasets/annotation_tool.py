@@ -198,6 +198,7 @@ class AnnotationToolImageMaskView(ImageMaskView):
                 torch.from_numpy(np.array(Image.open(root / obs["mask_path"]).convert("L")) > 0)
                 for _, obs in group_list
             ]
+            mask_paths = [str(root / obs["mask_path"]) for _, obs in group_list]
             track_ids = [track_id for track_id, _ in group_list]
             anchor_time = group_list[0][1]["timestamp"] / _US_TO_S
             yield ImageMaskGroup(
@@ -205,7 +206,8 @@ class AnnotationToolImageMaskView(ImageMaskView):
                 masks=torch.stack(mask_list, dim=0),  # (K, H, W)
                 track_ids=track_ids,
                 anchor_time=anchor_time,
-                image_path=str(image_path),
+                image_path=str(root / image_path),
+                mask_paths=mask_paths,
             )
 
 

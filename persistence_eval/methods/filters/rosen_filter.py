@@ -44,25 +44,21 @@ class RosenPersistenceFilter(AbsPersistenceFilter):
     Computes P(X_t = 1 | Y_{1:N}) by marginalising over all times at which the
     feature could have disappeared:
 
-        P(alive at t | Y_{1:N}) = L(Y_{1:N}) * S(t) / p(Y_{1:N})
+        P(alive at t | Y_{1:N}) = L(Y_{1:N}) * S(t − anchor_time) / p(Y_{1:N})
 
     where L is the accumulated detector likelihood assuming continuous survival,
-    and p(Y_{1:N}) sums over all possible disappearance epochs weighted by the
-    survival-time prior S.
+    and p(Y_{1:N}) sums over all possible disappearance epochs weighted by S.
 
-    The survival function is anchored at the anchor observation (dt = 0).
-    Prior observations are processed chronologically; their timestamps are
-    interpreted relative to the last prior observation, which is used as a
-    proxy for the anchor when computing survival-function intervals.  For
-    standard survival functions that return 1.0 for dt ≤ 0 (object certain to
-    exist before anchor), survival mass in pre-anchor intervals is zero, so the
-    filter correctly reduces to S(query_time) — observations only alter the
-    result if the survival function assigns non-trivial mass to historical
-    intervals.
+    The survival function is anchored at `anchor_time` (passed in), not at any
+    observation timestamp. Observations are processed chronologically with their
+    absolute timestamps; observation dt's are computed as `obs.timestamp −
+    anchor_time`. With no observations the filter returns `S(query_times)`. The
+    caller is responsible for any causal masking — every observation is consumed
+    for every query in the call.
 
-    predict() accepts a batch of query_times as a tensor. The prior-observation
-    loop runs once per episode (independent of query_times), and the final
-    posterior is computed for all query_times in a single tensor operation.
+    predict() accepts a batch of query_times as a tensor. The observation loop
+    runs once per call (independent of query_times); the final per-query
+    posterior is computed in a single tensor operation.
     """
 
     def __init__(self, false_detection_prob: float, missed_detection_prob: float) -> None:
@@ -72,25 +68,25 @@ class RosenPersistenceFilter(AbsPersistenceFilter):
     def predict(
         self,
         survival_fn: AbsSurvivalFunction,
-        prior_observations: list[BinaryObservationEvent],
+        anchor_time: float,
         query_times: torch.Tensor,
+        observations: list[BinaryObservationEvent] | None = None,
     ) -> torch.Tensor:
-        if not prior_observations:
+        if not observations:
             return survival_fn(query_times)
 
+        anchor_time = float(anchor_time)
         log_p_det_alive = _safe_log(1.0 - self._p_miss)
         log_p_miss_alive = _safe_log(self._p_miss)
         log_p_det_dead = _safe_log(self._p_false)
         log_p_miss_dead = _safe_log(1.0 - self._p_false)
 
-        obs = sorted(prior_observations, key=lambda o: o.timestamp)
-        anchor_proxy = obs[-1].timestamp
+        obs = sorted(observations, key=lambda o: o.timestamp)
 
         def _log_S_scalar(abs_time: float) -> float:
-            dt = torch.tensor(abs_time - anchor_proxy, dtype=query_times.dtype)
+            dt = torch.tensor(abs_time - anchor_time, dtype=query_times.dtype)
             return survival_fn.log_survival(dt.unsqueeze(0)).item()
 
-        # --- Rosen filter state (scalars, observation loop runs once per episode) ---
         log_likelihood = 0.0
         log_lower_sum = _NEG_INF
         last_log_S = _NEG_INF
@@ -101,9 +97,13 @@ class RosenPersistenceFilter(AbsPersistenceFilter):
             log_obs_dead = log_p_det_dead if o.is_positive else log_p_miss_dead
 
             if idx == 0:
+                # Mass over disappearance epochs in (-inf, t_first_obs].
+                # log(1 - S(t_first - anchor)). Pre-anchor obs ⇒ S = 1 ⇒ -inf
+                # ⇒ no contribution to lower sum (information-free, by design).
                 log_mass_before_first = _logdiff(_safe_log(1.0), cur_log_S)
                 log_lower_sum = log_obs_dead + log_mass_before_first
             else:
+                # Mass over disappearance epochs in (t_prev, t_curr].
                 log_interval_mass = _logdiff(last_log_S, cur_log_S)
                 log_lower_sum = _logsum(
                     log_lower_sum,
@@ -116,6 +116,7 @@ class RosenPersistenceFilter(AbsPersistenceFilter):
         log_evidence = _logsum(log_lower_sum, log_likelihood + last_log_S)
 
         # Vectorized final step: one log_survival call for all query_times at once.
-        log_query_S = survival_fn.log_survival(query_times)   # shape (Q,)
+        # query_times are dt from anchor_time, which matches the survival contract.
+        log_query_S = survival_fn.log_survival(query_times)
         log_posteriors = log_likelihood + log_query_S - log_evidence
         return torch.exp(log_posteriors).clamp(0.0, 1.0)

@@ -1,0 +1,6 @@
+You are shown three images:
+1) The full scene, with a cyan arrow pointing to the object of interest
+2) The same image with the object of interest outlined and background blurred.
+3) A cropped image centered around the object of interest.
+
+Use the outlined image to identify the object. Use the full scene for context and the cropped image to see the immediate surroundings in detail.

@@ -1,0 +1,10 @@
+# @package persistence_filter
+#
+# Wraps upstream MixturePersistenceFilters.{init,update,predict} (vendored at
+# src/perpetua-code/). Defaults match RosenPersistenceFilter so single-vs-
+# mixture comparisons hold the observation model fixed.
+
+_target_: persistence_eval.methods.filters.mixture_persistence_filter.MixturePersistenceFilter
+false_detection_prob: 0.05
+missed_detection_prob: 0.1
+name: mixture_persistence_filter

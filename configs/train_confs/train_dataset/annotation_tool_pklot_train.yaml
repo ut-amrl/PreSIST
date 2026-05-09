@@ -1,0 +1,14 @@
+# @package train_dataset
+#
+# Train manifest for the Perpetua-style trainers. Defaults assume the temporal
+# split was produced by generate_temporal_split.py at the canonical location;
+# override `manifest_path` per dataset / split fraction.
+
+name: pklot_pucpr_train
+manifest_path: ???   # set per-run, e.g. .../splits/70_30/train_through_<date>.json
+cell_size_px: 64
+class_id: 0
+# Optional host->container path remap. The annotation-tool manifest stores
+# absolute host-side paths; vision trainers resolve them at load time.
+host_root: /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/new_pklot
+container_root: /workspace/data/input/new_pklot

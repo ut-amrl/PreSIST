@@ -1,0 +1,10 @@
+# @package inferencer
+defaults:
+  - /inferencer/sceneCaptioner: gemma_cap_proc_long7
+  - /inferencer/objectDescriber: gemma_vlm_object_describer_blur_bg_context_crop_mask_long
+  - /inferencer/llmPersistenceQuerier: chained_text_gemma4_v3iqr_behav4_mO20
+
+_target_: persistence_eval.methods.inferencers.llm_pipeline.LLMPipelineInferencer
+param_keys: [p25_persistence_hours, p75_persistence_hours]
+debug_log: false
+debug_visualizations: true

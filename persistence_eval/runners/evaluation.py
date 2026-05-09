@@ -85,14 +85,20 @@ class EvaluationRunner:
         gt_list: list[float] = []
         infer_lat_list: list[float] = []
         filter_lat_list: list[float] = []
+        h_eff_list: list[float] = []
         meta_list: list[dict] = []
 
         skipped_empty = 0
         skipped_misformatted = 0
 
         for artifact, ctx in tqdm(loader, desc="Evaluation", unit="episode"):
+            query_times_t = torch.tensor(ctx.query_times, dtype=torch.float64)
+
+            t0 = time.perf_counter()
             try:
-                survival_fn = self._method.survival_generator.build(artifact.estimate)
+                probs_t = self._method.predictor.predict(
+                    artifact, query_times_t, ctx.observations
+                )
             except IncompatibleEstimateError as e:
                 diagnosis = self._describe_incompatible_estimate(artifact)
                 if self._halt_on_incompatible_estimate:
@@ -103,12 +109,6 @@ class EvaluationRunner:
                     skipped_misformatted += 1
                 warnings.warn(f"Skipping episode: {diagnosis}", stacklevel=2)
                 continue
-            query_times_t = torch.tensor(ctx.query_times, dtype=torch.float64)
-
-            t0 = time.perf_counter()
-            probs_t = self._method.persistence_filter.predict(
-                survival_fn, ctx.prior_observations, query_times_t
-            )
             filter_lat_ms = (time.perf_counter() - t0) * 1000.0
 
             gt_t = torch.tensor(
@@ -123,27 +123,30 @@ class EvaluationRunner:
             full_meta = {
                 "track_id": artifact.track_id,
                 "anchor_time": artifact.anchor_time,
+                "anchor_class": artifact.estimate.metadata.get("anchor_class_name"),
+                "anchor_class_id": artifact.estimate.metadata.get("anchor_class_id"),
                 **ctx.metadata,
             }
-            prior_span = (
-                artifact.anchor_time - ctx.prior_observations[0].timestamp
-                if ctx.prior_observations else 0.0
-            )
 
+            h_eff_t = (
+                torch.tensor(ctx.effective_horizons, dtype=torch.float64)
+                if ctx.effective_horizons is not None
+                else None
+            )
             for acc in self._accumulators:
                 acc.update(
                     probs_t,
                     gt_t,
                     query_times_t,
-                    len(ctx.prior_observations),
-                    prior_span,
                     artifact.inference_latency_ms,
                     filter_lat_ms,
                     full_meta,
+                    effective_horizons=h_eff_t,
                 )
 
             episode_id = f"{artifact.track_id}:{artifact.anchor_time}"
             per_q_lat = filter_lat_ms / max(len(ctx.query_times), 1)
+            h_effs = ctx.effective_horizons  # None for primary anchor-only eval
             for i, qt in enumerate(ctx.query_times):
                 episode_ids.append(episode_id)
                 query_times_list.append(qt)
@@ -151,6 +154,7 @@ class EvaluationRunner:
                 gt_list.append(gt_t[i].item())
                 infer_lat_list.append(artifact.inference_latency_ms)
                 filter_lat_list.append(per_q_lat)
+                h_eff_list.append(float(h_effs[i]) if h_effs is not None else float("nan"))
                 meta_list.append(full_meta)
 
         total_skipped = skipped_empty + skipped_misformatted
@@ -173,6 +177,7 @@ class EvaluationRunner:
             ground_truth=torch.tensor(gt_list, dtype=torch.float64),
             inference_latency_ms=torch.tensor(infer_lat_list, dtype=torch.float64),
             filter_latency_ms=torch.tensor(filter_lat_list, dtype=torch.float64),
+            effective_horizons=torch.tensor(h_eff_list, dtype=torch.float64),
             metadata=meta_list,
         )
 

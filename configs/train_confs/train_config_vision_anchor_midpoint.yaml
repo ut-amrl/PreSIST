@@ -1,0 +1,23 @@
+defaults:
+  - trainer: vision_anchor_midpoint
+  - model: vision_scalar_predictor
+  - train_dataset: annotation_tool_pklot_train
+  - _self_
+
+# 'class' or 'location' — for vision_anchor_midpoint we use class because the
+# trainer fits a single global model rather than per-bucket params.
+grouping: class
+
+experiment:
+  name: vision_anchor_midpoint
+  subsample_fraction: 1.0
+  subsample_seed: 0
+  val_track_fraction: 0.1
+  val_split_seed: 0
+
+paths:
+  model_root: /workspace/data/output/perpetua/
+  model_dir: ${paths.model_root}/${experiment.name}/frac${experiment.subsample_fraction}_seed${experiment.subsample_seed}
+
+runtime:
+  seed: ${experiment.subsample_seed}

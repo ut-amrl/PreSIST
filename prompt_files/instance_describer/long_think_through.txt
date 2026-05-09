@@ -1,0 +1,32 @@
+Respond in 4 sections:
+
+1) Observations (directly visible only)
+List 3–5 features relevant to motion or stability:
+- support and contact
+- position relative to boundaries or structures
+- orientation
+- nearby agents, objects or potential forces
+
+Only include what is clearly visible. If uncertain, say "unclear".
+
+2) Default expectation
+State the typical behavior(s) and/or placement(s) for this kind of object in this type of scene (e.g., parked, stationary, being used, etc.).
+
+3) Evidence check
+Compare the observations to the default expectation:
+- What evidence supports it?
+- What evidence contradicts it?
+
+4) Inference
+Based on the evidence (not just the default):
+- Is the object currently moving or static?
+- Is it likely to move soon?
+
+Justify each conclusion using observations.
+If evidence is weak or mixed, reflect that in your answer.
+
+Rules:
+- Use default expectations as a starting point, not a conclusion
+- Prioritize direct visual evidence over assumptions
+- Do not ignore contradictions
+- If evidence is insufficient, say so

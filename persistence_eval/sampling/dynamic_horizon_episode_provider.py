@@ -16,8 +16,6 @@ class DynamicHorizonEpisodeProvider:
          yielded only if first_missing_time is not None.
 
     Yields nothing if anchor_time >= last_observed_time (no gap to halve).
-
-    prior_observations is always empty (anchor-only evaluation).
     """
 
     def __init__(
@@ -52,7 +50,6 @@ class DynamicHorizonEpisodeProvider:
                 query_times.append(dt2)
 
         yield EvaluationContext(
-            prior_observations=[],
             query_times=query_times,
             bounds=bounds,
         )

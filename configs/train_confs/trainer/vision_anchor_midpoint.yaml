@@ -1,0 +1,39 @@
+defaults:
+  - _self_
+
+_target_: persistence_eval.methods.training.vision_anchor_midpoint.VisionAnchorMidpointTrainer
+name: vision_anchor_midpoint
+
+# Plumbed at instantiation time by the orchestrator.
+# `model` comes from the top-level cfg.model via Hydra defaults; we expose
+# it here as a passthrough field that the experiment preset overrides.
+
+epochs: 100
+batch_size: 16
+num_workers: 4
+early_stopping_patience: 10
+image_size: 518
+grad_clip_norm: 1.0
+device: null
+log_every_n_batches: 20
+
+use_wandb: true
+wandb_entity: ut-amrl-amanda
+wandb_project: semantic-persistence-filter
+wandb_run_name: null   # orchestrator fills this in from train_dataset.name + trainer.name
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 0.05
+  amsgrad: false
+
+lr_scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _partial_: true
+  T_max: ${trainer.epochs}
+  eta_min: 1.0e-6
+  last_epoch: -1

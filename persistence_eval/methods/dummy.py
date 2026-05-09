@@ -44,7 +44,9 @@ class DummyPersistenceFilter(AbsPersistenceFilter):
     def predict(
         self,
         survival_fn: AbsSurvivalFunction,
-        prior_observations: list[BinaryObservationEvent],
+        anchor_time: float,
         query_times: torch.Tensor,
+        observations: list[BinaryObservationEvent] | None = None,
     ) -> torch.Tensor:
+        del anchor_time, observations
         return survival_fn(query_times)
