@@ -147,7 +147,6 @@ openloris_location/restaurant/cafe-3/024.png
 pklot/test/2012-12-18_18_40_15_jpg.rf.d05afbc10c1c12bcd2af689b1cdfec88.jpg
 kitti/sequences/00/image_2/001601.png
 sku110k/train_2745.jpg
-openloris_scene/home1-4/fisheye2/1560300035.546026.png
 EPIC-KITCHENS/P03/rgb_frames/P03_18/frame_0000000307.jpg
 kitti/sequences/13/image_3/001815.png
 kitti/sequences/08/image_2/001633.png
@@ -258,7 +257,6 @@ openloris_location/market/010/014.png
 pklot/train/2013-03-19_08_20_02_jpg.rf.ce38b3244ad7e0c8391d0f33e92274b9.jpg
 kitti/sequences/00/image_3/004043.png
 sku110k/train_2554.jpg
-openloris_scene/home1-3/fisheye1/1560200068.329515.png
 EPIC-KITCHENS/P03/rgb_frames/P03_18/frame_0000000622.jpg
 kitti/sequences/02/image_3/003319.png
 kitti/sequences/00/image_3/002294.png
@@ -289,7 +287,6 @@ openloris_location/corridor/008/002.png
 pklot/train/2013-03-17_15_40_11_jpg.rf.6ca980bab338b57574962431c2461a55.jpg
 kitti/sequences/05/image_3/002290.png
 sku110k/test_2093.jpg
-openloris_scene/cafe1-2/fisheye2/1560025125.005724.png
 EPIC-KITCHENS/P04/rgb_frames/P04_122/frame_0000008458.jpg
 kitti/sequences/13/image_2/000347.png
 kitti/sequences/09/image_3/001151.png
@@ -320,7 +317,6 @@ openloris_location/market/010/017.png
 pklot/valid/2013-01-17_09_40_05_jpg.rf.1f766870d187ac8886706126f7219b1f.jpg
 kitti/sequences/05/image_2/002136.png
 sku110k/train_5748.jpg
-openloris_scene/market1-2/fisheye2/1563004827.052394.png
 EPIC-KITCHENS/P04/rgb_frames/P04_114/frame_0000006610.jpg
 kitti/sequences/02/image_2/001670.png
 kitti/sequences/18/image_2/000363.png
@@ -430,7 +426,6 @@ openloris_location/office/006/004.png
 pklot/train/2012-09-21_12_55_27_jpg.rf.350946bade807537d5da992dcfbb9f08.jpg
 kitti/sequences/02/image_3/002729.png
 sku110k/train_529.jpg
-openloris_scene/corridor1-5/fisheye1/1560400177.869130.png
 EPIC-KITCHENS/P04/rgb_frames/P04_114/frame_0000005183.jpg
 kitti/sequences/20/image_2/000690.png
 kitti/sequences/13/image_2/003196.png
@@ -510,7 +505,6 @@ openloris_location/market/market-6/062.png
 pklot/train/2013-03-06_13_50_09_jpg.rf.0831b81449dea06ce219f385ca22dfc6.jpg
 kitti/sequences/20/image_2/000639.png
 sku110k/test_1052.jpg
-openloris_scene/corridor1-3/fisheye1/1560200137.142215.png
 EPIC-KITCHENS/P04/rgb_frames/P04_122/frame_0000007692.jpg
 kitti/sequences/12/image_3/000629.png
 kitti/sequences/09/image_3/001265.png
@@ -571,7 +565,6 @@ openloris_location/market/market-6/023.png
 pklot/train/2013-03-03_15_10_10_jpg.rf.80dbfa004d0bcb595f18e0cd3903b3a4.jpg
 kitti/sequences/01/image_2/000759.png
 sku110k/train_2830.jpg
-openloris_scene/corridor1-4/fisheye2/1560200172.940736.png
 EPIC-KITCHENS/P04/rgb_frames/P04_04/frame_0000042801.jpg
 kitti/sequences/13/image_3/003242.png
 kitti/sequences/09/image_2/001390.png
@@ -652,7 +645,6 @@ openloris_location/restaurant/001/005.png
 pklot/train/2012-09-15_10_02_09_jpg.rf.2e873bc80d4dde66f9c9970f59a1bba9.jpg
 kitti/sequences/13/image_3/001447.png
 sku110k/test_1977.jpg
-openloris_scene/market1-1/fisheye1/1563003605.911647.png
 EPIC-KITCHENS/P04/rgb_frames/P04_114/frame_0000005566.jpg
 kitti/sequences/02/image_2/002486.png
 kitti/sequences/13/image_2/002209.png
@@ -683,7 +675,6 @@ openloris_location/office/office-2/003.png
 pklot/train/2012-10-28_07_16_47_jpg.rf.efea9845b7161c8328ad4adf9ac2f916.jpg
 kitti/sequences/21/image_2/000587.png
 sku110k/test_1888.jpg
-openloris_scene/market1-1/fisheye1/1563003660.503043.png
 EPIC-KITCHENS/P04/rgb_frames/P04_04/frame_0000040115.jpg
 kitti/sequences/19/image_3/001761.png
 kitti/sequences/19/image_2/003513.png
@@ -793,7 +784,6 @@ openloris_location/office/005/003.png
 pklot/train/2013-04-12_08_30_02_jpg.rf.a89441003bc0aea01b52d35093e5d9e7.jpg
 kitti/sequences/03/image_2/000791.png
 sku110k/train_5451.jpg
-openloris_scene/corridor1-1/fisheye1/1560000234.480247.png
 EPIC-KITCHENS/P04/rgb_frames/P04_04/frame_0000035993.jpg
 kitti/sequences/01/image_3/000033.png
 kitti/sequences/13/image_2/000940.png
@@ -1062,7 +1052,6 @@ openloris_location/restaurant/004/000.png
 pklot/test/2012-12-07_17_02_25_jpg.rf.f56e7d14beb8b989bdbf95af0c12238c.jpg
 kitti/sequences/04/image_3/000150.png
 sku110k/train_2415.jpg
-openloris_scene/home1-2/fisheye1/1560100104.678826.png
 EPIC-KITCHENS/P04/rgb_frames/P04_122/frame_0000000649.jpg
 kitti/sequences/02/image_2/002856.png
 kitti/sequences/07/image_2/000003.png
@@ -1123,7 +1112,6 @@ openloris_location/home/008/002.png
 pklot/test/2012-12-28_16_10_12_jpg.rf.4bb85f073e9f3188f4ef4ec6261f7185.jpg
 kitti/sequences/13/image_2/002001.png
 sku110k/test_1050.jpg
-openloris_scene/home1-3/fisheye2/1560200107.904536.png
 EPIC-KITCHENS/P04/rgb_frames/P04_04/frame_0000005417.jpg
 kitti/sequences/15/image_3/001878.png
 kitti/sequences/16/image_3/000101.png
@@ -1204,7 +1192,6 @@ openloris_location/office/office-4/071.png
 pklot/test/2012-12-16_17_35_14_jpg.rf.eefe69e4032e3b2523a350b373f4bfc3.jpg
 kitti/sequences/08/image_3/000145.png
 sku110k/train_4832.jpg
-openloris_scene/home1-2/fisheye2/1560100063.281902.png
 EPIC-KITCHENS/P04/rgb_frames/P04_114/frame_0000003654.jpg
 kitti/sequences/15/image_3/001679.png
 kitti/sequences/06/image_2/000765.png
@@ -1235,7 +1222,6 @@ openloris_location/home/008/005.png
 pklot/test/2012-12-20_13_15_08_jpg.rf.305482b8e06a1b04cf29b50eabed84bd.jpg
 kitti/sequences/13/image_3/001268.png
 sku110k/train_1807.jpg
-openloris_scene/corridor1-4/fisheye2/1560200233.391632.png
 EPIC-KITCHENS/P04/rgb_frames/P04_04/frame_0000023016.jpg
 kitti/sequences/00/image_2/001606.png
 kitti/sequences/00/image_3/003236.png
@@ -1285,7 +1271,6 @@ openloris_location/market/007/000.png
 pklot/train/2013-04-12_07_55_02_jpg.rf.979b8a6671d7119677fc2534f51cb0c4.jpg
 kitti/sequences/09/image_3/000762.png
 sku110k/test_1763.jpg
-openloris_scene/corridor1-4/fisheye1/1560200224.758687.png
 EPIC-KITCHENS/P04/rgb_frames/P04_122/frame_0000000044.jpg
 kitti/sequences/13/image_3/000267.png
 kitti/sequences/05/image_2/002691.png
@@ -1397,7 +1382,6 @@ openloris_location/corridor/corridor-1/027.png
 pklot/test/2013-02-23_14_35_08_jpg.rf.a8011dddbdd0dce884f5f2fa203f97a5.jpg
 kitti/sequences/19/image_3/004879.png
 sku110k/train_5599.jpg
-openloris_scene/market1-3/fisheye2/1563007940.248545.png
 EPIC-KITCHENS/P04/rgb_frames/P04_122/frame_0000000059.jpg
 kitti/sequences/21/image_3/002565.png
 kitti/sequences/05/image_3/000217.png
@@ -1489,7 +1473,6 @@ openloris_location/home/003_correct_rot/005.png
 pklot/train/2012-12-20_13_35_08_jpg.rf.b65d49e26c0bcf54d80429cdeaec4ba0.jpg
 kitti/sequences/15/image_3/001893.png
 sku110k/train_814.jpg
-openloris_scene/cafe1-1/fisheye1/1560004928.702222.png
 EPIC-KITCHENS/P05/rgb_frames/P05_06/frame_0000010074.jpg
 kitti/sequences/02/image_2/003622.png
 kitti/sequences/08/image_2/003876.png
@@ -1680,7 +1663,6 @@ openloris_location/home/home-0/019.png
 pklot/test/2013-04-14_13_05_07_jpg.rf.9c5a93058fc857e00c75096adf70c1f0.jpg
 kitti/sequences/05/image_3/002175.png
 sku110k/train_4908.jpg
-openloris_scene/cafe1-2/fisheye2/1560025153.704551.png
 EPIC-KITCHENS/P04/rgb_frames/P04_04/frame_0000036887.jpg
 kitti/sequences/05/image_3/000149.png
 kitti/sequences/16/image_2/001209.png
@@ -1790,7 +1772,6 @@ openloris_location/office/office-4/028.png
 pklot/train/2013-03-20_09_00_03_jpg.rf.3ba25d05c2f4f6874b199ef2c9d10b2d.jpg
 kitti/sequences/02/image_3/001058.png
 sku110k/val_116.jpg
-openloris_scene/home1-5/fisheye2/1560400020.051106.png
 EPIC-KITCHENS/P04/rgb_frames/P04_04/frame_0000006790.jpg
 kitti/sequences/19/image_3/001395.png
 kitti/sequences/08/image_2/002248.png
@@ -1821,7 +1802,6 @@ openloris_location/corridor/007/005.png
 pklot/train/2013-01-21_09_00_04_jpg.rf.490fd5bca9f76cdc0e703143a18a8166.jpg
 kitti/sequences/02/image_2/001642.png
 sku110k/train_2472.jpg
-openloris_scene/cafe1-2/fisheye1/1560025126.238950.png
 EPIC-KITCHENS/P05/rgb_frames/P05_06/frame_0000018162.jpg
 kitti/sequences/09/image_3/000793.png
 kitti/sequences/02/image_2/004589.png
@@ -1871,7 +1851,6 @@ openloris_location/corridor/corridor-4/013.png
 pklot/train/2012-09-13_17_05_34_jpg.rf.0de875a13d49125e0cd3cef2c7a6f8d3.jpg
 kitti/sequences/02/image_2/002096.png
 sku110k/train_7679.jpg
-openloris_scene/home1-4/fisheye1/1560300079.567521.png
 EPIC-KITCHENS/P04/rgb_frames/P04_114/frame_0000002254.jpg
 kitti/sequences/18/image_3/000201.png
 kitti/sequences/05/image_2/001687.png

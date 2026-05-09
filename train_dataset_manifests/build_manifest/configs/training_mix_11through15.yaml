@@ -1,0 +1,81 @@
+dataset_root: /workspace/data/input/
+
+sources:
+  - path: CODa
+    weight: 2
+  - path: coco
+    weight: 0.5
+  - path: exmaps
+    weight: 2
+  - path: openloris_location
+    weight: 2
+  - path: pklot
+    weight: 2
+  - path: sun397
+    weight: 0.5
+  - path: EPIC-KITCHENS/P01/rgb_frames/P01_01
+    weight: 0.16
+  - path: EPIC-KITCHENS/P01/rgb_frames/P01_05
+    weight: 0.16
+  - path: EPIC-KITCHENS/P01/rgb_frames/P01_08
+    weight: 0.16
+  - path: EPIC-KITCHENS/P01/rgb_frames/P01_17
+    weight: 0.16
+  - path: EPIC-KITCHENS/P01/rgb_frames/P01_19
+    weight: 0.16
+  - path: EPIC-KITCHENS/P02/rgb_frames/P02_128
+    weight: 0.16
+  - path: EPIC-KITCHENS/P02/rgb_frames/P02_101
+    weight: 0.16
+  - path: EPIC-KITCHENS/P02/rgb_frames/P02_125
+    weight: 0.16
+  - path: EPIC-KITCHENS/P02/rgb_frames/P02_12
+    weight: 0.16
+  - path: EPIC-KITCHENS/P02/rgb_frames/P02_110
+    weight: 0.16
+  - path: EPIC-KITCHENS/P03/rgb_frames/P03_22
+    weight: 0.16
+  - path: EPIC-KITCHENS/P03/rgb_frames/P03_120
+    weight: 0.16
+  - path: EPIC-KITCHENS/P03/rgb_frames/P03_108
+    weight: 0.16
+  - path: EPIC-KITCHENS/P03/rgb_frames/P03_18
+    weight: 0.16
+  - path: EPIC-KITCHENS/P03/rgb_frames/P03_112
+    weight: 0.16
+  - path: EPIC-KITCHENS/P04/rgb_frames/P04_122
+    weight: 0.16
+  - path: EPIC-KITCHENS/P04/rgb_frames/P04_20
+    weight: 0.16
+  - path: EPIC-KITCHENS/P04/rgb_frames/P04_114
+    weight: 0.16
+  - path: EPIC-KITCHENS/P04/rgb_frames/P04_17
+    weight: 0.16
+  - path: EPIC-KITCHENS/P04/rgb_frames/P04_04
+    weight: 0.16
+  - path: EPIC-KITCHENS/P05/rgb_frames/P05_03
+    weight: 0.16
+  - path: EPIC-KITCHENS/P05/rgb_frames/P05_06
+    weight: 0.16
+  - path: EPIC-KITCHENS/P05/rgb_frames/P05_08
+    weight: 0.16
+  - path: EPIC-KITCHENS/P05/rgb_frames/P05_01
+    weight: 0.16
+  - path: EPIC-KITCHENS/P05/rgb_frames/P05_04
+    weight: 0.16
+  - path:  kitti
+    weight: 4
+  - path: sku110k
+    weight: 1
+  - path: openloris_scene
+    weight: 0.5
+
+max_data_slice_size: 2000
+d_slice_indices: [11, 12, 13, 14, 15]
+manifest_output_directory: ./
+data_mix_prefix: train_mix
+
+random_seed: 1234
+recursive: true
+allow_absolute_source_paths: false
+sort_before_shuffle: true
