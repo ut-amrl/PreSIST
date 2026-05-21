@@ -2,405 +2,314 @@
 
 End-to-end recipe for training and evaluating persistence models against the
 PUCPR (PKLot) dataset using the **flanks-fixed** annotations
-(`PUCPR_repaired_split_flanks_fixed/export_augmented.json`). The previous
-annotations had a transient-track labelling defect (missing bounding absents);
-every config/script described here targets the repaired manifest.
+(`PUCPR_repaired_split_flanks_fixed/export_augmented.json`). Every config /
+script described here targets the repaired manifest; earlier annotations had
+a transient-track labelling defect (missing bounding absents).
 
 All commands run **inside the perpetua docker container** unless noted. Start
-the container with `bash docker_start_datasets_plus_spf.sh` (the
-`new_pklot` volume mount provides the data at `/workspace/data/input/new_pklot/`).
+the container with `bash docker_start_datasets_plus_spf.sh` (the `new_pklot`
+volume mount provides the data at `/workspace/data/input/new_pklot/`).
 
 ---
 
-## 0. One-time: regenerate the 50/50 temporal split
-
-The `splits/50_50/` directory may contain stale files copied from the old
-manifest (check `split_metadata.json` — `source_manifest` must end in
-`_flanks_fixed/export_augmented.json`). Regenerate if needed:
+## 0. Quickstart
 
 ```bash
-python generate_temporal_split.py \
-  --manifest /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/export_augmented.json \
-  --train-fraction 0.5 --force
-```
+# 0. one-time per split — materialize daycount subsets
+python generate_daycount_train_manifests.py \
+  --source-train-manifest /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/splits/50_20_30/train_through_2012-10-15.json \
+  --days 0.5 1 2 3 4 5 7 10 14 21 28 35 --force
 
-This emits `train_through_2012-10-15.json`, `test_from_2012-10-16.json`, the
-two `*.track_id_to_location_cell128.json` sidecars, and an updated
-`split_metadata.json` under `.../PUCPR_repaired_split_flanks_fixed/splits/50_50/`.
+# 1. train + default-scenario eval (no GPU)
+bash scripts/pucpr_daycount/train_eval_perpetua.sh
+
+# 2. train + run vision inference + eval (GPU)
+bash scripts/pucpr_daycount/train_vision.sh <GPU_IDS>
+bash scripts/pucpr_daycount/eval_vision.sh <GPU_IDS>
+
+# 3. alternate-scenario eval over existing artifacts (perpetua + vision + LLM)
+EVAL_SCENARIO=percentile_scaled_horizons_5min  bash scripts/pucpr_daycount/eval_perpetua_scenarios.sh
+EVAL_SCENARIO=percentile_scaled_horizons_15min bash scripts/pucpr_daycount/eval_perpetua_scenarios.sh
+EVAL_SCENARIO=percentile_scaled_horizons_5min  bash scripts/pucpr_daycount/eval_vision_llm_scenarios.sh
+EVAL_SCENARIO=percentile_scaled_horizons_15min bash scripts/pucpr_daycount/eval_vision_llm_scenarios.sh
+
+# 4. plots + LaTeX tables — 6 scenarios × 3 groupings × 4 metrics
+bash scripts/pucpr_daycount/run_render_all.sh
+```
 
 ---
 
-## 1. Method families and configs
+## 1. Data prep (one-time per split)
 
-Three method families are wired up. All share the per-track-balanced PUCPR
-test benchmark (`benchmark_dataset/annotation_tool_pucpr_split_test_balanced.yaml`)
-and the same train manifest
-(`train_dataset/annotation_tool_pklot_split_train{,_vision}.yaml`,
-`cell_size_px: 128`).
+The 50/20/30 temporal split lives at
+`/workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/splits/50_20_30/`:
 
-| Family   | Trains? | Sweeps over (fraction, seed)? | Sweep script                                                                                  |
-| -------- | ------- | ----------------------------- | --------------------------------------------------------------------------------------------- |
-| Vision   | yes     | yes                           | `scripts/sweep_vision_anchor_midpoint_pucpr_split_50_50_balanced_train.sh`                    |
-| Perpetua | yes     | yes                           | `scripts/sweep_train_eval_pucpr_split_50_50_balanced.sh`                                      |
-| Gemma    | no      | no — single run               | (no script; one-shot `python eval_persistence.py --config-name=...`)                          |
+| File | Purpose |
+|---|---|
+| `train_through_2012-10-15.json` | 50% train (~35 days from 2012-09-11) |
+| `val_from_2012-10-16_through_2012-10-29.json` | 20% val (~14 days) |
+| `test_from_2012-10-30.json` | 30% test (~22 days, ≥ 1000 tracks) |
+| `test_from_2012-10-30.track_id_to_location_cell128.json` | Per-track location sidecar (cell_size_px=128) for location-grouped inferencers |
+| `split_metadata.json` | Provenance |
 
-For each family there is a matching **eval-on-train** (`_ON_TRAIN`) config and
-script that points the eval benchmark at the TRAIN manifest
-(`annotation_tool_pucpr_split_train_balanced.yaml`) so train-vs-test gap can be
-plotted as a function of subsample fraction. Same trained checkpoints are
-reused — only the benchmark dataset changes, and outputs land in a distinct
-`pucpr_split_new_pklot_PUCPR_train_50_50_balanced/` subdir.
+### 1a. (Re)generate the temporal split
 
-### Vision — `vision_anchor_midpoint`, balanced-train + balanced-eval
-
-- Train cfg: `train_config_vision_anchor_midpoint_pucpr_split_50_50_balanced_train`
-- Test eval cfg: `eval_config_vision_anchor_midpoint_pucpr_split_50_50_balanced_train_balanced_eval`
-- ON_TRAIN eval cfg: `..._balanced_train_balanced_eval_ON_TRAIN`
-- `experiment.name`: `vision_anchor_midpoint_pucpr_split_50_50_balanced_train`
-
-### Perpetua — 8 variants
-
-Cartesian product of `{single_exp, single_lognormal, mixture_exp, mixture_lognormal}` ×
-`{location, class}`.
-
-- Train cfg: `train_config_perpetua_<dist>_<grouping>_pucpr_split_50_50`
-- Test eval cfg: `eval_config_perpetua_<dist>_<grouping>_pucpr_split_50_50_balanced`
-- ON_TRAIN eval cfg: `..._balanced_ON_TRAIN`
-- `experiment.name`: `perpetua_<dist>_<grouping>_pucpr_split_50_50`
-
-### Gemma LLM — single run (not learned)
-
-- Test eval cfg: `eval_config_llm_pucpr_split_50_50_gemma_v3iqrBehav4_mO20_percentile_balanced`
-- ON_TRAIN eval cfg: `..._balanced_ON_TRAIN`
-- `experiment.name`: `llm_pipeline_gemma_v3iqrBehav4_mO20_pucpr_split_50_50`
-
----
-
-## 2. Run
-
-### 2a. Vision sweep
-
-```bash
-# Train (default: fractions 0.1..1.0, seed 0). First positional is GPU IDs.
-bash scripts/sweep_vision_anchor_midpoint_pucpr_split_50_50_balanced_train.sh 0,1,2,3 --jobs 4
-
-# Eval on test set:
-bash scripts/sweep_eval_vision_anchor_midpoint_pucpr_split_50_50_balanced_train_balanced_eval.sh 0
-
-# Eval on train set (overfitting diagnostic — reuses checkpoints):
-bash scripts/sweep_eval_vision_anchor_midpoint_pucpr_split_50_50_balanced_train_balanced_eval_ON_TRAIN.sh 0
-```
-
-Overrides (both train and eval sweeps): `--jobs N`, `--fractions "0.1 1.0"`, `--seeds "0 1 2"`, `--force` (retrain or re-eval even if outputs exist), `--config <CFG>` (train sweep only).
-
-Eval CSV: `/workspace/data/output/persistence_eval_outputs/sweep_eval_metrics_vision_anchor_midpoint_pucpr_split_50_50_balanced_train_balanced_eval{,_ON_TRAIN}.csv`.
-
-### 2b. Perpetua sweep
-
-```bash
-# Train + eval (test set):
-bash scripts/sweep_train_eval_pucpr_split_50_50_balanced.sh
-
-# Eval-on-train (reuses checkpoints; FORCE_EVAL=1 is set automatically):
-bash scripts/sweep_train_eval_pucpr_split_50_50_balanced_ON_TRAIN.sh
-```
-
-Overrides (env vars, set before invoking):
-
-| Env var          | Default                                                              | Notes                                                                 |
-| ---------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `VARIANTS`       | all 8 `<dist>:<grouping>` pairs                                      | Space-separated. Restrict to a single variant for fast smoke tests.   |
-| `FRACTIONS`      | `0.1 1.0 0.5 0.3 0.7 0.2 0.4 0.6 0.8 0.9`                            | Space-separated.                                                      |
-| `SEED`           | `0`                                                                  |                                                                       |
-| `CELL_SIZE`      | `128`                                                                | Must match the cell size in the train dataset YAML.                   |
-| `MIXTURE_FAST`   | unset                                                                | When set, disables K-sweep / retrain loop for mixture trainers.       |
-| `FORCE_TRAIN`    | unset                                                                | Retrain even if `persistence_params.json` exists.                     |
-| `FORCE_EVAL`     | unset (test); `1` (ON_TRAIN)                                         | Re-eval even if a fresh `metric_results.json` exists for the cell.    |
-| `OUT_CSV`        | `.../sweep_metrics_pucpr_split_50_50_balanced{,_ON_TRAIN}.csv`       | Override to write multiple runs side-by-side.                         |
-| `TEST_MANIFEST`  | `.../splits/50_50/test_from_2012-10-16.json` (test) / `train_through_2012-10-15.json` (ON_TRAIN) | Both wrappers also export `TEST_SIDECAR` to match.                    |
-
-Single-variant smoke test:
-```bash
-VARIANTS="single_exp:location" FRACTIONS="1.0" \
-  bash scripts/sweep_train_eval_pucpr_split_50_50_balanced.sh
-```
-
-Single training cell (no sweep wrapper):
-```bash
-CUDA_VISIBLE_DEVICES=0 python train_persistence_models.py \
-  --config-name=train_config_perpetua_single_exp_location_pucpr_split_50_50 \
-  experiment.subsample_fraction=1.0 experiment.subsample_seed=0
-```
-
-### 2c. Gemma — single run
-
-```bash
-# Test set:
-CUDA_VISIBLE_DEVICES=0 python eval_persistence.py \
-  --config-name=eval_config_llm_pucpr_split_50_50_gemma_v3iqrBehav4_mO20_percentile_balanced
-
-# Train set (fairness check — Gemma can't overfit, but exposes prompt drift):
-CUDA_VISIBLE_DEVICES=0 python eval_persistence.py \
-  --config-name=eval_config_llm_pucpr_split_50_50_gemma_v3iqrBehav4_mO20_percentile_balanced_ON_TRAIN
-```
-
-Gemma requires the vLLM server in `start_gemma_vllm_server.sh` to be running.
-See that script's comments for GPU/memory recommendations.
-
----
-
-## 3. Plotting
-
-Three plot scripts share a manifest format (`label,path[,has_train_pct]` CSV
-with container paths to evaluation-run dirs). Build a manifest from the sweep
-CSV with `scripts/build_plot_manifest.py`, then feed it to the plotter.
-
-### 3a. Train-percentage curves (`plot_train_pct_metrics.py`)
-
-For each metric, plots `metric vs train fraction` with one curve per `label`
-in the manifest. Use this for the headline "more data helps how much" plots.
-
-```bash
-# Get the total train-track count once (used to scale --x-units tracks):
-python -c "import json; d=json.load(open('/workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/splits/50_50/train_through_2012-10-15.json')); print(len(d.get('tracks', d)))"
-
-# Build a manifest (e.g. perpetua single_exp at all fractions):
-python scripts/build_plot_manifest.py \
-  --csv /workspace/data/output/persistence_eval_outputs/sweep_metrics_pucpr_split_50_50_balanced.csv \
-  --variant single_exp --grouping location \
-  --label-template '{variant}_{grouping}' \
-  --out /tmp/perpetua_single_exp_location.csv
-
-# Plot:
-python plot_train_pct_metrics.py \
-  --manifest /tmp/perpetua_single_exp_location.csv \
-  --x-units percent --x-units tracks \
-  --n-total-tracks <N_FROM_ABOVE> \
-  --debug-csv /workspace/data/output/persistence_eval_plots/perpetua_single_exp_location/debug.csv
-```
-
-Notable flags: `--metric accuracy --metric f1` (repeatable; default plots all),
-`--ext pdf|png|svg`, `--plot-subdir custom_name`, `--prefix run1_`,
-`--title "..."`. Passing multiple `--x-units` appends a `__<unit>` suffix to
-each output filename so percent- and tracks-axis plots can sit side-by-side.
-
-Bundled three-way comparison manifest (vision + perpetua + gemma) lives at
-`plot_manifests/three_way_train_pct/manifest.csv`. **The bundled file currently
-references the archived `pucpr_repaired_split` paths** — rebuild it from the
-new sweep CSV (above) before reusing. See
-`plot_manifests/three_way_train_pct/README.md` for the historical layout.
-
-### 3b. Per-horizon metric curves (`plot_horizon_metrics.py`)
-
-Same manifest format, but plots `metric vs prediction horizon` (one curve per
-label). Default `--x-units hours`; alternatives include `seconds`, `days`.
-Flags `--show-base-rate` (overlay positive-class base rate per horizon),
-`--threshold 0.5`, `--min-count 1` (drop horizon buckets with too few
-observations).
-
-### 3c. Disappearance-time ECDFs (`plot_disappearance_distributions.py`)
-
-Single overlay ECDF of true vs predicted disappearance times per `(label,
-fraction)` row. Pulls per-episode times directly from `prediction_records.json`.
-
-```bash
-python plot_disappearance_distributions.py \
-  --manifest plot_manifests/three_way_train_pct/manifest.csv \
-  --fractions "0.1 0.5 1.0" --xlog --time-units hours
-```
-
-Warns if any row's truth ECDF diverges from the others — a useful sanity check
-that all rows actually evaluated against the same test subset.
-
-### 3d. Qualitative examples (`plot_pklot_examples.py`)
-
-Renders RGB image + masked anchor crop + predicted parameters / horizons /
-ground-truth lifetime for sampled track-anchor observations from an inference
-run. Useful when a quantitative metric looks off and you want to *see* what
-the model is producing.
-
-```bash
-python plot_pklot_examples.py \
-  --manifest plot_manifests/three_way_train_pct/manifest.csv \
-  --n 8 --seed 0 \
-  --output-root /workspace/data/output/plot_examples
-```
-
-Flags: `--run-dir` (use specific eval dirs instead of a manifest),
-`--methods <label> [...]` (filter), `--label custom_name`, `--subdir foo`.
-
----
-
-## 4. Debug / inspection utilities
-
-| Script                                          | What it does                                                                                                                                                                |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/inspect_trained_model.py <model_dir>`  | Health checks on a trained Perpetua model: degenerate fits, implausible lifetimes, severely skewed bucket sizes. Exit 0 if all sanity checks pass; `--verbose` for details. |
-| `scripts/check_truth_seed_variance.py`          | Re-derives the percentile_horizons truth distribution offline and sweeps `shuffle_seed` values. Use when you suspect the test sampling is shifting your truth ECDF.         |
-| `scripts/inspect_anchor_class_images.py`        | For closed-set CLIP runs: dumps RGB + masked crop for any anchor whose assigned class fails a filter (e.g., `--exclude-class car`). Diagnoses CLIP misclassifications.      |
-| `scripts/debug_clip_alignment.py`               | For a given image + segmentation cache, prints top-5 CLIP-matching classes per mask. Helps diagnose CLIP embedding mismatches.                                              |
-
-Typical workflow when a sweep produces surprising numbers:
-
-1. Spot-check a single trained checkpoint with `inspect_trained_model.py`.
-2. Open the offending eval run dir under `persistence_eval_outputs/` and
-   render qualitative examples with `plot_pklot_examples.py --run-dir <dir>`.
-3. If the truth ECDF in `plot_disappearance_distributions.py` looks shifted,
-   run `check_truth_seed_variance.py` to confirm it's not seed-driven.
-
----
-
-## 5. Where outputs land
-
-| Artifact                    | Path (container)                                                                                                |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Trained models              | `/workspace/data/output/perpetua/<experiment.name>/frac<F>_seed<S>/`                                            |
-| Eval `metric_results.json`  | `/workspace/data/output/persistence_eval_outputs/<dataset_name>/<method_name>/<benchmark>/inference_runs/.../evaluation_runs/...` |
-| Sweep CSVs                  | `/workspace/data/output/persistence_eval_outputs/sweep_{metrics,eval_metrics_*}_pucpr_split_50_50_balanced*.csv`  |
-| Plots                       | `/workspace/data/output/persistence_eval_plots/<plot-subdir>/`                                                  |
-
-Train and test runs land under distinct `<dataset_name>` subdirs (driven by
-the benchmark dataset's `name:` field) so eval-on-train results never collide
-with held-out-test results.
-
----
-
-## 6. Day-count sweep on the 50/20/30 split (new)
-
-Parallel to the fraction sweep above, this mode varies **the number of
-contiguous days of training data** anchored to the start of the train window.
-It targets the `splits/50_20_30/` train/val/test split (50% train ≈ 35 days,
-20% val, 30% test ≈ 22 days, ≥1000 test tracks). The 50/50 split and its
-fraction sweep are unchanged.
-
-### 6a. Generate the 50/20/30 split (one-time)
-
-Dry-run viability check first (no files written; aborts if test < 1000 tracks):
+Dry-run viability check first (aborts if test < 1000 tracks):
 ```bash
 python generate_temporal_split.py \
   --manifest /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/export_augmented.json \
   --train-fraction 0.5 --val-fraction 0.2 --min-test-tracks 1000 --dry-run
 ```
 
-Then materialize:
+Then materialize + build the test-side per-track location sidecar:
 ```bash
 python generate_temporal_split.py \
   --manifest /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/export_augmented.json \
   --train-fraction 0.5 --val-fraction 0.2 --min-test-tracks 1000
 
-# Test sidecar for per-location inferencers:
 python build_track_location_index.py \
-  --manifest /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/splits/50_20_30/test_from_2012-10-30.json \
+  --manifest .../splits/50_20_30/test_from_2012-10-30.json \
   --cell-size-px 128
 ```
 
-Outputs land at `.../splits/50_20_30/{train_through_2012-10-15.json,
-val_from_2012-10-16_through_2012-10-29.json, test_from_2012-10-30.json,
-discarded_tracks.json, split_metadata.json}` (manifests reference the
-original per-track JSONs unchanged — no track-file duplication).
+Track JSONs are referenced by the manifests in place — no per-track duplication.
 
-### 6b. Materialize day-count train manifests
+### 1b. Materialize daycount training subsets
 
-Each N gets a self-contained subdirectory with truncated per-track JSONs
-(observations clipped to `[train_start, train_start + N)`; tracks with no
-positive observation in window are dropped; boundaries recomputed from
-kept observations).
+Each `N` gets a self-contained subdirectory under `.../50_20_30/daycount/` with
+truncated per-track JSONs (observations clipped to `[train_start, train_start
++ N)`; tracks with no positive observation in window are dropped; boundaries
+recomputed from kept observations).
 
 ```bash
 python generate_daycount_train_manifests.py \
-  --source-train-manifest /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/splits/50_20_30/train_through_2012-10-15.json \
-  --days 1 2 3 4 5 7 10 14 21 28 35
+  --source-train-manifest .../50_20_30/train_through_2012-10-15.json \
+  --days 0.5 1 2 3 4 5 7 10 14 21 28 35 --force
 ```
 
-Result layout (`splits/50_20_30/daycount/days_NNNN/`):
-- `train_first_<N>d_through_<cutoff_minus_one>.json` — the manifest
+Output layout — `splits/50_20_30/daycount/days_<slug>/`:
+- `train_first_<N>d_through_<cutoff_minus_one>.json` (integer N) or `train_first_<slug>d.json` (fractional N)
 - `tracks/<track_id>.json` — truncated per-track JSONs
-- `daycount_metadata.json` — provenance (source sha, train_start, kept/dropped counts)
+- `daycount_metadata.json` — provenance (source sha, train_start, kept/dropped counts, cutoff timestamp)
 
-For reference, kept-track counts at the default grid: N=1→342 tracks, N=2→993,
-N=3→1565, N=5→2494, N=7→3160, N=14→5576, N=21→6170, N=35→7333 (full).
+**Slug naming** — integer N uses zero-padded `days_0001/`, `days_0007/`, …;
+fractional N uses dot-free slugs like `days_0p5/` so paths stay
+filesystem-safe across all consumers.
 
-### 6c. Sweep configs (new files)
+**Fractional-day semantics** — for `--days 0.5` (more generally `K + f`,
+`0 < f < 1`), the cutoff is anchored at the empirical `f`-quantile of image
+timestamps on the partial day, deduped across tracks. So `--days 0.5` keeps
+all observations whose timestamp is < the median image of day K. This
+respects the fact that PKLot only collects during daylight — "half a day" is
+"half the images of that day", not "midnight + 12h".
 
-| Family   | Train cfg                                                                                       | Eval cfg                                                                                                          |
-| -------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Vision   | `train_config_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train`              | `eval_config_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train_balanced_eval`                   |
-| Perpetua | `train_config_perpetua_<dist>_<grouping>_pucpr_split_50_20_30_daycount`                         | `eval_config_perpetua_<dist>_<grouping>_pucpr_split_50_20_30_daycount_balanced`                                   |
-| Gemma    | (none — inference only)                                                                         | `eval_config_llm_pucpr_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced`                                 |
+For reference, kept-track counts at the default grid: N=1→342 tracks,
+N=2→993, N=3→1565, N=5→2494, N=7→3160, N=14→5576, N=21→6170, N=35→7333
+(full).
 
-Each new training top-level cfg cross-references its eval counterpart in a
-header comment. `experiment.day_count` is mandatory and is supplied by the
-sweep wrapper. `paths.model_dir` resolves to
-`<model_root>/<experiment.name>/days<N>_seed<S>` (no zero-padding).
+### 1c. Per-track-balanced anchor sampling at eval time
 
-The new train_dataset presets bind `external_val_manifest_path` to the
-50/20/30 val manifest, so `TrainingDataset` loads val from disk instead of
-slicing it off train (matters at small N where the train pool is too small
-to safely split).
+Every eval cell uses
+[configs/train_confs/benchmark_dataset/annotation_tool_pucpr_split_50_20_30_test_balanced.yaml](configs/train_confs/benchmark_dataset/annotation_tool_pucpr_split_50_20_30_test_balanced.yaml):
 
-### 6d. Sweep wrappers
-
-```bash
-# Perpetua train + eval (mixture variants need spf_perpetua_container — they
-# import jax). Single variants run fine in pf_plus_datasets_v2.
-DAYS="1 2 3 4 5 7 10 14 21 28 35" \
-  bash scripts/sweep_train_eval_pucpr_split_50_20_30_daycount_balanced.sh
-
-# Vision train (GPU IDs as first positional arg):
-bash scripts/sweep_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train.sh 0 \
-  --days "1 2 3 4 5 7 10 14 21 28 35"
-
-# Vision eval:
-bash scripts/sweep_eval_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train_balanced_eval.sh 0
+```yaml
+max_anchor_observations: 1000
+per_track_balanced: true
+shuffle_seed: 42
 ```
 
-Default `DAYS` grid is computed from `split_metadata.json` (`train_days`
-field): `1 2 3 4 5 7 10 14 21 28 <train_days>` — denser at low end, last
-entry replaced with the actual `train_days` so we always include the full
-window.
-
-| Env var       | Default                                                                | Notes                                                                                  |
-| ------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `DAYS`        | dense low-end grid capped at `train_days`                              | Space-separated.                                                                       |
-| `DAYCOUNT_ROOT` | `<SPLIT_DIR>/daycount`                                                | Holds `days_NNNN/` subdirs from `generate_daycount_train_manifests.py`.                |
-| `SEEDS`       | `0`                                                                    | (Perpetua wrapper). Vision wrapper uses `--seeds`.                                     |
-| `MIXTURE_FAST`, `FORCE_TRAIN`, `FORCE_EVAL`, `OUT_CSV`, `VARIANTS`, `EVAL_SCENARIO` | same semantics as the fraction sweep | See section 2b. |
-
-Sweep CSVs:
-- `/workspace/data/output/persistence_eval_outputs/sweep_metrics_pucpr_split_50_20_30_daycount_balanced.csv`
-- `.../sweep_eval_metrics_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced.csv`
-
-### 6e. LLM single run on the new test split
-
-```bash
-CUDA_VISIBLE_DEVICES=0 python eval_persistence.py \
-  --config-name=eval_config_llm_pucpr_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced
-```
-
-LLM is inference-only (pretrained Gemma) — no day-count axis, no sweep.
-
-### 6f. Granularity gate
-
-Before launching the full N-axis sweep, run all variants at N=1 and inspect
-`balanced_accuracy@0.5` in the CSV. **If any variant is already at ceiling
-(>= 0.95) at N=1, the day grid is too coarse** — switch the manifest
-generator to hour granularity (would require a `--hours` arg in
-`generate_daycount_train_manifests.py` and corresponding sweep
-plumbing). On the current PUCPR 50/20/30 split, single-component perpetua
-at N=1 sits around `balanced_accuracy@0.5 ≈ 0.74`, so day granularity is
-fine for the headline experiment.
+The framework picks a per-track cap such that capping yields at least 1000
+anchors total, then trims to exactly 1000 after a seeded shuffle. This
+prevents long-lived tracks (e.g. parking spots that are empty all month) from
+dominating the headline numbers. If you want an unbalanced control, point
+the eval at a benchmark dataset YAML with `per_track_balanced: false` (the
+archived `_ON_TRAIN` and 50/50 configs used the unbalanced form).
 
 ---
 
-## 7. Archived (pre-flanks-fix) configs and scripts
+## 2. Method families
 
-The previous PKLot/PUCPR configs and sweep scripts (targeting the
-`PUCPR_repaired_split` manifest with the transient-track labelling defect)
-have been moved to:
+Three families produce a `metric_results.json` per (D, scenario, noise) cell;
+the renderer reads aggregate sweep CSVs.
 
-- `configs/train_confs/_archive_pklot/`
-- `scripts/_archive_pklot/`
+| Family | Backbone / source | Trained per D? | Where models / inference artifacts land |
+|---|---|---|---|
+| Perpetua | survival-fit (EM/AIC); `mixture_persistence_filter` for mixtures, `rosen` for singles | yes (8 variants × D) | `/workspace/data/output/perpetua/perpetua_*` |
+| Vision-only | DINOv2 ViT-L/14 (frozen) + SelaVPR adapter + scalar head | yes (one per D) | `/workspace/data/output/perpetua/vision_anchor_midpoint_*` |
+| PerSIST-Lang (gemma) | gemma 4.31b with `cap_proc_long7__gemmaVLMDesc_blur_bg_context_crop_mask_t3_cmd1_no_holes_longPrompt__ph_v3IqrBehav4` | no (inference-only, no D axis) | `/workspace/data/output/persistence_eval_outputs/.../gemma_*` |
 
-Kept for reference / re-running historical experiments only. **Do not use
-these for new work** — the labels are wrong (transients without bounding
-absents).
+Perpetua expands to 8 variants: cartesian product of `{single_exp,
+single_lognormal, mixture_exp, mixture_lognormal} × {class, location}`.
+- Train cfg pattern: `train_config_perpetua_<dist>_<grouping>_pucpr_split_50_20_30_daycount[.yaml]`
+- Eval cfg pattern: `eval_config_perpetua_<dist>_<grouping>_pucpr_split_50_20_30_daycount_balanced[.yaml]`
+- `experiment.name`: `perpetua_<dist>_<grouping>_pucpr_split_50_20_30_daycount_{fullK_mins5_p0p01,emk1_noise0p01_mins5}`
+
+Vision:
+- Train cfg: `train_config_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train.yaml`
+- Eval cfg: `eval_config_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train_balanced_eval.yaml`
+
+LLM:
+- Eval cfg: `eval_config_llm_pucpr_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced.yaml`
+- Inference artifacts already exist on disk (no training step here).
+
+---
+
+## 3. Training + default-scenario eval (`percentile_horizons`, matched noise = 0.01)
+
+The default eval scenario is `percentile_horizons` (anchor-only — no
+observations fed to the filter), at matched noise `p_m = p_f = 0.01`.
+
+### 3a. Perpetua — no GPU
+```bash
+bash scripts/pucpr_daycount/train_eval_perpetua.sh
+```
+Runs train + eval for all 8 variants × all default days. Idempotent — each
+cell skips re-train if `persistence_params.json` already exists and skips
+re-eval if a fresh `metric_results.json` exists newer than the model.
+
+### 3b. Vision — GPU
+```bash
+bash scripts/pucpr_daycount/train_vision.sh <GPU_IDS> --jobs 4
+bash scripts/pucpr_daycount/eval_vision.sh <GPU_IDS>
+```
+`eval_vision.sh` produces the `inference_runs/<timestamp>/` artifact that
+`eval_vision_llm_scenarios.sh` reuses for alternate scenarios.
+
+### 3c. LLM
+Inference-only and the artifacts are already on disk; the default-scenario
+eval is run from §4 (it's just another `EVAL_SCENARIO=percentile_horizons`
+invocation against existing inference_runs).
+
+---
+
+## 4. Alternate-scenario eval (5min / 15min)
+
+Two flavours, both with `recency_cap` ∈ {300s, 900s}:
+
+- **`percentile_scaled_horizons_{5,15}min`** — per-query causal mask. Each
+  query at `dt_q` sees observations in `[anchor, anchor + recency_cap]` AND
+  strictly earlier than `t_q − min(recency_cap, dt_q/2)`.
+- **`percentile_anchor_window_horizons{,_5min,_15min}`** — symmetric anchor
+  window. Each query at `dt_q` sees observations in
+  `[anchor, anchor + min(recency_cap, dt_q/2)]`.
+
+Eval-only — uses pre-existing trained perpetua models and pre-existing vision
++ LLM inference_runs:
+
+```bash
+EVAL_SCENARIO=percentile_scaled_horizons_5min  bash scripts/pucpr_daycount/eval_perpetua_scenarios.sh
+EVAL_SCENARIO=percentile_scaled_horizons_15min bash scripts/pucpr_daycount/eval_perpetua_scenarios.sh
+EVAL_SCENARIO=percentile_scaled_horizons_5min  bash scripts/pucpr_daycount/eval_vision_llm_scenarios.sh
+EVAL_SCENARIO=percentile_scaled_horizons_15min bash scripts/pucpr_daycount/eval_vision_llm_scenarios.sh
+# (similar invocations for the three percentile_anchor_window_horizons variants)
+```
+
+---
+
+## 5. Aggregation & plotting
+
+```bash
+bash scripts/pucpr_daycount/run_render_all.sh
+```
+
+Produces — for each of 6 scenarios × 3 groupings × 4 metrics = 72 PDFs + 72
+LaTeX tables — under
+`/workspace/data/output/persistence_eval_plots/daycount_<scenario>_matched_noise_<grouping>/{bacc,accuracy,f1,mae}.{pdf,tex}`.
+
+Grouping modes:
+- `both` — Perpetua class (G) + location (L) overlaid; vision + PerSIST-Lang as separate lines
+- `class` — Perpetua class-grouped only + vision + PerSIST-Lang
+- `location` — Perpetua location-grouped only + vision + PerSIST-Lang
+
+Plot styling: 10.5×5.5 figsize, linear x-axis with `xlim(0, 36)`, 45° tick
+rotation, 3-column legend (singles | mixtures | Vision + PerSIST-Lang),
+brown+tan / green / red / purple / orange / teal palette, best-in-column
+bolded in the LaTeX tables.
+
+Single-panel invocation:
+```bash
+python scripts/pucpr_daycount/render_sweep_plots.py \
+  --perp-csv <perp_csv> --vl-csv <vl_csv> \
+  --grouping {both,class,location} --out-dir <dir>
+```
+
+---
+
+## 6. Knob reference
+
+| Knob | Scripts | Default | When to change |
+|---|---|---|---|
+| `DAYS` | all sweep scripts | `0.5 1 2 3 4 5 7 10 14 21 28 35` | Restrict the D grid (e.g. `DAYS="0.5"` for a single new D). Re-materialize the daycount manifest first for fractional values not yet on disk. |
+| `KINDS` | perpetua scripts | `mixture single` | Limit to mixture variants only or singles only. |
+| `METHODS` | `eval_vision_llm_scenarios.sh` | `vision llm` | Skip LLM (or vision) re-eval. |
+| `JOBS` | all sweep scripts | `1` | Parallelism; `JOBS=4` is the typical setting we used. |
+| `EVAL_SCENARIO` | both eval-only scripts | `percentile_horizons` | Switch to any `eval_scenario/*.yaml` (e.g. `percentile_scaled_horizons_{5,15}min`, `percentile_anchor_window_horizons*`, or a new scenario you add). |
+| `EVAL_NOISE_PM` / `EVAL_NOISE_PF` | both eval-only scripts | unset (uses YAML default of 0.01) | Override the persistence-filter noise model; outputs land in noise-tagged CSV / log paths. |
+| `FORCE_TRAIN` | `train_eval_perpetua.sh`, `train_vision.sh` | unset | Retrain even if `persistence_params.json` / `best_model.pt` exists. |
+| `FORCE_EVAL` / `FORCE_REEVAL` | eval scripts | unset | Re-run eval even if metrics already exist for the cell. |
+| `EXP_TAG` | `train_eval_perpetua.sh` | unset | Version suffix on model_dir + CSV (e.g. `EXP_TAG=v2` for an A/B comparison). |
+| `MAX_ANCHOR_OBS` | `eval_vision_llm_scenarios.sh` | `50` | Cap on anchor observations passed to the vision/LLM benchmark dataset. |
+| `OUT_CSV` | all sweep scripts | derived from scenario + noise tag | Direct the aggregate CSV elsewhere. |
+| `LOG_DIR` | all sweep scripts | sibling of `OUT_CSV` | Direct per-cell logs elsewhere. |
+| `FILTER_OVERRIDE` | `eval_perpetua_scenarios.sh` | unset | Override which `persistence_filter/*.yaml` to use (e.g. ablations). |
+
+---
+
+## 7. Adding a new variant
+
+- **New D value** — add to `DAYS` (re-materialize the split first for fractional values via `generate_daycount_train_manifests.py --days <value> --force`).
+- **New eval scenario** — drop a YAML under `configs/train_confs/eval_scenario/`, optionally add a new provider class under `persistence_eval/sampling/`, then `EVAL_SCENARIO=<name> bash …_scenarios.sh`. Append the scenario name to `SCENARIOS=( … )` in `scripts/pucpr_daycount/run_render_all.sh` to include it in the plot output.
+- **New noise level** — `EVAL_NOISE_PM=… EVAL_NOISE_PF=… bash …_scenarios.sh`. Outputs land in a noise-tagged CSV so they don't overwrite the matched-noise headline.
+- **New survival family or K range** — edit the corresponding `train_config_perpetua_*.yaml` (or the `trainer/persistence_fit_*.yaml` it inherits from) and re-run with `FORCE_TRAIN=1`. The renderer auto-includes rows in the CSV matching the known method tokens; for genuinely new methods (not in `single_exp / single_lognormal / mixture_exp / mixture_lognormal / vision_anchor / llm`), add an entry to the `METHODS` / colour / marker tables in `render_sweep_plots.py`.
+- **New grouping** — would need plumbing in `inferencer/` and the eval configs; not a quick knob.
+
+---
+
+## 8. Output locations
+
+| Artifact | Path (container) |
+|---|---|
+| Trained perpetua params | `/workspace/data/output/perpetua/<EXP_NAME>/days<N>_seed<S>/persistence_params.json` |
+| Trained vision checkpoints | `/workspace/data/output/perpetua/vision_anchor_midpoint_*/days<N>_seed<S>/best_model.pt` |
+| Inference runs (vision/LLM) | `/workspace/data/output/persistence_eval_outputs/<dataset_name>/<EXP_NAME>_days<N>_seed<S>/.../inference_runs/<timestamp>/` |
+| Eval metrics | `inference_runs/<timestamp>/evaluation_runs/survival_based__<scenario>/<timestamp>/metric_results.json` |
+| Aggregate sweep CSVs | `/workspace/data/output/persistence_eval_outputs/sweep_metrics_pucpr_split_50_20_30_daycount_p0p01_mins5_{all8,vision_llm}_<scenario>[_pm0p01_pf0p01].csv` |
+| Plots + LaTeX tables | `/workspace/data/output/persistence_eval_plots/daycount_<scenario>_matched_noise_<grouping>/{bacc,accuracy,f1,mae}.{pdf,tex}` |
+
+Inference and eval land under distinct `<dataset_name>` subdirs (driven by the benchmark dataset's `name:` field) so eval-on-train diagnostics never collide with held-out-test results.
+
+---
+
+## 9. Debug / inspection utilities
+
+| Script | What it does |
+|---|---|
+| [scripts/inspect_trained_model.py](scripts/inspect_trained_model.py) `<model_dir>` | Health checks on a trained Perpetua model: degenerate fits, implausible lifetimes, severely skewed bucket sizes. Exit 0 if all sanity checks pass; `--verbose` for details. |
+| [scripts/check_truth_seed_variance.py](scripts/check_truth_seed_variance.py) | Re-derives the percentile_horizons truth distribution offline and sweeps `shuffle_seed` values. Use when you suspect the test sampling is shifting your truth ECDF. |
+| [scripts/inspect_anchor_class_images.py](scripts/inspect_anchor_class_images.py) | For closed-set CLIP runs: dumps RGB + masked crop for any anchor whose assigned class fails a filter. Diagnoses CLIP misclassifications. |
+| [scripts/debug_clip_alignment.py](scripts/debug_clip_alignment.py) | For a given image + segmentation cache, prints top-5 CLIP-matching classes per mask. |
+
+Typical workflow when a sweep produces surprising numbers:
+1. Spot-check a single trained checkpoint with `inspect_trained_model.py`.
+2. Open the offending eval run dir under `persistence_eval_outputs/` and inspect its `prediction_records.json`.
+3. If the truth ECDF looks shifted, run `check_truth_seed_variance.py` to confirm it's not seed-driven.
+
+For filter / inferencer / scenario internals see [persistence_eval/README.md](persistence_eval/README.md).
+
+---
+
+## 10. Archived configs and scripts
+
+These directories hold material that's no longer part of the active workflow
+but is kept for reference / re-running historical experiments:
+
+- [configs/train_confs/_archive_pklot/](configs/train_confs/_archive_pklot/) — pre-flanks-fix PKLot configs (transient-track labelling defect; do not use for new work).
+- [configs/train_confs/_archive_pucpr/](configs/train_confs/_archive_pucpr/) — legacy 50/50 fraction-sweep train + eval configs, the `_daycount_emk1` train + eval pair (em_k1 mode is now wired through the keep-list train configs), and the `_ON_TRAIN` eval-on-train diagnostics.
+- [configs/train_confs/eval_scenario/_archive/](configs/train_confs/eval_scenario/_archive/) — `dynamic_anchor_only`, `percentile_windowed_horizons`, `scaled_horizon`, and the unsuffixed 30-min `percentile_scaled_horizons` (superseded by the 5min/15min variants + the anchor-window family).
+- [configs/train_confs/persistence_filter/_archive/](configs/train_confs/persistence_filter/_archive/) — `dummy` (test only) and `mixture_prior_pick_filter` (ablation only).
+- [configs/train_confs/survival_generator/_archive/](configs/train_confs/survival_generator/_archive/) — `dummy` and `general_purpose` (unused). `weibull` and `weibull_pucpr_llm` remain active (root eval template default + LLM eval respectively).
+- [scripts/_archive/](scripts/_archive/) — legacy one-shot sweeps (`_oneshot_d1_*`, `_oneshot_d2_*`, `_oneshot_d35_*`, noise grids, mixture/track sweeps), legacy 50/50 sweep wrappers, the older daycount wrappers `sweep_train_eval_pucpr_split_50_20_30_daycount_balanced{,_em,_emk1_balanced}.sh`, the original `sweep_train_eval.sh`, and ad-hoc analysis probes `_tmp_*.py`.
+
+Re-running anything in the archives requires either pointing it at the new
+`scripts/pucpr_daycount/` entry points or accepting it as a historical
+snapshot.

@@ -15,6 +15,7 @@ from training.validator import SurvivalValidationRunner
 
 from training.checkpointing import CheckpointMeta, make_checkpoint_dict, save_checkpoint, load_training_state_from_checkpoint
 from training.validator import ValConfig
+from persistence_parameter_networks.training.task import TrainingTask
 
 # ----------------------------
 # JSONL Logger (fallback when W&B isn't used)
@@ -195,12 +196,13 @@ class TrainerConfig:
 class Trainer:
     """
     Assumptions:
-      - model(image, mask) -> (y50_hat, yr_hat, yc_hat)
-      - train_loader & val_loader yield (image, mask, y50, yr, yc) as dict or tuple
-      - loss_fn returns: (lossVal, lossMetricsDict)
-          lossMetricsDict includes:
+      - task.compute_loss(batch) -> (lossVal, lossMetricsDict)
+          lossMetricsDict includes (for the per-mask task):
             {"loss_50": ..., "loss_r": ..., "loss_c": ...}
           (values can be floats or tensors)
+      - train_loader & val_loader yield batches consumable by the task
+        (dict or tuple; per-mask task expects keys
+        image, mask, y50, yr, yc)
       - validator returns: (aggregate_score, metrics_dict), where aggregate_score is higher-is-better.
 
     Requirements implemented:
@@ -218,8 +220,7 @@ class Trainer:
 
     def __init__(
         self,
-        model: nn.Module,
-        loss_fn: nn.Module,
+        task: TrainingTask,
         optimizer: torch.optim.Optimizer,
         lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
         train_loader: torch.utils.data.DataLoader,
@@ -230,8 +231,11 @@ class Trainer:
         cfg: Optional[TrainerConfig] = None,
         full_cfg_yaml: Optional[str] = None,
     ):
-        self.model = model
-        self.loss_fn = loss_fn
+        self.task = task
+        # Convenience alias so checkpointing / device moves / eval mode
+        # continue to address the underlying nn.Module directly.
+        self.model = task.model
+        self.loss_fn = task.loss_fn
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.train_loader = train_loader
@@ -589,27 +593,17 @@ class Trainer:
             b = _unpack_batch(batch)
             b = _to_device(b, self.device)
 
-            image = b["image"]
-            mask = b["mask"]
-            y50 = b["y50"]
-            yr = b["yr"]
-            yc = b["yc"]
-
-            bs = int(image.shape[0])
+            # Per-mask task expects image/mask/y50/yr/yc; other tasks (e.g.
+            # the dense task) accept different keys. Batch size is taken
+            # from "image" since every task we have ships images.
+            bs = int(b["image"].shape[0])
 
             data_time.update(dt, n=1)
 
             self.optimizer.zero_grad(set_to_none=True)
 
             with self._autocast_ctx(enabled=use_amp):
-                y50_hat, yr_hat, yc_hat = self.model(image, mask)
-
-                out = self.loss_fn(y50_hat, y50, yr_hat, yr, yc_hat, yc)
-                if not (isinstance(out, (tuple, list)) and len(out) == 3):
-                    raise ValueError("loss_fn must return (lossVal, lossMetricsDict, debugInfo).")
-                lossVal, lossMetricsDict, _ = out
-                if not torch.is_tensor(lossVal):
-                    raise ValueError("lossVal must be a scalar torch.Tensor.")
+                lossVal, lossMetricsDict = self.task.compute_loss(b)
 
             # backward + step
             if self._scaler.is_enabled():

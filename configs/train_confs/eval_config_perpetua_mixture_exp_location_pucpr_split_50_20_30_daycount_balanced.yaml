@@ -35,3 +35,10 @@ runtime:
 
 inferencer:
   name: ${experiment.name}_days${experiment.day_count}_seed${experiment.subsample_seed}
+
+# Matched-noise default (p_m = p_f = 0.01) for the headline sweeps. Overrides
+# the filter YAML's 0.05 / 0.1 defaults. The script-level EVAL_NOISE_PM / PF
+# env knobs still take precedence when explicitly set.
+persistence_filter:
+  missed_detection_prob: 0.01
+  false_detection_prob: 0.01

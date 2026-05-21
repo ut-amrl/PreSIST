@@ -25,7 +25,10 @@ JOBS=1
 FORCE_TRAIN=""
 
 # Default DAYS grid (denser low end, capped at the split's train_days).
-DEFAULT_DAYS=""
+# Always includes the fractional 0.5-day point (median image timestamp of
+# day 0); integer points are kept iff strictly less than train_days, plus
+# train_days itself as the rightmost point.
+DEFAULT_DAYS="0.5"
 if [[ -f "$SPLIT_METADATA" ]]; then
     TRAIN_DAYS=$(python3 -c "import json; print(json.load(open('$SPLIT_METADATA'))['train_days'])")
     GRID="1 2 3 4 5 7 10 14 21 28"

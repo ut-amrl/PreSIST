@@ -1,0 +1,17 @@
+# @package eval_scenario
+# Anchor-window variant with a 15-minute recency cap. Each query at dt_q from
+# anchor sees observations with timestamps in
+# `[anchor, anchor + min(900, dt_q/2)]`. Saturates at
+# `[anchor, anchor + 900 s]` for dt_q ≥ 1800 s.
+#
+# Eval outputs land under `survival_based__percentile_anchor_window_horizons_15min/`.
+_target_: persistence_eval.sampling.percentile_anchor_window_horizon_episode_provider.PercentileAnchorWindowHorizonEpisodeProvider
+name: percentile_anchor_window_horizons_15min
+percentile: 90.0
+num_query_times: 20
+spacing: power
+power_exponent: 2.0
+t_min: 1.0
+max_query_inflation: 1.0
+recency_cap: 900.0    # 15 minutes
+require_disappearance_observed: false

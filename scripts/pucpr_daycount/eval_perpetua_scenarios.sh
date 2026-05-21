@@ -72,11 +72,13 @@ TAG_SUFFIX="${EXP_TAG:+_${EXP_TAG}}"
 # Eval scenario — must match a YAML under configs/train_confs/eval_scenario/
 # AND the `name:` field inside that YAML (the framework uses `name:` to build
 # the on-disk path `evaluation_runs/survival_based__<name>/...`).
-EVAL_SCENARIO="${EVAL_SCENARIO:-percentile_scaled_horizons}"
+EVAL_SCENARIO="${EVAL_SCENARIO:-percentile_horizons}"
 
 # Optional eval-time noise overrides. When set, both must be set together;
-# outputs land under a noise-tagged namespace so default-config results are
-# preserved untouched.
+# the override Hydra CLI args take precedence over the eval YAML's baked-in
+# defaults (p_m = p_f = 0.01). The CSV / log paths are always noise-tagged so
+# the headline matched-noise sweep (tag `_pm0p01_pf0p01`) is the steady-state
+# filename — same as the historical naming.
 EVAL_NOISE_PM="${EVAL_NOISE_PM:-}"
 EVAL_NOISE_PF="${EVAL_NOISE_PF:-}"
 if [[ -n "$EVAL_NOISE_PM$EVAL_NOISE_PF" ]]; then
@@ -87,7 +89,9 @@ if [[ -n "$EVAL_NOISE_PM$EVAL_NOISE_PF" ]]; then
   NOISE_TAG="_pm$(printf "%s" "$EVAL_NOISE_PM" | tr '.' 'p')_pf$(printf "%s" "$EVAL_NOISE_PF" | tr '.' 'p')"
   NOISE_OVERRIDES="++persistence_filter.missed_detection_prob=${EVAL_NOISE_PM} ++persistence_filter.false_detection_prob=${EVAL_NOISE_PF}"
 else
-  NOISE_TAG=""
+  # Default = matched noise from the eval YAML. Tag the CSV so it lines up
+  # with the historical `_pm0p01_pf0p01` naming the renderer expects.
+  NOISE_TAG="_pm0p01_pf0p01"
   NOISE_OVERRIDES=""
 fi
 
@@ -114,7 +118,7 @@ JOBS="${JOBS:-1}"
 LOG_DIR="${LOG_DIR:-$(dirname "$OUT_CSV")/_oneshot_${EVAL_SCENARIO}${NOISE_TAG}${FILTER_TAG}_logs}"
 mkdir -p "$LOG_DIR"
 
-DEFAULT_DAYS="1 2 3 4 5 7 10 14 21 28 35"
+DEFAULT_DAYS="0.5 1 2 3 4 5 7 10 14 21 28 35"
 DAYS_LIST=(${DAYS:-$DEFAULT_DAYS})
 DEFAULT_KINDS="mixture single"
 KINDS_LIST=(${KINDS:-$DEFAULT_KINDS})

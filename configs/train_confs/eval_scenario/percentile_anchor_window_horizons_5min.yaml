@@ -1,0 +1,20 @@
+# @package eval_scenario
+# Anchor-window variant with a 5-minute recency cap. Each query at dt_q from
+# anchor sees observations with timestamps in
+# `[anchor, anchor + min(300, dt_q/2)]`. Unlike the scaled variant the window
+# is anchored at the filter's start rather than walked back from t_q, so for
+# large dt_q the visible set saturates at `[anchor, anchor + 300 s]` instead
+# of sliding forward toward t_q.
+#
+# Eval outputs land under `survival_based__percentile_anchor_window_horizons_5min/`
+# so they do not collide with the scaled / windowed variants.
+_target_: persistence_eval.sampling.percentile_anchor_window_horizon_episode_provider.PercentileAnchorWindowHorizonEpisodeProvider
+name: percentile_anchor_window_horizons_5min
+percentile: 90.0
+num_query_times: 20
+spacing: power
+power_exponent: 2.0
+t_min: 1.0
+max_query_inflation: 1.0
+recency_cap: 300.0    # 5 minutes
+require_disappearance_observed: false

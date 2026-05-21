@@ -50,7 +50,7 @@ NSLUG=0p01
 MINSAMPLES=5
 MAX_ANCHOR_OBS="${MAX_ANCHOR_OBS:-50}"
 
-EVAL_SCENARIO="${EVAL_SCENARIO:-percentile_scaled_horizons}"
+EVAL_SCENARIO="${EVAL_SCENARIO:-percentile_horizons}"
 
 EVAL_NOISE_PM="${EVAL_NOISE_PM:-}"
 EVAL_NOISE_PF="${EVAL_NOISE_PF:-}"
@@ -62,7 +62,10 @@ if [[ -n "$EVAL_NOISE_PM$EVAL_NOISE_PF" ]]; then
   NOISE_TAG="_pm$(printf "%s" "$EVAL_NOISE_PM" | tr '.' 'p')_pf$(printf "%s" "$EVAL_NOISE_PF" | tr '.' 'p')"
   NOISE_OVERRIDES="++persistence_filter.missed_detection_prob=${EVAL_NOISE_PM} ++persistence_filter.false_detection_prob=${EVAL_NOISE_PF}"
 else
-  NOISE_TAG=""
+  # Default = matched noise from the eval YAML (p_m = p_f = 0.01). Tag the
+  # CSV / log paths so they line up with the historical `_pm0p01_pf0p01`
+  # naming the renderer expects.
+  NOISE_TAG="_pm0p01_pf0p01"
   NOISE_OVERRIDES=""
 fi
 
@@ -84,7 +87,7 @@ JOBS="${JOBS:-1}"
 LOG_DIR="${LOG_DIR:-$(dirname "$OUT_CSV")/_oneshot_${EVAL_SCENARIO}${NOISE_TAG}_vision_llm_logs}"
 mkdir -p "$LOG_DIR"
 
-DEFAULT_DAYS="1 2 3 4 5 7 10 14 21 28 35"
+DEFAULT_DAYS="0.5 1 2 3 4 5 7 10 14 21 28 35"
 DAYS_LIST=(${DAYS:-$DEFAULT_DAYS})
 DEFAULT_METHODS="vision llm"
 METHODS_LIST=(${METHODS:-$DEFAULT_METHODS})

@@ -15,6 +15,10 @@ import torch
 from typing import Optional, Union, Dict, Any
 from training.validator import SurvivalValidationRunner, ValConfig
 from training.dataset.distillation_dataset import DistillationDatasetConfig
+from persistence_parameter_networks.training.task import (
+    PerMaskPersistenceTask,
+    TrainingTask,
+)
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -24,8 +28,7 @@ from datetime import datetime
 import wandb
 
 def train(
-        model: nn.Module,
-        loss_fn: nn.Module,
+        task: TrainingTask,
         optimizer: torch.optim.Optimizer,
         lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
         train_loader: torch.utils.data.DataLoader,
@@ -38,8 +41,7 @@ def train(
         ):
 
     trainer = Trainer(
-        model=model,
-        loss_fn=loss_fn,
+        task=task,
         optimizer=optimizer,
         lr_scheduler=lr_scheduler,
         train_loader=train_loader,
@@ -188,6 +190,13 @@ def main(cfg: DictConfig):
     print("Creating model, loss function, optimizer, and lr scheduler...")
     model, loss_fn, optimizer, lr_scheduler, device = loadModelAndBackpropStuff(cfg)
 
+    # Wrap the (model, loss_fn) pair in the appropriate TrainingTask. The
+    # task owns the forward + loss call shape; the trainer only sees
+    # task.compute_loss(batch). For the existing per-mask models that's
+    # PerMaskPersistenceTask. Dense models (added later) will dispatch to
+    # DensePersistenceTask here.
+    task: TrainingTask = PerMaskPersistenceTask(model=model, loss_fn=loss_fn)
+
     # Determine output directory. When resuming, reuse the original run's directory so
     # checkpoints, logs, and metrics stay together. Checkpoint path: <run_dir>/checkpoints/<file>.pth
     # Fresh runs: <model_output_root_dir>/<train_dataset.name>/<model.model_name>/<timestamp>/
@@ -232,8 +241,7 @@ def main(cfg: DictConfig):
         )
 
     train(
-        model=model,
-        loss_fn=loss_fn,
+        task=task,
         optimizer=optimizer,
         lr_scheduler=lr_scheduler,
         train_loader=trainLoader,

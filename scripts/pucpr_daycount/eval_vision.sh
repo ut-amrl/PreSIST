@@ -13,7 +13,9 @@ SPLIT_DIR=/workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repair
 SPLIT_METADATA="$SPLIT_DIR/split_metadata.json"
 TEST_SIDECAR="${TEST_SIDECAR:-$SPLIT_DIR/test_from_2012-10-30.track_id_to_location_cell128.json}"
 
-DEFAULT_DAYS=""
+# Always includes the fractional 0.5-day point alongside the integer grid
+# capped at the split's train_days.
+DEFAULT_DAYS="0.5"
 if [[ -f "$SPLIT_METADATA" ]]; then
     TRAIN_DAYS=$(python3 -c "import json; print(json.load(open('$SPLIT_METADATA'))['train_days'])")
     GRID="1 2 3 4 5 7 10 14 21 28"

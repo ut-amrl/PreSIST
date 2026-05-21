@@ -58,7 +58,7 @@ LOG_DIR="${LOG_DIR:-$(dirname "$OUT_CSV")/_oneshot_logs}"
 mkdir -p "$LOG_DIR"
 
 # Env-driven overrides; default to the full sweep.
-DEFAULT_DAYS="1 2 3 4 5 7 10 14 21 28 35"
+DEFAULT_DAYS="0.5 1 2 3 4 5 7 10 14 21 28 35"
 DAYS_LIST=(${DAYS:-$DEFAULT_DAYS})
 DEFAULT_KINDS="mixture single"
 KINDS_LIST=(${KINDS:-$DEFAULT_KINDS})

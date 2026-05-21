@@ -101,14 +101,21 @@ class BenchmarkOrchestrator:
                 require_disappearance_observed=sampler_cfg.get("require_disappearance_observed", False),
             )
 
-        print("Creating inferencer")
-        # Inferencer
-        inferencer_cfg = cfg.inferencer
-        model_cfg = cfg.get("model", None)
-        inferencer = hydra.utils.instantiate(
-            inferencer_cfg,
-            **({"model_cfg": model_cfg} if model_cfg is not None else {}),
-        )
+        # Skip inferencer instantiation in mode=evaluate — run_evaluation() loads
+        # artifacts from disk and never invokes the inferencer, so loading the
+        # backing model (e.g. DINOv2 ViT-L/14) wastes GPU memory and causes OOM
+        # under parallel-sweep contention.
+        if cfg.get("mode") == "evaluate":
+            print("Skipping inferencer instantiation (mode=evaluate)")
+            inferencer = None
+        else:
+            print("Creating inferencer")
+            inferencer_cfg = cfg.inferencer
+            model_cfg = cfg.get("model", None)
+            inferencer = hydra.utils.instantiate(
+                inferencer_cfg,
+                **({"model_cfg": model_cfg} if model_cfg is not None else {}),
+            )
 
         # Compose method name from LLM pipeline sub-component names, or fall back to _target_
         sc_name = cfg.inferencer.get("sceneCaptioner", {}).get("name", "")
