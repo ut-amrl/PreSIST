@@ -159,7 +159,7 @@ run_cell() {
     EXP_SUFFIX="_daycount_emk1_noise${NSLUG}_mins${MINSAMPLES}"
   fi
 
-  local EVAL_CFG="eval_config_perpetua_${DIST}_${GROUPING}_pucpr_split_50_20_30_daycount_balanced"
+  local EVAL_CFG="pucpr_eval_config_perpetua_${DIST}_${GROUPING}_split_50_20_30_daycount_balanced"
   local EXP_NAME="perpetua_${DIST}_${GROUPING}_pucpr_split_50_20_30${EXP_SUFFIX}${TAG_SUFFIX}"
   local MODEL_DIR="/workspace/data/output/perpetua/${EXP_NAME}/days${N_SLUG}_seed${SEED}"
   local PARAMS="$MODEL_DIR/persistence_params.json"

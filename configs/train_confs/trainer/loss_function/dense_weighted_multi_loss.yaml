@@ -1,0 +1,3 @@
+_target_: persistence_parameter_networks.losses.dense_losses.DenseWeightedMultiLoss
+confidence_loss: mse
+confidence_from_logits: false

@@ -1,0 +1,48 @@
+# Dense-mode variant of the per-mask training dataset.
+#
+# Same splits, same label transform, same per-image instance cap on the
+# val split as the per-mask config (so dense val_on_val/dense val-on-train
+# evaluate the *same* population of (image, instance) triples — see plan
+# § Validation design).
+#
+# Adds the dense-supervision plumbing: a TargetRasterizer (which owns its
+# normalizer) and the disk cache location. Both classes carry a
+# __version__ class attribute that bumps on behavior-incompatible
+# changes so existing caches remain valid for backward-compatible
+# refactors.
+
+name: seg_langSam3Q8T_behav4_mO20_imgbal_dense
+_target_: training.dataset.distillation_dataset.DistillationDatasetConfig
+input_root_dir: /workspace/data/input/
+output_root_dir: /workspace/data/output/
+segmentation_config_name: langGround_p_qwenvl37bT_disc_maxObj30_u3_s_sam3b32__s0p35_mA0p001_dedupe0p9
+full_results_config_name: seg_langSam3Q8T_capG31bp7_idG31b3imgL_pG31bv3iqr_only_behav4_mO20
+split_id_kind: relpath
+split_granularity: image
+train_split_file: train_dataset_manifests/seg_langSam3Q8T_behav4_mO20/train.txt
+val_split_file:   train_dataset_manifests/seg_langSam3Q8T_behav4_mO20/val.txt
+
+split_json: null
+split_dir: null
+
+val_max_instances_per_image: 25
+
+label_transform:
+  _target_: training.dataset.distillation_dataset.label_transform_log_ratio_p25_p75
+  _partial_: true
+
+# Dense supervision — chosen by the brainstorm:
+#   - SmallerWinsRasterizer: at overlap pixels, the smaller-area
+#     instance's label is used (typically the more specific label).
+#   - PerInstanceAreaNormalizer: pixel weight = 1/area(instance), so
+#     each instance contributes equal total weight to the loss
+#     regardless of size.
+dense_rasterizer:
+  _target_: persistence_parameter_networks.data.dense_target_rasterizer.SmallerWinsRasterizer
+  normalizer:
+    _target_: persistence_parameter_networks.data.dense_target_rasterizer.PerInstanceAreaNormalizer
+
+# Disk cache for rasterized supervision tensors. Disable by setting
+# dense_cache_enabled: false (e.g. during quick smoke tests).
+dense_cache_dir: /workspace/data/output/dense_supervision_cache/seg_langSam3Q8T_behav4_mO20
+dense_cache_enabled: true

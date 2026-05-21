@@ -15,7 +15,7 @@ from training.validator import SurvivalValidationRunner
 
 from training.checkpointing import CheckpointMeta, make_checkpoint_dict, save_checkpoint, load_training_state_from_checkpoint
 from training.validator import ValConfig
-from persistence_parameter_networks.training.task import TrainingTask
+from training.task import TrainingTask
 
 # ----------------------------
 # JSONL Logger (fallback when W&B isn't used)
@@ -177,6 +177,28 @@ class TrainerConfig:
     # train_eval_max_batches.
     val_max_batches: Optional[int] = None
 
+    # When set, every this-many training batches, push a sub-epoch
+    # snapshot of the running training metrics (loss, components, grad
+    # norm, lr) to W&B under the `train_batch/` namespace, indexed by a
+    # custom step metric `train_batch/global_step`. This lets you see
+    # within-epoch trends live instead of waiting for the next epoch
+    # boundary. Falls back to JSONL when W&B is disabled. Set None to
+    # disable. Recommended value: same as log_every_n_batches (10) for
+    # roughly one W&B point per stdout progress line.
+    wandb_log_every_n_batches: Optional[int] = None
+
+    # Threshold for "obviously bad" gradient spikes. When the pre-clip grad
+    # norm of a step exceeds this value, the trainer appends a record to
+    # <output_dir>/grad_spikes.jsonl with the epoch, batch index, loss
+    # components, and per-sample identifiers (image_id, instance_id,
+    # image_path) so you can go inspect the offending batch later.
+    # Set to None to disable. Defaults to something well above
+    # grad_clip_norm so it doesn't fire on every clipped step.
+    spike_grad_norm_threshold: Optional[float] = 100.0
+    # Cap on number of spike records written per run to keep the sidecar
+    # bounded if the run is fully diverged (would otherwise log every step).
+    spike_log_max_records: int = 200
+
     # Number of samples drawn per epoch by the training WeightedRandomSampler.
     # None = len(dataset) (one logical pass per epoch — historical default).
     # Set lower to make each epoch shorter (more frequent val / checkpoint /
@@ -230,6 +252,7 @@ class Trainer:
         start_epoch: int = 0,
         cfg: Optional[TrainerConfig] = None,
         full_cfg_yaml: Optional[str] = None,
+        val_on_train_loader: Optional[torch.utils.data.DataLoader] = None,
     ):
         self.task = task
         # Convenience alias so checkpointing / device moves / eval mode
@@ -240,7 +263,19 @@ class Trainer:
         self.lr_scheduler = lr_scheduler
         self.train_loader = train_loader
         self.val_loader = val_loader
+        # Optional dedicated val-on-train loader. When None, reuse the
+        # train loader (preserves the old behavior; works for per-mask
+        # training where the train loader yields per-instance batches
+        # the validator can score directly). For dense training the
+        # train loader yields dense batches that the per-instance
+        # validator cannot consume, so we always supply a separate
+        # per-instance loader here.
+        self.val_on_train_loader = val_on_train_loader if val_on_train_loader is not None else train_loader
         self.validator = validator
+        # Lazily built in train(); the dense task swaps in a pooling
+        # facade so the existing per-instance validator can score the
+        # dense model on the same val population as the per-mask runs.
+        self._validation_model: Optional[nn.Module] = None
 
         self.start_epoch = int(start_epoch)
         self.cfg = cfg or TrainerConfig()
@@ -445,6 +480,11 @@ class Trainer:
     # ----------------------------
     def train(self) -> Dict[str, Any]:
         self.model = self.model.to(self.device)
+        # The validator always receives a per-mask-style forward; the
+        # task constructs it (identity for per-mask, pooling facade for
+        # dense). Building once and reusing keeps the facade's
+        # ``.eval()`` state consistent across val passes.
+        self._validation_model = self.task.make_validation_model().to(self.device)
 
         # Init W&B if enabled+available; else JSONL fallback
         if self.wandb is not None:
@@ -456,6 +496,20 @@ class Trainer:
                 )
             self._wandb_run = self.wandb.run
             print("[W&B] Using externally initialized wandb run.")
+            # Register a custom step axis for sub-epoch metrics so they
+            # don't collide with the epoch-step axis used by `train/`,
+            # `validation/`, etc. Without this, W&B's monotonic-step
+            # constraint would drop our small epoch numbers once we
+            # started logging large global_step values.
+            if getattr(self.cfg, "wandb_log_every_n_batches", None):
+                try:
+                    self.wandb.define_metric("train_batch/global_step")
+                    self.wandb.define_metric(
+                        "train_batch/*",
+                        step_metric="train_batch/global_step",
+                    )
+                except Exception as e:
+                    print(f"[W&B] WARN failed to define_metric for train_batch/*: {e}")
         else:
             self.jsonl_logger = self.jsonl_logger or JsonlLogger(
                 os.path.join(self.output_dir, "metrics.jsonl")
@@ -503,6 +557,12 @@ class Trainer:
                     self.lr_scheduler.step(-float(val_score))
                 else:
                     self.lr_scheduler.step()
+
+            # Always overwrite ckpt_latest.pth so a crash recovery point is
+            # at-most-one-epoch stale, regardless of save_every_n_epochs.
+            # save_checkpoint writes via tmp+rename so the previous good
+            # file is never truncated.
+            self.save_checkpoint(epoch=epoch, filename="ckpt_latest.pth")
 
             # Save periodic checkpoint every N2 epochs
             if (epoch % self.cfg.save_every_n_epochs) == 0:
@@ -576,6 +636,25 @@ class Trainer:
         lossr_meter = AverageMeter()
         lossc_meter = AverageMeter()
 
+        # Optimization-health meters: grad norm is measured *before* clipping
+        # (the value returned by clip_grad_norm_ is the pre-clip total norm).
+        # Rising train loss with rising grad-norm = optimization blowing up;
+        # rising train loss with steady/falling grad-norm = label/overfit issue.
+        gradnorm_meter = AverageMeter()
+        gradnorm_max = 0.0
+        gradnorm_samples: list = []  # for p95 at epoch end
+        n_clipped = 0
+        n_steps = 0
+        loss_max = float("-inf")
+
+        # Lazily-created sidecar logger for grad-norm spikes. We hold the
+        # path on `self` so the cap persists across epochs.
+        if not hasattr(self, "_spike_records_written"):
+            self._spike_records_written = 0
+        spike_thr = getattr(self.cfg, "spike_grad_norm_threshold", None)
+        spike_cap = int(getattr(self.cfg, "spike_log_max_records", 0) or 0)
+        spike_log_path = os.path.join(self.output_dir, "grad_spikes.jsonl")
+
         # dynamic meters for all entries in lossMetricsDict
         metric_meters: Dict[str, AverageMeter] = {}
 
@@ -605,19 +684,81 @@ class Trainer:
             with self._autocast_ctx(enabled=use_amp):
                 lossVal, lossMetricsDict = self.task.compute_loss(b)
 
-            # backward + step
+            # backward + step. clip_grad_norm_ returns the pre-clip total
+            # norm; we capture it regardless of whether clipping is enabled
+            # so we can tell whether updates are being magnitude-capped.
+            grad_norm_val: Optional[float] = None
             if self._scaler.is_enabled():
                 self._scaler.scale(lossVal).backward()
-                if self.cfg.grad_clip_norm is not None:
-                    self._scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip_norm)
+                self._scaler.unscale_(self.optimizer)
+                clip_to = self.cfg.grad_clip_norm if self.cfg.grad_clip_norm is not None else float("inf")
+                gn = torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip_to)
+                grad_norm_val = float(gn)
                 self._scaler.step(self.optimizer)
                 self._scaler.update()
             else:
                 lossVal.backward()
-                if self.cfg.grad_clip_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip_norm)
+                clip_to = self.cfg.grad_clip_norm if self.cfg.grad_clip_norm is not None else float("inf")
+                gn = torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip_to)
+                grad_norm_val = float(gn)
                 self.optimizer.step()
+
+            n_steps += 1
+            if math.isfinite(grad_norm_val):
+                gradnorm_meter.update(grad_norm_val, n=1)
+                gradnorm_samples.append(grad_norm_val)
+                if grad_norm_val > gradnorm_max:
+                    gradnorm_max = grad_norm_val
+                if (self.cfg.grad_clip_norm is not None
+                        and grad_norm_val > float(self.cfg.grad_clip_norm)):
+                    n_clipped += 1
+
+            # Spike logger: dump per-sample identifiers when this step's
+            # pre-clip grad norm crosses the configured threshold. Keeps
+            # a per-run cap so a fully-diverged run can't generate
+            # gigabytes of JSONL.
+            if (spike_thr is not None
+                    and grad_norm_val is not None
+                    and math.isfinite(grad_norm_val)
+                    and grad_norm_val > float(spike_thr)
+                    and self._spike_records_written < spike_cap):
+                try:
+                    rec: Dict[str, Any] = {
+                        "epoch": int(epoch),
+                        "batch_idx": int(idx),
+                        "global_step": int(self.global_step),
+                        "grad_norm": float(grad_norm_val),
+                        "loss": float(loss_item),
+                    }
+                    if isinstance(lossMetricsDict, dict):
+                        for k, v in lossMetricsDict.items():
+                            rec[f"loss/{k}"] = _as_float(v)
+                    # Per-sample identifiers. The per-mask dataset emits
+                    # image_id (str), instance_id (LongTensor), image_path
+                    # (str). The dense dataset emits image_id / image_path.
+                    # We tolerate missing keys so the same code works for
+                    # both task formats.
+                    for key in ("image_id", "instance_id", "image_path"):
+                        if key in b:
+                            v = b[key]
+                            if torch.is_tensor(v):
+                                rec[key] = v.detach().cpu().tolist()
+                            elif isinstance(v, (list, tuple)):
+                                rec[key] = list(v)
+                            else:
+                                rec[key] = v
+                    os.makedirs(os.path.dirname(spike_log_path), exist_ok=True)
+                    with open(spike_log_path, "a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(rec, default=str) + "\n")
+                    self._spike_records_written += 1
+                    print(
+                        f"[GradSpike] epoch={epoch} batch={idx} "
+                        f"grad_norm={grad_norm_val:.1f} loss={loss_item:.4f} "
+                        f"(logged to {spike_log_path}; "
+                        f"{self._spike_records_written}/{spike_cap})"
+                    )
+                except Exception as e:
+                    print(f"[GradSpike] WARN failed to log spike: {e}")
 
             # Batch time includes compute + step (and some python overhead)
             bt = time.perf_counter() - end
@@ -626,6 +767,8 @@ class Trainer:
             # Update loss meters (sample-weighted)
             loss_item = float(lossVal.detach().cpu().item())
             loss_meter.update(loss_item, n=bs)
+            if loss_item > loss_max:
+                loss_max = loss_item
 
             # Update component meters from lossMetricsDict
             if isinstance(lossMetricsDict, dict):
@@ -651,6 +794,8 @@ class Trainer:
 
             # Print every N1 batches (stdout only; W&B captures logs text)
             if (idx % self.cfg.log_every_n_batches) == 0:
+                gn_str = f"{grad_norm_val:.3f}" if grad_norm_val is not None else "n/a"
+                gn_avg_str = f"{gradnorm_meter.avg:.3f}" if gradnorm_meter.count > 0 else "n/a"
                 print(
                     f"Epoch: [{epoch}][{N3}/{n4_str}]\t"
                     f"BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
@@ -658,8 +803,49 @@ class Trainer:
                     f"L50 {loss50_meter.val:.4f} ({loss50_meter.avg:.4f})\t"
                     f"Lr {lossr_meter.val:.4f} ({lossr_meter.avg:.4f})\t"
                     f"Lc {lossc_meter.val:.4f} ({lossc_meter.avg:.4f})\t"
-                    f"Loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})"
+                    f"Loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t"
+                    f"GN {gn_str} ({gn_avg_str})"
                 )
+
+            # Sub-epoch W&B logging (independent cadence from the stdout
+            # print). Pushes the *running* averages so each point is a
+            # smoothed view of the epoch so far — easier to read than
+            # raw per-batch values. Uses commit=True so the dashboard
+            # updates live instead of buffering until the next call.
+            n_every = getattr(self.cfg, "wandb_log_every_n_batches", None)
+            if n_every and (idx % int(n_every)) == 0:
+                batch_payload: Dict[str, float] = {
+                    "train_batch/global_step": float(self.global_step),
+                    "train_batch/epoch": float(epoch),
+                    "train_batch/loss": float(loss_meter.avg),
+                    "train_batch/loss_inst": float(loss_item),
+                    "train_batch/loss_50": float(loss50_meter.avg),
+                    "train_batch/loss_r": float(lossr_meter.avg),
+                    "train_batch/loss_c": float(lossc_meter.avg),
+                }
+                if grad_norm_val is not None and math.isfinite(grad_norm_val):
+                    batch_payload["train_batch/grad_norm"] = float(grad_norm_val)
+                if gradnorm_meter.count > 0:
+                    batch_payload["train_batch/grad_norm_avg"] = float(gradnorm_meter.avg)
+                try:
+                    for gi, pg in enumerate(self.optimizer.param_groups):
+                        lr_key = ("train_batch/lr" if len(self.optimizer.param_groups) == 1
+                                  else f"train_batch/lr_group{gi}")
+                        batch_payload[lr_key] = float(pg.get("lr", 0.0))
+                except Exception:
+                    pass
+                if self._wandb_run is not None:
+                    try:
+                        self._wandb_run.log(batch_payload, commit=True)
+                    except Exception as e:
+                        print(f"[W&B] WARN batch log failed: {e}")
+                else:
+                    # JSONL fallback when W&B is off; reuse the same logger
+                    if self.jsonl_logger is None:
+                        self.jsonl_logger = JsonlLogger(
+                            os.path.join(self.output_dir, "metrics.jsonl")
+                        )
+                    self.jsonl_logger.log(batch_payload, step=self.global_step)
 
             self.global_step += 1
             end = time.perf_counter()
@@ -675,26 +861,57 @@ class Trainer:
         train_loss_dict_avgs.setdefault("batch_time_avg", float(batch_time.avg))
         train_loss_dict_avgs.setdefault("data_time_avg", float(data_time.avg))
 
+        # Optimization-health summary (one row per epoch under train/ in W&B).
+        # frac_clipped tells you how often pre-clip norm exceeded grad_clip_norm.
+        # If it climbs over epochs, the optimizer is being held back more and
+        # more — i.e., gradients are still growing even though clipping hides
+        # it in the parameter update.
+        if n_steps > 0 and len(gradnorm_samples) > 0:
+            gns = sorted(gradnorm_samples)
+            p95_idx = max(0, min(len(gns) - 1, int(0.95 * (len(gns) - 1))))
+            train_loss_dict_avgs.setdefault("grad_norm_avg", float(gradnorm_meter.avg))
+            train_loss_dict_avgs.setdefault("grad_norm_max", float(gradnorm_max))
+            train_loss_dict_avgs.setdefault("grad_norm_p95", float(gns[p95_idx]))
+            train_loss_dict_avgs.setdefault("grad_norm_frac_clipped", float(n_clipped) / float(n_steps))
+        train_loss_dict_avgs.setdefault("loss_max_batch", float(loss_max) if math.isfinite(loss_max) else 0.0)
+
+        # Current LR(s). For single-group optimizers this is one value; for
+        # param-grouped optimizers (e.g. decoupled head/backbone LRs) we log
+        # each group so a stale or misconfigured scheduler is visible.
+        try:
+            for gi, pg in enumerate(self.optimizer.param_groups):
+                lr_key = "lr" if len(self.optimizer.param_groups) == 1 else f"lr_group{gi}"
+                train_loss_dict_avgs.setdefault(lr_key, float(pg.get("lr", 0.0)))
+        except Exception:
+            pass
+
         return train_loss_avg, train_loss_dict_avgs
 
     @torch.no_grad()
     def _validate(self, epoch: int, useValSplit: bool=True, batchUseFreq: int = 1) -> Tuple[float, Dict[str, float]]:
         self.model.eval()
+        # Validator always sees a per-mask-style forward via the task's
+        # validation model (identity for per-mask tasks; pooling facade
+        # for the dense task).
+        if self._validation_model is None:
+            self._validation_model = self.task.make_validation_model().to(self.device)
+        val_model = self._validation_model
+        val_model.eval()
         if (useValSplit):
             agg_score, metrics = self.validator.validate(
-                self.model, self.val_loader, batchUseFreq=batchUseFreq,
+                val_model, self.val_loader, batchUseFreq=batchUseFreq,
                 max_batches=getattr(self.cfg, "val_max_batches", None),
             )
         else:
             # Train-as-val pass: cap the number of batches we process
             # via TrainerConfig.train_eval_max_batches so this stays
-            # bounded even when the train loader is huge. Caps via an
-            # early break in the validator so DataLoader workers don't
-            # keep producing batches we'd discard. Does NOT modify the
-            # training loop's use of train_loader.
+            # bounded even when the val-on-train loader is huge. Caps
+            # via an early break in the validator so DataLoader workers
+            # don't keep producing batches we'd discard. Does NOT modify
+            # the training loop's use of train_loader.
             agg_score, metrics = self.validator.validate(
-                self.model,
-                self.train_loader,
+                val_model,
+                self.val_on_train_loader,
                 batchUseFreq=batchUseFreq,
                 max_batches=getattr(self.cfg, "train_eval_max_batches", None),
             )

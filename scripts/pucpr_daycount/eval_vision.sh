@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-EVAL_CFG="eval_config_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train_balanced_eval"
+EVAL_CFG="pucpr_eval_config_vision_anchor_midpoint_split_50_20_30_daycount_balanced_train_balanced_eval"
 EXP_NAME="vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train"
 MODEL_ROOT="/workspace/data/output/perpetua"
 

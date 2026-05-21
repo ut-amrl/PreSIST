@@ -25,7 +25,7 @@ import torchvision.transforms.functional as F
 from torchvision.transforms import InterpolationMode
 
 
-ReturnMode = Literal["per_image", "per_instance"]
+ReturnMode = Literal["per_image", "per_instance", "dense"]
 
 
 
@@ -305,6 +305,20 @@ class DistillationDatasetConfig:
     # Storage dtypes
     masks_dtype: torch.dtype = torch.uint8
     boxes_dtype: torch.dtype = torch.float32
+
+    # ----------------------------
+    # Dense-supervision mode
+    # ----------------------------
+    # A TargetRasterizer instance (see persistence_parameter_networks.data
+    # .dense_target_rasterizer). Required when mode == "dense"; ignored
+    # otherwise. Hydra-instantiated via _target_ so users can plug in any
+    # subclass.
+    dense_rasterizer: Optional[Any] = None
+
+    # Directory for on-disk caching of rasterized supervision tensors.
+    # When None, rasterization is recomputed on every access.
+    dense_cache_dir: Optional[Union[str, Path]] = None
+    dense_cache_enabled: bool = True
 
     def make_dataset(
         self,
@@ -717,6 +731,120 @@ class _SegmentationDataset(Dataset):
         else:
             self._instance_weights = []
 
+        # ----------------------------
+        # Dense mode: per-image index + dense supervision cache
+        # ----------------------------
+        # Build _image_index (list of rec_idx) and _image_instance_ids
+        # (rec_idx -> List[int] of valid instance ids for that image,
+        # filtered the same way per_instance does so cached supervision
+        # tensors line up with the per-instance training population).
+        self._image_index: List[int] = []
+        self._image_instance_ids: Dict[int, List[int]] = {}
+        self._dense_cache = None  # initialized below when mode == "dense"
+
+        if self.mode == "dense":
+            if cfg.dense_rasterizer is None:
+                raise ValueError(
+                    "DistillationDatasetConfig.dense_rasterizer must be set "
+                    "when mode='dense'."
+                )
+
+            print(
+                f"[SegDataset:{self.split}] building dense per-image index over "
+                f"{len(self._records)} records...",
+                flush=True,
+            )
+            for rec_idx, rec in enumerate(tqdm(
+                self._records,
+                desc=f"[SegDataset:{self.split}] dense index",
+                unit="img",
+                mininterval=1.0,
+            )):
+                labels_path: Path = rec["labels_path"]  # type: ignore
+                seg_path: Path = rec["seg_path"]        # type: ignore
+                if not labels_path.exists():
+                    continue
+                try:
+                    seg_ids_set = _seg_ids_from_npz(seg_path)
+                except Exception as e:
+                    print(
+                        f"[SegDataset:{self.split}] WARN: could not load seg "
+                        f"{seg_path}: {e}; skipping image."
+                    )
+                    continue
+                wanted = allowed_instances.get(rec_idx, None)
+                inst_ids: List[int] = []
+                if wanted is None:
+                    for iid in self._label_instance_ids(labels_path):
+                        if int(iid) in seg_ids_set:
+                            inst_ids.append(int(iid))
+                else:
+                    obj = self._load_label_obj(labels_path)
+                    for iid in sorted(wanted):
+                        if str(int(iid)) in obj and int(iid) in seg_ids_set:
+                            inst_ids.append(int(iid))
+                if not inst_ids:
+                    continue
+                self._image_instance_ids[rec_idx] = inst_ids
+                self._image_index.append(rec_idx)
+
+            # Match per_instance's val-only cap: at most N instances per
+            # image in the val split, deterministically sampled. Keeps
+            # dense and per_instance val populations comparable.
+            cap = getattr(cfg, "val_max_instances_per_image", None)
+            if (self.split == "val" and cap is not None and int(cap) > 0):
+                cap = int(cap)
+                rng = random.Random(cfg.val_instance_cap_seed)
+                total_before = sum(len(v) for v in self._image_instance_ids.values())
+                for rec_idx in list(self._image_instance_ids.keys()):
+                    ids = self._image_instance_ids[rec_idx]
+                    if len(ids) > cap:
+                        self._image_instance_ids[rec_idx] = sorted(rng.sample(ids, cap))
+                total_after = sum(len(v) for v in self._image_instance_ids.values())
+                print(
+                    f"[SegDataset:{self.split}] dense: capped instances/image at "
+                    f"{cap}: {total_before} -> {total_after}",
+                    flush=True,
+                )
+
+            # Image-level smoke subsample: shrink the number of dense
+            # samples per epoch. Reuses the same train_subsample_fraction
+            # config knob so the same smoke configs work in either mode.
+            sub_frac = (cfg.train_subsample_fraction if self.split == "train"
+                        else cfg.val_subsample_fraction if self.split == "val"
+                        else None)
+            if (sub_frac is not None and 0.0 < float(sub_frac) < 1.0
+                    and len(self._image_index) > 0):
+                frac = float(sub_frac)
+                rng = random.Random(cfg.subsample_seed + (0 if self.split == "train" else 1))
+                n_before = len(self._image_index)
+                n_keep = max(1, int(round(n_before * frac)))
+                self._image_index = sorted(rng.sample(self._image_index, n_keep))
+                # Drop the now-unused entries.
+                self._image_instance_ids = {
+                    k: self._image_instance_ids[k] for k in self._image_index
+                }
+                print(
+                    f"[SegDataset:{self.split}] dense subsample_fraction={frac}: "
+                    f"{n_before} -> {len(self._image_index)} images",
+                    flush=True,
+                )
+
+            # Per-image-sample weights = 1.0 (dense draws one image per
+            # sample, image-balanced by construction).
+            self._instance_weights = [1.0 for _ in self._image_index]
+
+            # Cache: one cache per (rasterizer fingerprint, label_transform).
+            from persistence_parameter_networks.data.dense_supervision_cache import (
+                DenseSupervisionCache,
+            )
+            self._dense_cache = DenseSupervisionCache(
+                root_dir=cfg.dense_cache_dir,
+                rasterizer=cfg.dense_rasterizer,
+                label_transform=self._label_transform,
+                enable=cfg.dense_cache_enabled,
+            )
+
         # Print the number of records and instances indexed for this split
         num_images = len(self._records)
         num_instances = len(self._instance_index)
@@ -788,8 +916,9 @@ class _SegmentationDataset(Dataset):
     def __len__(self) -> int:
         if self.mode == "per_instance":
             return len(self._instance_index)
-        else:
-            return len(self._records)
+        if self.mode == "dense":
+            return len(self._image_index)
+        return len(self._records)
 
 
     # -------------------------
@@ -801,6 +930,8 @@ class _SegmentationDataset(Dataset):
             # Should still implement necessary components in the constructor so it's easier to pivot to later if needed
             raise NotImplementedError("per_image mode is not implemented yet. Use per_instance mode.")
 
+        if self.mode == "dense":
+            return self._get_dense(idx)
 
         rec_idx, inst_id = self._instance_index[idx]
         rec = self._records[rec_idx]
@@ -883,6 +1014,95 @@ class _SegmentationDataset(Dataset):
         )
 
 
+
+    def _get_dense(self, idx: int) -> Dict[str, object]:
+        """One image + its valid instances + rasterized supervision."""
+        rec_idx = self._image_index[idx]
+        rec = self._records[rec_idx]
+        inst_ids: List[int] = self._image_instance_ids[rec_idx]
+
+        seg_path: Path = rec["seg_path"]      # type: ignore
+        labels_path: Path = rec["labels_path"]  # type: ignore
+        image_path: Path = rec["image_path"]  # type: ignore
+
+        if self.strict:
+            if not seg_path.exists():
+                raise FileNotFoundError(f"Missing segmentation file: {seg_path}")
+            if not labels_path.exists():
+                raise FileNotFoundError(f"Missing labels file: {labels_path}")
+            if not image_path.exists():
+                raise FileNotFoundError(f"Missing image file: {image_path}")
+
+        # Image — reuse the same single-slot cache as per_instance to
+        # avoid double decoding when consecutive samples share an image
+        # (e.g. when the dense loader iterates the same image_id from
+        # multiple workers).
+        if self._cached_image_path == image_path and self._cached_image_u8 is not None:
+            image_u8 = self._cached_image_u8
+            image = self._cached_image_transformed
+        else:
+            image_u8 = self._image_loader(image_path)
+            image = self._image_transform(image_u8)
+            self._cached_image_path = image_path
+            self._cached_image_u8 = image_u8
+            self._cached_image_transformed = image
+
+        # Segmentation: pick the rows matching inst_ids and resize each
+        # mask to (img_size, img_size). Result: (N, img_size, img_size).
+        seg = self._load_seg(seg_path)
+        seg_ids = seg["ids"]
+        seg_masks = seg["masks"]
+        rows: List[torch.Tensor] = []
+        for iid in inst_ids:
+            pos = (seg_ids == int(iid)).nonzero(as_tuple=False).view(-1)
+            if pos.numel() == 0:
+                if self.strict:
+                    raise KeyError(
+                        f"Mask for labeled instance_id={iid} not found in {seg_path}"
+                    )
+                H, W = int(image_u8.shape[1]), int(image_u8.shape[2])
+                rows.append(torch.zeros((H, W), dtype=self.cfg.masks_dtype))
+                continue
+            m = seg_masks[int(pos[0].item())]
+            if m.ndim == 2:
+                m = m.unsqueeze(0)  # (1,H,W)
+            m = F.resize(
+                m.float(),
+                [self.img_size, self.img_size],
+                interpolation=InterpolationMode.NEAREST,
+            )
+            rows.append(m.squeeze(0).to(self.cfg.masks_dtype))
+        instance_masks = torch.stack(rows, dim=0)  # (N, img_size, img_size)
+
+        # Labels: (N, 3) float tensor. Label transform is the same one
+        # used by per_instance.
+        per_instance_labels = self._load_labels(labels_path, inst_ids)
+        instance_labels = torch.stack(
+            [lab.to(torch.float32).view(-1) for lab in per_instance_labels],
+            dim=0,
+        )  # (N, 3)
+
+        # Rasterize (via cache if available) — passes the actual masks
+        # and labels in so the cache stores the result keyed by
+        # (image_id, sorted instance_ids).
+        assert self._dense_cache is not None
+        target_map, loss_mask, pixel_weights = self._dense_cache.get(
+            image_id=str(rec["image_id"]),
+            instance_ids=inst_ids,
+            instance_masks=instance_masks,
+            instance_labels=instance_labels,
+        )
+
+        return {
+            "image": image,                          # (3, H, W)
+            "target_map": target_map,                # (3, H, W) float
+            "loss_mask": loss_mask,                  # (1, H, W) bool
+            "pixel_weights": pixel_weights,          # (1, H, W) float
+            "instance_masks": instance_masks,        # (N, H, W) uint8
+            "instance_labels": instance_labels,      # (N, 3) float
+            "image_id": str(rec["image_id"]),
+            "image_path": str(rec["image_path"]),
+        }
 
     def _normalize_persistence_obj(self, obj: Any, *, path: Path) -> Dict[str, dict]:
         """

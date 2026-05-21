@@ -1,6 +1,7 @@
 # checkpointing.py
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Union
 
@@ -45,7 +46,12 @@ def make_checkpoint_dict(
 
 
 def save_checkpoint(state: Dict[str, Any], path: str) -> str:
-    torch.save(state, path)
+    # Write to a sibling tmp file then atomically rename. A crash mid-write
+    # leaves the previous good `path` untouched instead of producing a
+    # truncated file that fails to load on resume.
+    tmp_path = path + ".tmp"
+    torch.save(state, tmp_path)
+    os.replace(tmp_path, path)
     return path
 
 

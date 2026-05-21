@@ -140,16 +140,16 @@ the renderer reads aggregate sweep CSVs.
 
 Perpetua expands to 8 variants: cartesian product of `{single_exp,
 single_lognormal, mixture_exp, mixture_lognormal} × {class, location}`.
-- Train cfg pattern: `train_config_perpetua_<dist>_<grouping>_pucpr_split_50_20_30_daycount[.yaml]`
-- Eval cfg pattern: `eval_config_perpetua_<dist>_<grouping>_pucpr_split_50_20_30_daycount_balanced[.yaml]`
+- Train cfg pattern: `pucpr_train_config_perpetua_<dist>_<grouping>_split_50_20_30_daycount[.yaml]`
+- Eval cfg pattern: `pucpr_eval_config_perpetua_<dist>_<grouping>_split_50_20_30_daycount_balanced[.yaml]`
 - `experiment.name`: `perpetua_<dist>_<grouping>_pucpr_split_50_20_30_daycount_{fullK_mins5_p0p01,emk1_noise0p01_mins5}`
 
 Vision:
-- Train cfg: `train_config_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train.yaml`
-- Eval cfg: `eval_config_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train_balanced_eval.yaml`
+- Train cfg: `pucpr_train_config_vision_anchor_midpoint_split_50_20_30_daycount_balanced_train.yaml`
+- Eval cfg: `pucpr_eval_config_vision_anchor_midpoint_split_50_20_30_daycount_balanced_train_balanced_eval.yaml`
 
 LLM:
-- Eval cfg: `eval_config_llm_pucpr_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced.yaml`
+- Eval cfg: `pucpr_eval_config_llm_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced.yaml`
 - Inference artifacts already exist on disk (no training step here).
 
 ---
@@ -260,7 +260,7 @@ python scripts/pucpr_daycount/render_sweep_plots.py \
 - **New D value** — add to `DAYS` (re-materialize the split first for fractional values via `generate_daycount_train_manifests.py --days <value> --force`).
 - **New eval scenario** — drop a YAML under `configs/train_confs/eval_scenario/`, optionally add a new provider class under `persistence_eval/sampling/`, then `EVAL_SCENARIO=<name> bash …_scenarios.sh`. Append the scenario name to `SCENARIOS=( … )` in `scripts/pucpr_daycount/run_render_all.sh` to include it in the plot output.
 - **New noise level** — `EVAL_NOISE_PM=… EVAL_NOISE_PF=… bash …_scenarios.sh`. Outputs land in a noise-tagged CSV so they don't overwrite the matched-noise headline.
-- **New survival family or K range** — edit the corresponding `train_config_perpetua_*.yaml` (or the `trainer/persistence_fit_*.yaml` it inherits from) and re-run with `FORCE_TRAIN=1`. The renderer auto-includes rows in the CSV matching the known method tokens; for genuinely new methods (not in `single_exp / single_lognormal / mixture_exp / mixture_lognormal / vision_anchor / llm`), add an entry to the `METHODS` / colour / marker tables in `render_sweep_plots.py`.
+- **New survival family or K range** — edit the corresponding `pucpr_train_config_perpetua_*.yaml` (or the `trainer/persistence_fit_*.yaml` it inherits from) and re-run with `FORCE_TRAIN=1`. The renderer auto-includes rows in the CSV matching the known method tokens; for genuinely new methods (not in `single_exp / single_lognormal / mixture_exp / mixture_lognormal / vision_anchor / llm`), add an entry to the `METHODS` / colour / marker tables in `render_sweep_plots.py`.
 - **New grouping** — would need plumbing in `inferencer/` and the eval configs; not a quick knob.
 
 ---

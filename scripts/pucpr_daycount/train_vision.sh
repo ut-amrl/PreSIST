@@ -19,7 +19,7 @@ SPLIT_DIR=/workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repair
 DAYCOUNT_ROOT="${DAYCOUNT_ROOT:-$SPLIT_DIR/daycount}"
 SPLIT_METADATA="$SPLIT_DIR/split_metadata.json"
 
-TRAIN_CFG="train_config_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train"
+TRAIN_CFG="pucpr_train_config_vision_anchor_midpoint_split_50_20_30_daycount_balanced_train"
 SEEDS="0"
 JOBS=1
 FORCE_TRAIN=""

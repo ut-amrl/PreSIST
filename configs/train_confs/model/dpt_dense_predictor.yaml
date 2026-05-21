@@ -1,0 +1,33 @@
+# @package model
+
+name: dpt_dense_predictor
+_target_: persistence_parameter_networks.models.dpt_dense_persistence_predictor.DPTDensePersistencePredictor
+
+# -------------------------
+# Backbone config (mirrors the per-mask obj_conditioned_cross_attn variant
+# so the dense model uses the same frozen-DINOv2 + trainable-SELA-adapter
+# setup. The 4 intermediate ViT-L blocks tapped by the dense encoder are
+# [5, 11, 17, 23] (see DenseGeoLocalizationNet.__init__).
+# -------------------------
+backbone_cfg:
+  _target_: persistence_parameter_networks.models.img_encoders.selavpr.rich_img_encoder.RichOutputSelaEncoderArgs
+
+  foundation_model_path: "pretrained_models/dinov2_vitl14_pretrain.pth"
+  registers: false
+  resume: false
+  image_size: 518
+
+  freeze_dino: true
+  use_adapter: true
+  pretrained_adapter_path: null
+  freeze_pre_sela: false
+  # use_local is unused on the dense path (DenseGeoLocalizationNet has no
+  # LocalAdapt module) but kept here for parity with the per-mask config.
+  use_local: false
+
+decoder_dim: 256
+# Spatial scales for the 4 DPT taps, shallow -> deep. Defaults match the
+# canonical DPT recipe: shallow layer ×2, mid layer ×1, deep layers
+# downsampled by 2 and 4.
+scales: [2.0, 1.0, 0.5, 0.25]
+confidence_from_logits: false

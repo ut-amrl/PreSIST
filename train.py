@@ -12,13 +12,20 @@ from dataset_generation.images_dataset.image_id_fn import ImageIdToRelpath
 
 import torch.nn as nn
 import torch
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, Tuple
 from training.validator import SurvivalValidationRunner, ValConfig
 from training.dataset.distillation_dataset import DistillationDatasetConfig
-from persistence_parameter_networks.training.task import (
+from training.dataset.dense_collate import make_dense_collate
+from training.task import (
+    DensePersistenceTask,
     PerMaskPersistenceTask,
     TrainingTask,
 )
+from persistence_parameter_networks.models.dense_persistence_predictor import (
+    DensePersistencePredictor,
+)
+from persistence_parameter_networks.losses.dense_losses import DenseWeightedMultiLoss
+from persistence_parameter_networks.losses.weighted_multi_loss import WeightedMultiLoss
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -38,6 +45,7 @@ def train(
         cfg: TrainerConfig,
         full_cfg_yaml: str,
         resumeFromCheckpoint: Optional[str] = None,
+        val_on_train_loader: Optional[torch.utils.data.DataLoader] = None,
         ):
 
     trainer = Trainer(
@@ -50,6 +58,7 @@ def train(
         output_dir=output_dir,
         cfg=cfg,
         full_cfg_yaml=full_cfg_yaml,
+        val_on_train_loader=val_on_train_loader,
     )
 
     if resumeFromCheckpoint is not None:
@@ -142,6 +151,109 @@ def createDataloaders(distillationDatasetConfig: DistillationDatasetConfig, regi
     return trainLoader, valLoader
 
 
+def createDenseDataloaders(
+    distillationDatasetConfig: DistillationDatasetConfig,
+    registryConfig: RegistryConfig,
+    trainerConfig: TrainerConfig,
+    loss_fn: nn.Module,
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """Build the three loaders for dense training.
+
+    - ``train_loader``: dense mode + flat/concat collate. The collate
+      includes per-instance tensors only when the configured loss
+      requires them (``loss_fn.requires_per_instance_tensors()``), so
+      the training hot path is decoupled from instance-count variance
+      under the default loss.
+    - ``val_loader``: per_instance mode — same population the per-mask
+      model uses for validation, scored via the task's pooling facade
+      so dense-vs-per-mask val numbers stay apples-to-apples.
+    - ``val_on_train_loader``: per_instance mode on the train split.
+      Separate from train_loader since the dense train batches aren't
+      consumable by the existing validator.
+    """
+    print("[createDenseDataloaders] building registry id<->relpath helpers...", flush=True)
+    relpath_to_image_id = RelpathToImageId(
+        image_root=distillationDatasetConfig.input_root_dir,
+        registry_cfg=registryConfig,
+    )
+    image_id_to_relpath = ImageIdToRelpath(
+        image_root=distillationDatasetConfig.input_root_dir,
+        registry_cfg=registryConfig,
+        warn=print,
+    )
+
+    if distillationDatasetConfig.dense_rasterizer is None:
+        raise ValueError(
+            "train_dataset.dense_rasterizer must be set when training a "
+            "DensePersistencePredictor. See configs/train_confs/train_dataset/"
+            "*_dense.yaml for an example."
+        )
+
+    print("[createDenseDataloaders] building dense training dataset...", flush=True)
+    trainingDataset = distillationDatasetConfig.make_dataset(
+        split="train",
+        mode="dense",
+        relpath_to_image_id=relpath_to_image_id,
+        image_id_to_relpath=image_id_to_relpath,
+        img_size=trainerConfig.img_size,
+    )
+    print("[createDenseDataloaders] building per-instance validation dataset...", flush=True)
+    validationDataset = distillationDatasetConfig.make_dataset(
+        split="val",
+        mode="per_instance",
+        relpath_to_image_id=relpath_to_image_id,
+        image_id_to_relpath=image_id_to_relpath,
+        img_size=trainerConfig.img_size,
+    )
+    print("[createDenseDataloaders] building per-instance val-on-train dataset...", flush=True)
+    valOnTrainDataset = distillationDatasetConfig.make_dataset(
+        split="train",
+        mode="per_instance",
+        relpath_to_image_id=relpath_to_image_id,
+        image_id_to_relpath=image_id_to_relpath,
+        img_size=trainerConfig.img_size,
+    )
+
+    needs_per_instance = bool(
+        getattr(loss_fn, "requires_per_instance_tensors", lambda: False)()
+    )
+    train_collate = make_dense_collate(include_per_instance=needs_per_instance)
+
+    train_workers = getattr(trainerConfig, "num_workers", 4)
+    val_workers = getattr(trainerConfig, "val_num_workers", None) or train_workers
+    val_bs = getattr(trainerConfig, "val_batch_size", None) or trainerConfig.batch_size
+
+    trainLoader = DataLoader(
+        trainingDataset,
+        batch_size=trainerConfig.batch_size,
+        shuffle=True,
+        num_workers=train_workers,
+        pin_memory=True,
+        persistent_workers=train_workers > 0,
+        collate_fn=train_collate,
+    )
+    valLoader = DataLoader(
+        validationDataset,
+        batch_size=val_bs,
+        shuffle=False,
+        num_workers=val_workers,
+        pin_memory=True,
+        persistent_workers=val_workers > 0,
+    )
+    # Deterministic sequential pass for val-on-train so the diagnostic
+    # is reproducible across epochs and across model variants. The
+    # validator's max_batches cap controls compute.
+    valOnTrainLoader = DataLoader(
+        valOnTrainDataset,
+        batch_size=val_bs,
+        shuffle=False,
+        num_workers=val_workers,
+        pin_memory=True,
+        persistent_workers=val_workers > 0,
+    )
+    return trainLoader, valLoader, valOnTrainLoader
+
+
 def loadModelAndBackpropStuff(cfg: DictConfig) -> nn.Module:
     model = hydra.utils.instantiate(cfg.model)
     loss_fn = hydra.utils.instantiate(cfg.trainer.loss_function)
@@ -184,18 +296,30 @@ def main(cfg: DictConfig):
 
     datasetConfig = hydra.utils.instantiate(cfg.train_dataset)
 
-    print("Creating dataloaders...")
-    trainLoader, valLoader = createDataloaders(datasetConfig, registryConfig, trainer_config)
-
+    # Model+loss are built before the dataloaders for the dense branch so we
+    # can dispatch on the model type and ask the loss whether it needs
+    # per-instance tensors in the dense collate.
     print("Creating model, loss function, optimizer, and lr scheduler...")
     model, loss_fn, optimizer, lr_scheduler, device = loadModelAndBackpropStuff(cfg)
 
+    is_dense = isinstance(model, DensePersistencePredictor)
+    print(f"Creating dataloaders... (dense_mode={is_dense})")
+    valOnTrainLoader: Optional[torch.utils.data.DataLoader] = None
+    if is_dense:
+        trainLoader, valLoader, valOnTrainLoader = createDenseDataloaders(
+            datasetConfig, registryConfig, trainer_config, loss_fn
+        )
+    else:
+        trainLoader, valLoader = createDataloaders(datasetConfig, registryConfig, trainer_config)
+
     # Wrap the (model, loss_fn) pair in the appropriate TrainingTask. The
     # task owns the forward + loss call shape; the trainer only sees
-    # task.compute_loss(batch). For the existing per-mask models that's
-    # PerMaskPersistenceTask. Dense models (added later) will dispatch to
-    # DensePersistenceTask here.
-    task: TrainingTask = PerMaskPersistenceTask(model=model, loss_fn=loss_fn)
+    # task.compute_loss(batch).
+    task: TrainingTask = (
+        DensePersistenceTask(model=model, loss_fn=loss_fn)
+        if is_dense
+        else PerMaskPersistenceTask(model=model, loss_fn=loss_fn)
+    )
 
     # Determine output directory. When resuming, reuse the original run's directory so
     # checkpoints, logs, and metrics stay together. Checkpoint path: <run_dir>/checkpoints/<file>.pth
@@ -229,7 +353,29 @@ def main(cfg: DictConfig):
             if model.confidence_from_logits != loss_fn.confidence_from_logits:
                 raise ValueError(f"Mismatch in confidence_from_logits between model and loss function. Model has {model.confidence_from_logits} but loss function has {loss_fn.confidence_from_logits}. Please make sure these are the same.")
 
-    validator = createValidator(val_config, loss_fn, device)
+    # The validator scores via the task's per-mask validation forward
+    # (identity for per-mask, pooling facade for dense). It always
+    # wants a per-instance loss. For per-mask training that's just
+    # ``loss_fn``; for dense training we build a matching
+    # ``WeightedMultiLoss`` whose confidence-channel handling mirrors
+    # the dense training loss so val numbers stay calibrated.
+    if is_dense and isinstance(loss_fn, DenseWeightedMultiLoss):
+        validator_loss_fn = WeightedMultiLoss(
+            w50=loss_fn.w50,
+            wr=loss_fn.wr,
+            wc=loss_fn.wc,
+            useHuberForLogVals=loss_fn.useHuberForLogVals,
+            delta_50=loss_fn.delta_50,
+            delta_r=loss_fn.delta_r,
+            confidence_loss=loss_fn.confidence_loss,
+            confidence_from_logits=loss_fn.confidence_from_logits,
+            delta_c=loss_fn.delta_c,
+            clamp_confidence_probs=loss_fn.clamp_confidence_probs,
+            eps=loss_fn.eps,
+        ).to(device)
+    else:
+        validator_loss_fn = loss_fn
+    validator = createValidator(val_config, validator_loss_fn, device)
 
     # Initialize wandb logging if enabled in the config
     if trainer_config.use_wandb:
@@ -251,6 +397,7 @@ def main(cfg: DictConfig):
         cfg=trainer_config,
         full_cfg_yaml=OmegaConf.to_yaml(cfg, resolve=True),
         resumeFromCheckpoint=resumeFromCheckpoint,
+        val_on_train_loader=valOnTrainLoader,
     )
 
 

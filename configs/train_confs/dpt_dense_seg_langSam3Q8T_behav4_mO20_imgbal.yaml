@@ -1,0 +1,41 @@
+# Dense-prediction training config: DPT-style decoder on DINOv2 + SELA
+# adapters, supervised by per-pixel rasterized labels from instance masks.
+#
+# Compare against cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal.yaml for
+# the per-mask sibling. Same backbone freeze settings, same dataset
+# splits, same val-population cap so val-on-val numbers are comparable.
+
+defaults:
+  - train_dataset: seg_langSam3Q8T_behav4_mO20_imgbal_dense
+  - eval_dataset: mirror_train
+  - model: dpt_dense_predictor
+  - registry_info: registry_default
+  - trainer: default
+  - _self_
+  # Replace the per-mask loss with the dense per-pixel loss. Override
+  # entries must be at the end of the defaults list.
+  - override /trainer/loss_function: dense_weighted_multi_loss
+  # The per-mask cross_attn_pooler default from config.yaml is irrelevant
+  # for the dense model. DPTDensePersistencePredictor accepts and ignores
+  # the ``pooler_cfg`` it surfaces as, so we don't need to delete it here.
+
+
+model_output_root_dir: "/workspace/data/output/training_outputs/"
+
+trainer:
+  loop:
+    # Dense draws one image per sample; no image-balanced sampler.
+    image_balanced_sampling: false
+    batch_size: 8
+    val_batch_size: 16
+    num_workers: 6
+    val_num_workers: 8
+    # Cap val passes the same way the per-mask config does so wall-time
+    # per epoch stays bounded.
+    val_max_batches: 500
+    train_eval_max_batches: 500
+    # Dense doesn't use the WeightedRandomSampler train_samples_per_epoch
+    # knob; leave it null so the loader runs through the full dense
+    # training set each epoch. Shrink with the train_subsample_fraction
+    # dataset knob if you need a quick smoke test.
+    train_samples_per_epoch: null

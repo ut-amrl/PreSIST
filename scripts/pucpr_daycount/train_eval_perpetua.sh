@@ -85,8 +85,8 @@ run_cell() {
     TRAIN_FLAGS="+trainer.fit_method=em_k1 +trainer.min_em_samples=${MINSAMPLES} +trainer.p_m=${PMPF} +trainer.p_f=${PMPF}"
   fi
 
-  local TRAIN_CFG="train_config_perpetua_${DIST}_${GROUPING}_pucpr_split_50_20_30_daycount"
-  local EVAL_CFG="eval_config_perpetua_${DIST}_${GROUPING}_pucpr_split_50_20_30_daycount_balanced"
+  local TRAIN_CFG="pucpr_train_config_perpetua_${DIST}_${GROUPING}_split_50_20_30_daycount"
+  local EVAL_CFG="pucpr_eval_config_perpetua_${DIST}_${GROUPING}_split_50_20_30_daycount_balanced"
   local EXP_NAME="perpetua_${DIST}_${GROUPING}_pucpr_split_50_20_30${EXP_SUFFIX}${TAG_SUFFIX}"
   # Day-token slug: integer N keeps the legacy zero-padded form (days_0001,
   # days0001) so previously-trained cells still match; fractional N (e.g. 0.5)

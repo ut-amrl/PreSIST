@@ -8,7 +8,7 @@ inspect the raw response without rerunning captioning/description.
 Usage from inside the spf_plus_datasets container:
     python scripts/debug_replay_querier_for_anchor.py \\
         --debug-json /workspace/data/output/persistence_eval_outputs/.../debug_vis/debug_1353440383.000000.json \\
-        --config-name eval_config_llm_pucpr_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced
+        --config-name pucpr_eval_config_llm_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def main() -> None:
     ap.add_argument("--debug-json", required=True, type=Path)
     ap.add_argument(
         "--config-name",
-        default="eval_config_llm_pucpr_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced",
+        default="pucpr_eval_config_llm_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced",
     )
     ap.add_argument(
         "--config-dir",
