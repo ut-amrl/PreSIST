@@ -10,6 +10,7 @@ import torch
 from PIL import Image
 
 from persistence_eval.core.domain import BinaryObservationEvent, InferenceArtifact
+from persistence_eval.datasets._mask_io import load_mask_bool
 from persistence_eval.methods.predictors.base import AbsPersistencePredictor
 from dataset_generation.llm_persistence_querying.abs_direct_future_existence_vlm_querier import (
     AbsDirectFutureExistenceVLMQuerier,
@@ -66,11 +67,4 @@ class DirectVLMPredictor(AbsPersistencePredictor):
 
     @staticmethod
     def _load_mask(path: str) -> torch.Tensor:
-        if path.lower().endswith(".npz"):
-            with np.load(path) as data:
-                arr = data["mask"]
-            return torch.from_numpy(arr.astype(bool))
-        # Image file (PNG/JPG): grayscale > 0 → bool, matching the dataset's load.
-        with Image.open(path) as im:
-            arr = np.array(im.convert("L")) > 0
-        return torch.from_numpy(arr)
+        return load_mask_bool(path)

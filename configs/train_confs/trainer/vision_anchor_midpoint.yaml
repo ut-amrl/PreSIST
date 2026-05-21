@@ -9,7 +9,7 @@ name: vision_anchor_midpoint
 # it here as a passthrough field that the experiment preset overrides.
 
 epochs: 100
-batch_size: 16
+batch_size: 32
 num_workers: 4
 early_stopping_patience: 10
 image_size: 518

@@ -61,7 +61,10 @@ class JsonArtifactStore(ArtifactStore):
             anchor_time=float(d["anchor_time"]),
             inference_latency_ms=float(d["inference_latency_ms"]),
             estimate=PersistenceParameterEstimate(
-                params={k: float(v) for k, v in est["params"].items()},
+                params={
+                    k: ([float(x) for x in v] if isinstance(v, list) else float(v))
+                    for k, v in est["params"].items()
+                },
                 confidence=est.get("confidence"),
                 metadata=est.get("metadata", {}),
             ),

@@ -1,0 +1,13 @@
+# @package train_dataset
+#
+# Train manifest for the vision_anchor_midpoint trainer against the
+# PUCPR_repaired_split annotations (export_augmented.json) with a 50/50 temporal
+# split. Mirrors annotation_tool_pklot_train.yaml's cell_size_px=64 but pinned
+# to the repaired-split 50/50 train manifest.
+
+name: pklot_pucpr_repaired_split_train_50_50_vision
+manifest_path: /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split/splits/50_50/train_through_2012-10-15.json
+cell_size_px: 64
+class_id: 0
+host_root: /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/new_pklot
+container_root: /workspace/data/input/new_pklot

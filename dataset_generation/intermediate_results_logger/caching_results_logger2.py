@@ -53,16 +53,41 @@ class CachingResultsLoggerRevised:
     RELATIONSHIP_DESCRIBER_RESULTS_DIR = "relationship_description_results"
     LLM_QUERIER_RESULTS_DIR = "llm_querier_results"
 
+    # Phase names accepted by `force_regen_phases`; match the tokens used
+    # by the dataset_generator orchestrator's `run_phases`.
+    _FORCE_REGEN_PHASE_NAMES = {
+        "segmentation",
+        "scene_caption",
+        "object_descriptions",
+        "relationships",
+        "persistence",
+    }
+
     def __init__(
         self,
         baseLogDirectory,
         saveDebugImages=False,
         forceRegen=False,
+        force_regen_phases=None,
         debug_config: DebugConfig = None,
     ):
         self.baseLogDirectory = baseLogDirectory
         self.saveDebugImages = saveDebugImages
         self.forceRegen = forceRegen
+        # When set (non-empty list/set), only the listed phases are
+        # force-regenerated; all other phases load from cache as usual.
+        # When unset/empty, the global `forceRegen` flag is used uniformly.
+        if force_regen_phases:
+            phases = {str(p) for p in force_regen_phases}
+            unknown = phases - self._FORCE_REGEN_PHASE_NAMES
+            if unknown:
+                raise ValueError(
+                    f"Unknown force_regen_phases entries: {sorted(unknown)}. "
+                    f"Valid phases: {sorted(self._FORCE_REGEN_PHASE_NAMES)}"
+                )
+            self.force_regen_phases = phases
+        else:
+            self.force_regen_phases = set()
         self.debug_config = debug_config or DebugConfig()
 
         # Per-run, read-only after configureComponentNames / setConfigFileName.
@@ -73,6 +98,11 @@ class CachingResultsLoggerRevised:
         self.objectDescriberName = None
         self.relationshipDescriberName = None
         self.llmQuerierName = None
+
+    def _should_force_regen(self, phase: str) -> bool:
+        if self.force_regen_phases:
+            return phase in self.force_regen_phases
+        return bool(self.forceRegen)
 
 
     def configureComponentNames(
@@ -211,7 +241,7 @@ class CachingResultsLoggerRevised:
         segmentationResultsFilePath = os.path.join(segmentationResultsDir, "segmentation_results.npz")
 
         # If the segmentation results already exist, and forceRegen is False, load and return them
-        if not self.forceRegen and os.path.exists(segmentationResultsFilePath):
+        if not self._should_force_regen("segmentation") and os.path.exists(segmentationResultsFilePath):
         # if False:
             # print("Retrieving cached segmentation results from: ", segmentationResultsFilePath)
 
@@ -233,6 +263,20 @@ class CachingResultsLoggerRevised:
         try:
             with timer.time_block(self.segmenterTimerName):
                 segmentationResults, debug_payload = segmentationLambda()
+                # Raise INSIDE the timer scope so empty-mask runs are
+                # accounted as errors (not successes) in the timing report,
+                # and so the empty result is not cached on disk (we exit
+                # before the saveToFile call below). The exception
+                # propagates to the orchestrator's per-image try/except,
+                # which logs "Skipping image ..." and continues.
+                n_masks = int(getattr(segmentationResults, "masks", None).shape[0]) \
+                    if (segmentationResults is not None
+                        and getattr(segmentationResults, "masks", None) is not None) else 0
+                if n_masks == 0:
+                    raise RuntimeError(
+                        f"segmentation produced 0 masks for image_id={ctx.image_id} "
+                        f"(path={ctx.img_file_name!r}); not caching the empty result"
+                    )
         finally:
             if debug_payload is not None:
                 debug_payload.flush()
@@ -258,7 +302,7 @@ class CachingResultsLoggerRevised:
         alternateCaptionFilePath = os.path.join(captionDir, "scene_caption.txt")
 
         # If the caption already exists, and forceRegen is False, load and return it
-        if not self.forceRegen and os.path.exists(primaryCaptionFilePath):
+        if not self._should_force_regen("scene_caption") and os.path.exists(primaryCaptionFilePath):
             # print("Retrieving cached scene caption from: ", primaryCaptionFilePath)
             with open(primaryCaptionFilePath, 'r', encoding='utf-8') as f:
                 captionData = json.load(f)
@@ -266,7 +310,7 @@ class CachingResultsLoggerRevised:
 
             return caption
 
-        if not self.forceRegen and os.path.exists(alternateCaptionFilePath):
+        if not self._should_force_regen("scene_caption") and os.path.exists(alternateCaptionFilePath):
             # print("Retrieving cached scene caption from: ", alternateCaptionFilePath)
             with open(alternateCaptionFilePath, 'r', encoding='utf-8') as f:
                 caption = f.read().strip()
@@ -295,7 +339,9 @@ class CachingResultsLoggerRevised:
 
 
     def checkIfAlreadyProcessed(self, ctx: ImageContext):
-        if (self.forceRegen):
+        # If any phase is being force-regenerated, don't short-circuit
+        # at the top — let each phase decide whether to use its cache.
+        if self.forceRegen or self.force_regen_phases:
             return False
 
         llmDataDir = self.getFinalOutputDirectory(ctx)
@@ -309,7 +355,7 @@ class CachingResultsLoggerRevised:
         descriptionsFilePath = os.path.join(descriptionsDir, "object_descriptions.json")
 
         # If the descriptions already exist, and forceRegen is False, load and return them
-        if not self.forceRegen and os.path.exists(descriptionsFilePath):
+        if not self._should_force_regen("object_descriptions") and os.path.exists(descriptionsFilePath):
             # print("Retrieving cached object descriptions from: ", descriptionsFilePath)
             with open(descriptionsFilePath, 'r', encoding='utf-8') as f:
                 objectDescriptions = json.load(f)
@@ -373,7 +419,7 @@ class CachingResultsLoggerRevised:
         responsesByObjectPath = os.path.join(llmDataDir, "llm_raw_responses_by_object.json")
 
         # If forceRegen is False and persistence params exist, try loading from cache
-        if not self.forceRegen and os.path.exists(persistenceParamsPath):
+        if not self._should_force_regen("persistence") and os.path.exists(persistenceParamsPath):
 
             persistenceParameters = readPersistenceData(persistenceParamsPath)
 

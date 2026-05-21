@@ -379,6 +379,165 @@ def _plot_pred_vs_true_scatter(
     plt.close()
 
 
+def _plot_calibration_curve(
+    true_vals: np.ndarray,
+    pred_vals: np.ndarray,
+    out_path: Path,
+    *,
+    title: str,
+    n_bins: int = 10,
+    log_xy: bool = False,
+) -> None:
+    """Bin true values by quantile, plot mean(pred|bin) vs mean(true|bin).
+
+    A flat curve near the global mean(true) indicates regression-to-mean.
+    A curve tracking the identity line indicates the model differentiates
+    inputs.
+    """
+    import matplotlib.pyplot as plt
+
+    true_vals = np.asarray(true_vals, dtype=np.float64).reshape(-1)
+    pred_vals = np.asarray(pred_vals, dtype=np.float64).reshape(-1)
+    n = min(true_vals.size, pred_vals.size)
+    if n == 0:
+        return
+    true_vals = true_vals[:n]
+    pred_vals = pred_vals[:n]
+
+    mask = np.isfinite(true_vals) & np.isfinite(pred_vals)
+    if log_xy:
+        mask &= (true_vals > 0) & (pred_vals > 0)
+    true_vals = true_vals[mask]
+    pred_vals = pred_vals[mask]
+    if true_vals.size < 2:
+        return
+
+    # Quantile-based bin edges; dedup in case of ties.
+    qs = np.linspace(0.0, 1.0, n_bins + 1)
+    edges = np.unique(np.quantile(true_vals, qs))
+    if edges.size < 2:
+        return
+
+    bin_idx = np.clip(np.searchsorted(edges, true_vals, side="right") - 1, 0, edges.size - 2)
+
+    bin_true_mean = []
+    bin_pred_mean = []
+    bin_pred_sem = []
+    for b in range(edges.size - 1):
+        m = bin_idx == b
+        cnt = int(m.sum())
+        if cnt == 0:
+            continue
+        bt = float(true_vals[m].mean())
+        bp = float(pred_vals[m].mean())
+        bs = float(pred_vals[m].std(ddof=1)) / np.sqrt(cnt) if cnt > 1 else 0.0
+        bin_true_mean.append(bt)
+        bin_pred_mean.append(bp)
+        bin_pred_sem.append(bs)
+
+    if not bin_true_mean:
+        return
+
+    bin_true_mean = np.asarray(bin_true_mean, dtype=np.float64)
+    bin_pred_mean = np.asarray(bin_pred_mean, dtype=np.float64)
+    bin_pred_sem = np.asarray(bin_pred_sem, dtype=np.float64)
+
+    global_true_mean = float(true_vals.mean())
+    vmin = float(min(bin_true_mean.min(), bin_pred_mean.min(), global_true_mean))
+    vmax = float(max(bin_true_mean.max(), bin_pred_mean.max(), global_true_mean))
+    if not (np.isfinite(vmin) and np.isfinite(vmax)) or vmax <= vmin:
+        return
+
+    line_x = np.array([vmin, vmax], dtype=np.float64)
+
+    plt.figure()
+    plt.errorbar(
+        bin_true_mean,
+        bin_pred_mean,
+        yerr=bin_pred_sem,
+        fmt="o-",
+        capsize=3,
+        label="bin mean(pred)",
+    )
+    plt.plot(line_x, line_x, "k--", linewidth=1.2, label="ideal (y=x)")
+    plt.axhline(global_true_mean, color="r", linestyle=":", linewidth=1.0,
+                label=f"global mean(true)={global_true_mean:.3g}")
+    plt.title(title)
+    plt.xlabel("bin mean(true)")
+    plt.ylabel("bin mean(pred)")
+    if log_xy:
+        plt.xscale("log")
+        plt.yscale("log")
+    plt.legend()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+
+def _compute_regression_diagnostics(
+    dists: dict[str, dict[str, np.ndarray]],
+) -> dict[str, dict[str, float]]:
+    """Per-variable diagnostics that pin down regression-to-mean behavior.
+
+    Returns dict keyed by variable name. Each entry contains:
+      pearson_r, spearman_rho, spread_ratio (std(pred)/std(true)),
+      r2_vs_mean (1 - MSE/Var(true)), and basic moment sanity stats.
+    """
+    out: dict[str, dict[str, float]] = {}
+    for var, tp in dists.items():
+        true_vals = np.asarray(tp["true"], dtype=np.float64).reshape(-1)
+        pred_vals = np.asarray(tp["pred"], dtype=np.float64).reshape(-1)
+        n = min(true_vals.size, pred_vals.size)
+        true_vals = true_vals[:n]
+        pred_vals = pred_vals[:n]
+        mask = np.isfinite(true_vals) & np.isfinite(pred_vals)
+        true_vals = true_vals[mask]
+        pred_vals = pred_vals[mask]
+
+        entry: dict[str, float] = {"n": float(true_vals.size)}
+        if true_vals.size < 2:
+            out[var] = entry
+            continue
+
+        mu_t = float(true_vals.mean())
+        mu_p = float(pred_vals.mean())
+        sd_t = float(true_vals.std(ddof=1))
+        sd_p = float(pred_vals.std(ddof=1))
+        entry["true_mean"] = mu_t
+        entry["pred_mean"] = mu_p
+        entry["true_std"] = sd_t
+        entry["pred_std"] = sd_p
+        entry["spread_ratio"] = float(sd_p / sd_t) if sd_t > 0 else float("nan")
+
+        # Pearson via np.corrcoef (avoid scipy dependency).
+        if sd_t > 0 and sd_p > 0:
+            entry["pearson_r"] = float(np.corrcoef(true_vals, pred_vals)[0, 1])
+        else:
+            entry["pearson_r"] = float("nan")
+
+        # Spearman: Pearson on ranks. Use scipy if available, else manual ranks.
+        try:
+            from scipy.stats import spearmanr  # type: ignore
+            rho, _ = spearmanr(true_vals, pred_vals)
+            entry["spearman_rho"] = float(rho) if rho is not None else float("nan")
+        except Exception:
+            rt = np.argsort(np.argsort(true_vals)).astype(np.float64)
+            rp = np.argsort(np.argsort(pred_vals)).astype(np.float64)
+            if rt.std() > 0 and rp.std() > 0:
+                entry["spearman_rho"] = float(np.corrcoef(rt, rp)[0, 1])
+            else:
+                entry["spearman_rho"] = float("nan")
+
+        mse = float(np.mean((pred_vals - true_vals) ** 2))
+        var_t = float(true_vals.var(ddof=0))
+        entry["mse"] = mse
+        entry["r2_vs_mean"] = float(1.0 - mse / var_t) if var_t > 0 else float("nan")
+
+        out[var] = entry
+    return out
+
+
 @torch.no_grad()
 def _collect_split_distributions(
     *,
@@ -486,6 +645,14 @@ def _save_distribution_plots(
             pred_vals,
             dist_dir / f"scatter_{var}.png",
             title=f"{var}: true vs pred",
+            log_xy=log_x,
+        )
+        _plot_calibration_curve(
+            true_vals,
+            pred_vals,
+            dist_dir / f"calib_{var}.png",
+            title=f"{var}: calibration (bin mean true vs mean pred)",
+            n_bins=10,
             log_xy=log_x,
         )
 
@@ -681,6 +848,12 @@ def _evaluate_split(
         log_x_for_times=True,
     )
 
+    diagnostics = _compute_regression_diagnostics(dists)
+    diag_path = split_dir / "diagnostics.json"
+    with open(diag_path, "w", encoding="utf-8") as f:
+        json.dump(diagnostics, f, indent=2)
+    print(f"[Eval] {split:>5} regression diagnostics -> {diag_path}")
+
     overlays_saved = 0
     if viz:
         overlays_saved = _save_some_overlays(
@@ -698,6 +871,7 @@ def _evaluate_split(
         "split": split,
         "aggregate_score": float(agg_score),
         "metrics": {k: _safe_float(v) for k, v in metrics.items()},
+        "regression_diagnostics": diagnostics,
         "overlays_saved": int(overlays_saved),
         "batch_size": batch_size,
         "img_size": img_size,
@@ -817,7 +991,14 @@ def main(cfg: DictConfig) -> None:
         "splits": {},
     }
 
-    for split in ("test", "train", "val"):
+    splits_cfg = getattr(cfg, "eval_splits", None)
+    if splits_cfg is None:
+        splits = ("test", "train", "val")
+    else:
+        splits = tuple(str(s) for s in splits_cfg)
+    print(f"[Eval] splits: {splits}")
+
+    for split in splits:
         payload = _evaluate_split(
             split=split,
             model=model,

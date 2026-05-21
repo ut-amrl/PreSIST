@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union, Any, Mapping
+from typing import Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, Any, Mapping
 
 import json
 import math
+import random
+import zipfile
+from collections import defaultdict
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from PIL import Image, ImageOps
+from tqdm import tqdm
 
 from spf_io.persistence_io import readPersistenceData, PERSISTENCE_FILE_NAME
 from instance_segmentation.abs_instance_segmenter import SegmentationResults
@@ -41,6 +45,20 @@ def make_default_dinov2_transform(size: int) -> Callable[[torch.Tensor], torch.T
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
+
+
+def _seg_ids_from_npz(path: Path) -> Set[int]:
+    """Read only the `ids.npy` entry inside a segmentation_results.npz —
+    skips decompressing the mask payload. Used at dataset-construction
+    time to intersect label_ids with seg_ids per image (much faster than
+    `np.load(allow_pickle=True)` on the full archive).
+    """
+    with zipfile.ZipFile(str(path)) as z:
+        if "ids.npy" not in z.namelist():
+            return set()
+        with z.open("ids.npy") as f:
+            arr = np.load(f, allow_pickle=False)
+    return {int(x) for x in arr.tolist()}
 
 
 def _read_lines(path: Union[str, Path]) -> List[str]:
@@ -175,6 +193,55 @@ def label_transform_log_ratio(raw: dict) -> torch.Tensor:
     return torch.tensor([y50, yr, yc], dtype=torch.float32)
 
 
+# Fields required by the persistence-label transforms; used both by
+# the transforms themselves and by _label_instance_ids to skip entries
+# missing percentile annotations at index-build time.
+LABEL_TRANSFORM_REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "label_transform_log_ratio": ("median_persistence_hours", "p90_persistence_hours", "persistence_conf"),
+    "label_transform_log_ratio_p25_p75": ("p25_persistence_hours", "p75_persistence_hours", "persistence_conf"),
+}
+
+
+def _required_fields_for_transform(transform: Any) -> Tuple[str, ...]:
+    """Look up the persistence fields required by a label_transform callable.
+
+    Returns an empty tuple when the transform is unknown (in which case no
+    field-presence filtering is applied at index-build time).
+    """
+    if transform is None:
+        return ()
+    # functools.partial(label_transform_…) — peel the wrapper.
+    # WARNING: only peels one level. Nested partials, @wraps-decorated
+    # wrappers, or lambdas will resolve to a name not in the table and
+    # silently return () — which *disables* field-presence filtering and
+    # lets malformed label entries reach __getitem__ and crash there.
+    # If you start wrapping label_transform, extend this lookup.
+    inner = getattr(transform, "func", transform)
+    name = getattr(inner, "__name__", None)
+    return LABEL_TRANSFORM_REQUIRED_FIELDS.get(name, ())
+
+
+def label_transform_log_ratio_p25_p75(raw: dict) -> torch.Tensor:
+    """Like label_transform_log_ratio but reads the p25/p75 fields emitted by
+    the seg_langSam3Q8T_…_behav4_mO20 pipeline (new pseudo-labels) instead of
+    the old p50/p90 fields.
+
+    Returns a 3-vector (log p25, log (p75/p25 - 1), persistence_conf) — same
+    shape as label_transform_log_ratio so the model architecture and loss are
+    unchanged; only the percentile semantics differ.
+    """
+    tlo = float(raw["p25_persistence_hours"])
+    thi = float(raw["p75_persistence_hours"])
+    c = float(raw["persistence_conf"])
+
+    eps = 1e-8
+    ylo = math.log(max(tlo, eps))
+    ratio = thi / max(tlo, eps) - 1.0
+    yr = math.log(max(ratio, eps))
+
+    return torch.tensor([ylo, yr, c], dtype=torch.float32)
+
+
 @dataclass(frozen=True)
 class DistillationDatasetConfig:
     # Roots
@@ -214,6 +281,26 @@ class DistillationDatasetConfig:
 
     # Labels
     label_transform: Optional[Callable[[Dict[str, float]], object]] = None
+
+    # Per-image instance cap applied to the val split only. When set, each
+    # val image contributes at most this many (image, instance) samples
+    # to the dataset — randomly downsampled with a fixed seed for
+    # determinism across runs. Default None = no cap.
+    val_max_instances_per_image: Optional[int] = None
+    val_instance_cap_seed: int = 42
+
+    # Image-level stride for the val split (deterministic). When set to N>1,
+    # keep every Nth image; applied BEFORE the instance cap. Useful for
+    # quickly shrinking val without losing per-source class balance.
+    val_image_subsample_stride: Optional[int] = None
+
+    # Smoke-test knobs: keep only a random fraction of the instance index.
+    # Applied AFTER the val cap above (so capping still happens first).
+    # Use to quickly verify the full pipeline end-to-end without sitting
+    # through a full epoch. None / 0 / >= 1.0 = keep everything.
+    train_subsample_fraction: Optional[float] = None
+    val_subsample_fraction: Optional[float] = None
+    subsample_seed: int = 123
 
     # Storage dtypes
     masks_dtype: torch.dtype = torch.uint8
@@ -292,6 +379,18 @@ class _SegmentationDataset(Dataset):
         self._image_loader = cfg.image_loader or self._default_image_loader
         self._label_cache: Dict[Path, dict] = {}
 
+        # Single-slot caches: instances for one image are always contiguous
+        # in the per-instance index (we build it image-by-image), so when
+        # the dataloader has shuffle=False (val) consecutive __getitem__
+        # calls on the same worker re-read the same seg .npz / image file.
+        # A size-1 cache eliminates 95%+ of redundant reads. For shuffled
+        # train, cache hits are rarer but cheap to maintain.
+        self._cached_seg_path: Optional[Path] = None
+        self._cached_seg: Optional[Dict[str, torch.Tensor]] = None
+        self._cached_image_path: Optional[Path] = None
+        self._cached_image_u8: Optional[torch.Tensor] = None
+        self._cached_image_transformed: Optional[torch.Tensor] = None
+
         # ----------------------------
         # Load split entries
         #   These may be relative image paths OR image_ids depending on split_id_kind
@@ -358,7 +457,12 @@ class _SegmentationDataset(Dataset):
 
             raise TypeError(f"Unsupported split entry type: {type(e)}; entry={e!r}")
 
-        for raw_entry in split_entries:
+        print(f"[SegDataset:{self.split}] resolving {len(split_entries)} split entries -> records...",
+              flush=True)
+        for raw_entry in tqdm(split_entries,
+                              desc=f"[SegDataset:{self.split}] resolve",
+                              unit="entry",
+                              mininterval=1.0):
             id_token, maybe_iid = normalize_entry(raw_entry)
 
             # Enforce split_granularity if you want strict behavior
@@ -445,23 +549,80 @@ class _SegmentationDataset(Dataset):
                 assert isinstance(s, set)
                 s.add(int(maybe_iid))  # type: ignore[arg-type]
 
+        # Optional val-only image stride: keep every Nth image (deterministic).
+        # Done BEFORE building the per-instance index so the cap and the
+        # weights see the reduced image set. allowed_instances keys must
+        # stay consistent — but since rec_idx is the index into _records,
+        # we filter _records and rebuild rec_by_image_id / allowed_instances
+        # against the new indices.
+        stride = getattr(cfg, "val_image_subsample_stride", None)
+        if (self.mode == "per_instance"
+                and self.split == "val"
+                and stride is not None
+                and int(stride) > 1):
+            stride = int(stride)
+            kept = list(range(0, len(self._records), stride))
+            keep_set = set(kept)
+            new_records: List[Dict[str, object]] = []
+            old_to_new: Dict[int, int] = {}
+            for old_idx in range(len(self._records)):
+                if old_idx in keep_set:
+                    old_to_new[old_idx] = len(new_records)
+                    new_records.append(self._records[old_idx])
+            new_allowed: Dict[int, Optional[set[int]]] = {
+                old_to_new[old_i]: allowed_instances.get(old_i)
+                for old_i in keep_set
+                if old_i in allowed_instances
+            }
+            n_before = len(self._records)
+            self._records = new_records
+            allowed_instances = new_allowed
+            rec_by_image_id = {rec["image_id"]: i for i, rec in enumerate(self._records)}
+            print(f"[SegDataset:{self.split}] val_image_subsample_stride={stride}: "
+                  f"{n_before} -> {len(self._records)} images", flush=True)
+
         # ----------------------------
         # Build instance index
         # ----------------------------
         if self.mode == "per_instance":
-            for rec_idx, rec in enumerate(self._records):
+            print(f"[SegDataset:{self.split}] building per-instance index over "
+                  f"{len(self._records)} records...", flush=True)
+            dropped_missing_seg_id = 0
+            dropped_missing_label = 0
+            for rec_idx, rec in enumerate(tqdm(
+                self._records,
+                desc=f"[SegDataset:{self.split}] index",
+                unit="img",
+                mininterval=1.0,
+            )):
                 labels_path: Path = rec["labels_path"]  # type: ignore
+                seg_path: Path = rec["seg_path"]        # type: ignore
                 if not labels_path.exists():
                     continue
 
+                # Pre-load this image's seg ids once and intersect with the
+                # label ids — labels can reference instance_ids that don't
+                # exist in the seg npz (pipeline mismatch); drop those at
+                # index-build time so __getitem__ never sees a dead entry.
+                # Uses a fast header-only read of just `ids.npy` (skips the
+                # mask payload), so this scales to tens of thousands of
+                # images in seconds.
+                seg_ids_set: Optional[Set[int]] = None
+                try:
+                    seg_ids_set = _seg_ids_from_npz(seg_path)
+                except Exception as e:
+                    print(f"[SegDataset:{self.split}] WARN: could not load seg "
+                          f"{seg_path}: {e}; dropping all instances for this image")
+                    seg_ids_set = set()
+
                 wanted = allowed_instances.get(rec_idx, None)  # None -> ALL
                 if wanted is None:
-                    # all labels in that image
                     for iid in self._label_instance_ids(labels_path):
+                        if int(iid) not in seg_ids_set:
+                            dropped_missing_seg_id += 1
+                            continue
                         self._instance_index.append((rec_idx, int(iid)))
                 else:
-                    # only specified instance ids
-                    # validate existence in labels
                     obj = self._load_label_obj(labels_path)
                     for iid in sorted(wanted):
                         if str(int(iid)) not in obj:
@@ -472,8 +633,89 @@ class _SegmentationDataset(Dataset):
                             if self.strict:
                                 raise KeyError(msg)
                             print(msg)
+                            dropped_missing_label += 1
+                            continue
+                        if int(iid) not in seg_ids_set:
+                            dropped_missing_seg_id += 1
                             continue
                         self._instance_index.append((rec_idx, int(iid)))
+
+            if dropped_missing_seg_id or dropped_missing_label:
+                print(f"[SegDataset:{self.split}] dropped {dropped_missing_seg_id} "
+                      f"label entries whose instance_id was not in the seg npz; "
+                      f"{dropped_missing_label} missing labels.")
+            # Defensive: index-build above uses only _seg_ids_from_npz and
+            # never touches _load_seg, so _cached_seg should still be None
+            # here. Reset anyway in case future edits add a _load_seg call
+            # in the index loop.
+            self._cached_seg = None
+            self._cached_seg_path = None
+
+        # Optional val-only cap on instances/image: keeps each image
+        # contributing equally to val metrics without making val pass
+        # quadratically slow on instance-heavy images (parking lots, etc).
+        # Applied after the full index is built so the same downstream
+        # code paths work; uses a deterministic seed so val metric
+        # comparability across runs is preserved.
+        cap = getattr(cfg, "val_max_instances_per_image", None)
+        if (self.mode == "per_instance"
+                and self.split == "val"
+                and cap is not None
+                and int(cap) > 0):
+            cap = int(cap)
+            by_image: Dict[int, List[int]] = defaultdict(list)
+            for i, (rec_idx, _iid) in enumerate(self._instance_index):
+                by_image[rec_idx].append(i)
+            rng = random.Random(cfg.val_instance_cap_seed)
+            keep: Set[int] = set()
+            for rec_idx, idxs in by_image.items():
+                if len(idxs) > cap:
+                    keep.update(rng.sample(idxs, cap))
+                else:
+                    keep.update(idxs)
+            before = len(self._instance_index)
+            self._instance_index = [
+                e for i, e in enumerate(self._instance_index) if i in keep
+            ]
+            print(f"[SegDataset:{self.split}] capped instances/image at {cap}: "
+                  f"{before} -> {len(self._instance_index)}", flush=True)
+
+        # Optional smoke-test subsample: drop a random subset of the index
+        # to make a full epoch fast. Per-split fractions; deterministic
+        # seed so debug runs are reproducible.
+        sub_frac = (cfg.train_subsample_fraction if self.split == "train"
+                    else cfg.val_subsample_fraction if self.split == "val"
+                    else None)
+        if (self.mode == "per_instance"
+                and sub_frac is not None
+                and 0.0 < float(sub_frac) < 1.0
+                and len(self._instance_index) > 0):
+            frac = float(sub_frac)
+            rng = random.Random(cfg.subsample_seed + (0 if self.split == "train" else 1))
+            n_before = len(self._instance_index)
+            n_keep = max(1, int(round(n_before * frac)))
+            self._instance_index = rng.sample(self._instance_index, n_keep)
+            # Restore per-image contiguity so DataLoader (shuffle=False) and the
+            # single-slot image/seg caches in __getitem__ get cache hits across
+            # consecutive instances of the same image. random.sample shuffles,
+            # which otherwise turns every instance into a fresh image/seg read.
+            self._instance_index.sort(key=lambda e: e[0])
+            print(f"[SegDataset:{self.split}] subsample_fraction={frac}: "
+                  f"{n_before} -> {len(self._instance_index)} instances", flush=True)
+
+        # Precompute per-sample weights = 1 / (number of instances in the
+        # image that owns this sample). Used by the image-balanced training
+        # sampler and by the image-weighted validation metrics so each image
+        # contributes equal expected weight regardless of its instance count.
+        if self.mode == "per_instance":
+            counts: Dict[int, int] = {}
+            for rec_idx, _ in self._instance_index:
+                counts[rec_idx] = counts.get(rec_idx, 0) + 1
+            self._instance_weights: List[float] = [
+                1.0 / counts[rec_idx] for rec_idx, _ in self._instance_index
+            ]
+        else:
+            self._instance_weights = []
 
         # Print the number of records and instances indexed for this split
         num_images = len(self._records)
@@ -577,9 +819,24 @@ class _SegmentationDataset(Dataset):
 
         seg = self._load_seg(seg_path)
 
-        # Load + transform image
-        image_u8 = self._image_loader(image_path)
-        image = self._image_transform(image_u8)
+        # Load + transform image. Cache last loaded/transformed pair so
+        # consecutive instances from the same image (always contiguous in
+        # the per-instance index) skip the heavy PIL decode + resize.
+        # WARNING: on a cache hit we hand back the *same* tensor object to
+        # multiple samples in a batch. Safe today because default_collate
+        # copies via torch.stack and no downstream op mutates `image` in
+        # place — but any future in-place op (augmentation, normalize_,
+        # mul_, etc.) would silently corrupt sibling samples and the
+        # cache. If that changes, .clone() on hit.
+        if self._cached_image_path == image_path and self._cached_image_u8 is not None:
+            image_u8 = self._cached_image_u8
+            image = self._cached_image_transformed  # type: ignore[assignment]
+        else:
+            image_u8 = self._image_loader(image_path)
+            image = self._image_transform(image_u8)
+            self._cached_image_path = image_path
+            self._cached_image_u8 = image_u8
+            self._cached_image_transformed = image
 
         # Load label
         label = self._load_labels(labels_path, [inst_id])[0]
@@ -612,6 +869,9 @@ class _SegmentationDataset(Dataset):
 
             mask = mask.to(self.cfg.masks_dtype)
 
+        sample_weight = (
+            self._instance_weights[idx] if self._instance_weights else 1.0
+        )
         return self._format_training_sample(
             image=image,
             mask=mask,
@@ -619,6 +879,7 @@ class _SegmentationDataset(Dataset):
             image_id=rec["image_id"],
             instance_id=inst_id,
             image_path=rec["image_path"],
+            sample_weight=sample_weight,
         )
 
 
@@ -686,14 +947,24 @@ class _SegmentationDataset(Dataset):
 
 
     def _label_instance_ids(self, path: Path) -> List[int]:
-        """Returns label instance ids as ints (sorted for determinism)."""
+        """Returns label instance ids as ints (sorted for determinism).
+
+        Skips entries that lack any of the percentile fields required by
+        the configured label_transform — some pseudo-label outputs include
+        bare `{"id": N}` entries with no params and would crash later.
+        """
         obj = self._load_label_obj(path)
+        required = _required_fields_for_transform(self._label_transform)
         ids: List[int] = []
-        for k in obj.keys():
+        for k, v in obj.items():
             try:
-                ids.append(int(k))
+                iid = int(k)
             except Exception:
                 continue
+            if required and isinstance(v, Mapping):
+                if not all(field in v for field in required):
+                    continue
+            ids.append(iid)
         ids.sort()
         return ids
 
@@ -707,6 +978,7 @@ class _SegmentationDataset(Dataset):
         image_id: str,
         instance_id: int,
         image_path: str,
+        sample_weight: float = 1.0,
     ) -> Dict[str, object]:
         if not torch.is_tensor(label):
             raise TypeError("label_transform must return a torch.Tensor of shape (3,) for this training format.")
@@ -726,6 +998,7 @@ class _SegmentationDataset(Dataset):
             "y50": y50,
             "yr": yr,
             "yc": yc,
+            "sample_weight": torch.tensor(float(sample_weight), dtype=torch.float32),
             "image_id": image_id,
             "instance_id": torch.tensor(instance_id, dtype=torch.int64),
             "image_path": str(image_path) if isinstance(image_path, Path) else image_path
@@ -745,6 +1018,9 @@ class _SegmentationDataset(Dataset):
 
 
     def _load_seg(self, path: Path) -> Dict[str, torch.Tensor]:
+        if self._cached_seg is not None and self._cached_seg_path == path:
+            return self._cached_seg
+
         seg, _img_path = SegmentationResults.loadFromFile(str(path))
 
         out: Dict[str, torch.Tensor] = {
@@ -753,22 +1029,24 @@ class _SegmentationDataset(Dataset):
             "boxes": seg.boxes.to(self.cfg.boxes_dtype),
         }
 
+        self._cached_seg_path = path
+        self._cached_seg = out
         return out
 
     def _load_labels(self, path: Path, instance_ids: Sequence[int]) -> List[object]:
         obj = self._load_label_obj(path)
 
+        required = _required_fields_for_transform(self._label_transform)
         labels: List[object] = []
         for iid in instance_ids:
             key = str(int(iid))
             if key not in obj:
                 raise KeyError(f"Label for instance_id={iid} not found in {path}")
             raw = obj[key]
-            base = {
-                "median_persistence_hours": float(raw["median_persistence_hours"]),
-                "p90_persistence_hours": float(raw["p90_persistence_hours"]),
-                "persistence_conf": float(raw["persistence_conf"]),
-            }
+            if required:
+                base = {field: float(raw[field]) for field in required}
+            else:
+                base = raw
             labels.append(self._label_transform(base))
         return labels
 

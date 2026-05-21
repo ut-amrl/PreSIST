@@ -1,0 +1,20 @@
+# @package benchmark_dataset
+# Per-track-balanced PUCPR test benchmark against the
+# PUCPR_repaired_split_flanks_fixed 50/20/30 split (train=2012-09-11..10-15,
+# val=10-16..10-29, test=10-30..11-20). Same balancing semantics as the 50/50
+# variant: max_anchor_observations is a target total; per-track cap is chosen
+# so capping yields >= target, then trimmed to target after a seeded shuffle.
+name: pucpr_split_new_pklot_PUCPR_test_50_20_30_balanced
+_target_: persistence_eval.datasets.annotation_tool.AnnotationToolBackingDataset
+manifest_path: /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/splits/50_20_30/test_from_2012-10-30.json
+max_anchor_observations: 1000
+shuffle_seed: 42
+per_track_balanced: true
+host_root: /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/new_pklot
+container_root: /workspace/data/input/new_pklot
+
+image_mask_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolImageMaskView
+
+track_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolTrackView

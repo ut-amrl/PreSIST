@@ -59,6 +59,7 @@ def train(
 
 def createDataloaders(distillationDatasetConfig: DistillationDatasetConfig, registryConfig: RegistryConfig, trainerConfig: TrainerConfig):
 
+    print("[createDataloaders] building registry id<->relpath helpers...", flush=True)
     relpath_to_image_id = RelpathToImageId(
         image_root=distillationDatasetConfig.input_root_dir,
         registry_cfg=registryConfig,   # your existing Hydra RegistryConfig object
@@ -70,9 +71,7 @@ def createDataloaders(distillationDatasetConfig: DistillationDatasetConfig, regi
         warn=print,  # or your logger.warning
     )
 
-    # trainingDataset = segmentationDatasetConfig.make_dataset("train", "per_instance")
-    # validationDataset = segmentationDatasetConfig.make_dataset("val", "per_instance")
-
+    print("[createDataloaders] building training dataset...", flush=True)
     trainingDataset = distillationDatasetConfig.make_dataset(
         split="train",
         mode="per_instance",
@@ -80,6 +79,7 @@ def createDataloaders(distillationDatasetConfig: DistillationDatasetConfig, regi
         image_id_to_relpath=image_id_to_relpath,
         img_size=trainerConfig.img_size,
     )
+    print("[createDataloaders] building validation dataset...", flush=True)
     validationDataset = distillationDatasetConfig.make_dataset(
         split="val",
         mode="per_instance",
@@ -88,20 +88,53 @@ def createDataloaders(distillationDatasetConfig: DistillationDatasetConfig, regi
         img_size=trainerConfig.img_size,
     )
 
-    # Create dataloaders
-    trainLoader = DataLoader(
-        trainingDataset,
-        batch_size=trainerConfig.batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True
-    )
+    # Create dataloaders. When image_balanced_sampling is enabled, draw
+    # instances with weight = 1/n_instances_in_image so each image is
+    # sampled with equal expected probability regardless of how many
+    # instances it has.
+    train_workers = getattr(trainerConfig, "num_workers", 4)
+    val_workers = getattr(trainerConfig, "val_num_workers", None) or train_workers
+    if getattr(trainerConfig, "image_balanced_sampling", False):
+        weights = torch.tensor(trainingDataset._instance_weights, dtype=torch.double)
+        per_epoch_samples = (
+            int(trainerConfig.train_samples_per_epoch)
+            if getattr(trainerConfig, "train_samples_per_epoch", None) is not None
+            else len(trainingDataset)
+        )
+        train_sampler = torch.utils.data.WeightedRandomSampler(
+            weights=weights,
+            num_samples=per_epoch_samples,
+            replacement=True,
+        )
+        n_distinct_imgs = len(set(rec_idx for rec_idx, _ in trainingDataset._instance_index))
+        print(f"[createDataloaders] image_balanced_sampling on: "
+              f"{n_distinct_imgs} distinct images, {len(trainingDataset)} instances; "
+              f"samples_per_epoch={per_epoch_samples}")
+        trainLoader = DataLoader(
+            trainingDataset,
+            batch_size=trainerConfig.batch_size,
+            sampler=train_sampler,
+            num_workers=train_workers,
+            pin_memory=True,
+            persistent_workers=train_workers > 0,
+        )
+    else:
+        trainLoader = DataLoader(
+            trainingDataset,
+            batch_size=trainerConfig.batch_size,
+            shuffle=True,
+            num_workers=train_workers,
+            pin_memory=True,
+            persistent_workers=train_workers > 0,
+        )
+    val_bs = getattr(trainerConfig, "val_batch_size", None) or trainerConfig.batch_size
     valLoader = DataLoader(
         validationDataset,
-        batch_size=trainerConfig.batch_size,
+        batch_size=val_bs,
         shuffle=False,
-        num_workers=4,
-        pin_memory=True
+        num_workers=val_workers,
+        pin_memory=True,
+        persistent_workers=val_workers > 0,
     )
 
     return trainLoader, valLoader

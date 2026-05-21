@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
+from collections import defaultdict
 from itertools import groupby
 from pathlib import Path
 from typing import Iterable
@@ -9,6 +11,90 @@ from typing import Iterable
 import numpy as np
 import torch
 from PIL import Image
+
+logger = logging.getLogger(__name__)
+
+_UNDER_CAP_WARN_LIMIT = 10
+
+
+def _per_track_balanced_sample(
+    obs_list: list[tuple[str, dict]],
+    target_n: int,
+    seed: int | None,
+) -> list[tuple[str, dict]]:
+    """Subsample ``obs_list`` so each track contributes roughly equally.
+
+    Picks the smallest per-track cap ``K`` such that ``sum(min(c_i, K))`` is at
+    least ``target_n``, randomly subsamples each track to that cap, then shuffles
+    the concatenated result and slices to exactly ``target_n``. Tracks with
+    fewer than ``K`` observations are warned about (rate-limited) and counted
+    in a final summary log.
+    """
+    if target_n <= 0 or not obs_list:
+        return []
+
+    rng = random.Random(seed)
+
+    by_track: dict[str, list[dict]] = defaultdict(list)
+    for track_id, obs in obs_list:
+        by_track[track_id].append(obs)
+
+    counts = sorted((len(v) for v in by_track.values()), reverse=False)
+    total_obs = sum(counts)
+    if target_n >= total_obs:
+        # Budget exceeds available data: keep everything, shuffle for consistency.
+        flat = [(tid, obs) for tid, obs_l in by_track.items() for obs in obs_l]
+        rng.shuffle(flat)
+        return flat
+
+    # Find smallest integer K with sum(min(c_i, K)) >= target_n via binary
+    # search (monotone non-decreasing in K). The unique solution gives the
+    # tightest per-track balance — fewest observations to trim post-shuffle.
+    lo, hi = 1, max(counts)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if sum(min(c, mid) for c in counts) >= target_n:
+            hi = mid
+        else:
+            lo = mid + 1
+    chosen_k = lo
+
+    under_cap_tracks: list[tuple[str, int]] = []
+    sampled: list[tuple[str, dict]] = []
+    for track_id, obs_l in by_track.items():
+        if len(obs_l) <= chosen_k:
+            if len(obs_l) < chosen_k:
+                under_cap_tracks.append((track_id, len(obs_l)))
+            for obs in obs_l:
+                sampled.append((track_id, obs))
+        else:
+            picked = rng.sample(obs_l, chosen_k)
+            for obs in picked:
+                sampled.append((track_id, obs))
+
+    rng.shuffle(sampled)
+    trimmed = sampled[:target_n]
+
+    total_tracks = len(by_track)
+    n_under = len(under_cap_tracks)
+    for track_id, count in under_cap_tracks[:_UNDER_CAP_WARN_LIMIT]:
+        logger.warning(
+            "per_track_balanced: track %s has %d observations (< cap K=%d)",
+            track_id, count, chosen_k,
+        )
+    if n_under > _UNDER_CAP_WARN_LIMIT:
+        logger.warning(
+            "per_track_balanced: ... %d additional under-cap tracks suppressed.",
+            n_under - _UNDER_CAP_WARN_LIMIT,
+        )
+    frac = n_under / total_tracks if total_tracks else 0.0
+    logger.warning(
+        "per_track_balanced summary: K=%d, %d/%d tracks under cap (%.1f%%); "
+        "kept %d/%d observations (target %d).",
+        chosen_k, n_under, total_tracks, 100.0 * frac,
+        len(trimmed), total_obs, target_n,
+    )
+    return trimmed
 
 from persistence_eval.core.domain import (
     AnchorObservation,
@@ -18,6 +104,7 @@ from persistence_eval.core.domain import (
 )
 from persistence_eval.datasets.backing import AbsBackingDataset
 from persistence_eval.datasets.image_mask_view import ImageMaskView
+from persistence_eval.datasets._mask_io import load_mask_bool
 from persistence_eval.datasets.track_view import TrackView
 
 _US_TO_S = 1_000_000.0
@@ -84,6 +171,7 @@ class AnnotationToolBackingDataset(AbsBackingDataset):
         before: bool | None = None,
         max_anchor_observations: int | None = None,
         shuffle_seed: int | None = None,
+        per_track_balanced: bool = False,
         host_root: str | None = None,
         container_root: str | None = None,
     ) -> None:
@@ -103,6 +191,7 @@ class AnnotationToolBackingDataset(AbsBackingDataset):
         self._raw_tracks = self._apply_boundary(raw_tracks, boundary_timestamp, before)
         self._max_anchor_observations = max_anchor_observations
         self._shuffle_seed = shuffle_seed
+        self._per_track_balanced = per_track_balanced
         self._track_obs_cache: list[tuple[str, list[dict], dict]] | None = None
         self._image_obs_cache: list[tuple[str, dict]] | None = None
 
@@ -116,6 +205,7 @@ class AnnotationToolBackingDataset(AbsBackingDataset):
         before: bool | None = None,
         max_anchor_observations: int | None = None,
         shuffle_seed: int | None = None,
+        per_track_balanced: bool = False,
     ) -> AnnotationToolBackingDataset:
         """Construct from already-loaded data, bypassing file I/O."""
         obj = object.__new__(cls)
@@ -124,6 +214,7 @@ class AnnotationToolBackingDataset(AbsBackingDataset):
         obj._raw_tracks = cls._apply_boundary(raw_tracks, boundary_timestamp, before)
         obj._max_anchor_observations = max_anchor_observations
         obj._shuffle_seed = shuffle_seed
+        obj._per_track_balanced = per_track_balanced
         obj._track_obs_cache = None
         obj._image_obs_cache = None
         return obj
@@ -162,10 +253,17 @@ class AnnotationToolBackingDataset(AbsBackingDataset):
                 for obs in t["observations"]
                 if obs["state"] == _POSITIVE and obs.get("mask_path") is not None
             ]
-            if self._shuffle_seed is not None:
-                random.Random(self._shuffle_seed).shuffle(obs_list)
-            if self._max_anchor_observations is not None:
-                obs_list = obs_list[: self._max_anchor_observations]
+            if self._per_track_balanced and self._max_anchor_observations is not None:
+                obs_list = _per_track_balanced_sample(
+                    obs_list,
+                    target_n=self._max_anchor_observations,
+                    seed=self._shuffle_seed,
+                )
+            else:
+                if self._shuffle_seed is not None:
+                    random.Random(self._shuffle_seed).shuffle(obs_list)
+                if self._max_anchor_observations is not None:
+                    obs_list = obs_list[: self._max_anchor_observations]
             self._image_obs_cache = obs_list
         return self._image_obs_cache
 
@@ -179,9 +277,7 @@ class AnnotationToolImageMaskView(ImageMaskView):
             image = torch.from_numpy(
                 np.array(Image.open(root / obs["image_path"]).convert("RGB"), dtype=np.uint8)
             ).permute(2, 0, 1)  # HWC → CHW
-            mask = torch.from_numpy(
-                np.array(Image.open(root / obs["mask_path"]).convert("L")) > 0
-            )
+            mask = load_mask_bool(root / obs["mask_path"])
             anchor_time = obs["timestamp"] / _US_TO_S
             yield AnchorObservation(image=image, mask=mask, anchor_time=anchor_time, track_id=track_id)
 
@@ -195,7 +291,7 @@ class AnnotationToolImageMaskView(ImageMaskView):
                 np.array(Image.open(root / image_path).convert("RGB"), dtype=np.uint8)
             ).permute(2, 0, 1)  # HWC → CHW
             mask_list = [
-                torch.from_numpy(np.array(Image.open(root / obs["mask_path"]).convert("L")) > 0)
+                load_mask_bool(root / obs["mask_path"])
                 for _, obs in group_list
             ]
             mask_paths = [str(root / obs["mask_path"]) for _, obs in group_list]

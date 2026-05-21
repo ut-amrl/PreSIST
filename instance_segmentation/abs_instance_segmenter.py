@@ -89,6 +89,27 @@ class SegmentationResults:
 
             return segmentationResults, imagePath
 
+    def filterByIds(self, keep_ids) -> SegmentationResults:
+        """Return a new SegmentationResults containing only the rows whose
+        ``id`` is in ``keep_ids``, in original row order.
+
+        ``keep_ids`` may be any iterable of seg-id values; entries are
+        normalised to ``int`` for comparison, so both ``{0, 1}`` and
+        ``{"0", "1"}`` work.
+        """
+        target = {int(i) for i in keep_ids}
+        keep_pos = [i for i, sid in enumerate(self.ids.tolist()) if sid in target]
+        if not keep_pos:
+            h, w = (self.masks.shape[-2], self.masks.shape[-1]) if self.masks.ndim == 3 else (0, 0)
+            return SegmentationResults.empty(h=h, w=w)
+        idx = torch.tensor(keep_pos, dtype=torch.long)
+        return SegmentationResults(
+            ids=self.ids[idx],
+            masks=self.masks[idx],
+            boxes=self.boxes[idx],
+            scores=self.scores[idx] if self.scores is not None else None,
+        )
+
     def divideIntoSubsets(self, max_subset_size):
         """
         Divides the segmentation results into subsets of at most max_subset_size instances.

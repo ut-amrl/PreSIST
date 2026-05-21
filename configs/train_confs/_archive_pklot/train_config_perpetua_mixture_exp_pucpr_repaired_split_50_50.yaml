@@ -1,0 +1,18 @@
+defaults:
+  - trainer: persistence_fit_mixture_exp
+  - train_dataset: annotation_tool_pklot_repaired_split_train
+  - _self_
+
+grouping: location
+
+experiment:
+  name: perpetua_mixture_exp_${grouping}_pucpr_repaired_split_50_50
+  subsample_fraction: 1.0
+  subsample_seed: 0
+
+paths:
+  model_root: /workspace/data/output/perpetua/
+  model_dir: ${paths.model_root}/${experiment.name}/frac${dot_to_p:${experiment.subsample_fraction}}_seed${experiment.subsample_seed}
+
+runtime:
+  seed: ${experiment.subsample_seed}

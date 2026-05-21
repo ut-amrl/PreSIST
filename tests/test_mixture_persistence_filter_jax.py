@@ -129,3 +129,35 @@ def test_observation_bearing_invariant_to_absolute_anchor_time():
     ).numpy()
 
     assert (abs(p0 - p1) < 1e-4).all(), (p0, p1)
+
+
+def test_unix_epoch_anchor_sub_128s_horizons_are_resolved():
+    """Regression test for the JAX float32 anchor bug.
+
+    With anchor_time ≈ 1.35e9 (Unix epoch in 2012) and the old code path,
+    `q_jnp = jnp.asarray(anchor_time + dt, dtype=jnp.float32)` snapped each
+    query to the nearest ~128 s ulp and then subtracted a same-grid anchor —
+    sub-128 s horizons collapsed to dt = 0 and the posterior returned S(0) = 1
+    for all of them. After re-anchoring to t=0 before crossing into JAX,
+    sub-second horizons resolve and the posterior is strictly decreasing.
+    """
+    rate = 0.02
+    anchor = 1_350_000_000.0  # Unix-epoch-scale, where float32 ulp ≈ 128 s
+    obs = _make_obs([(anchor + 5.0, True), (anchor + 50.0, False)])
+    # Sub-128 s horizons that would have collapsed pre-fix.
+    query = torch.tensor([0.0, 1.0, 10.0, 60.0], dtype=torch.float64)
+
+    mix_filter = MixturePersistenceFilter()
+    mix_surv = MixtureExponentialGenerator().build(
+        PersistenceParameterEstimate(params={"weights": [1.0], "lambdas": [rate]})
+    )
+    pred = mix_filter.predict(
+        mix_surv, anchor_time=anchor, query_times=query, observations=obs
+    ).numpy()
+
+    # All four predictions must be distinct (pre-fix they were all equal to S(0)=1).
+    uniq = set(round(float(p), 6) for p in pred)
+    assert len(uniq) == query.numel(), (pred, uniq)
+    # Monotone non-increasing in the query horizon.
+    diffs = pred[1:] - pred[:-1]
+    assert (diffs <= 1e-6).all(), pred

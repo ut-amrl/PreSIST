@@ -79,6 +79,7 @@ class TrainingDataset:
         val_track_fraction: float = 0.0,
         val_split_seed: int = 0,
         manifest_dir: Path | None = None,
+        external_val_raw_tracks: list[dict] | None = None,
     ) -> None:
         if not 0.0 < subsample_fraction <= 1.0:
             raise ValueError(
@@ -88,6 +89,10 @@ class TrainingDataset:
             raise ValueError(
                 f"val_track_fraction must be in [0, 1); got {val_track_fraction}"
             )
+        if external_val_raw_tracks is not None and val_track_fraction > 0.0:
+            raise ValueError(
+                "Pass either external_val_raw_tracks or val_track_fraction>0, not both."
+            )
         self._raw_tracks = list(raw_tracks)
         self._cell_size_px = cell_size_px
         self._class_id = class_id
@@ -96,10 +101,15 @@ class TrainingDataset:
         self._val_track_fraction = val_track_fraction
         self._val_split_seed = val_split_seed
         self._manifest_dir = Path(manifest_dir) if manifest_dir is not None else None
+        self._external_val_raw_tracks = (
+            list(external_val_raw_tracks) if external_val_raw_tracks is not None else None
+        )
 
     def _split_raw_tracks(self) -> tuple[list[dict], list[dict]]:
         """Return (train_pool, val_pool) by deterministic split. Subsampling
         is NOT applied here — only the train/val partition."""
+        if self._external_val_raw_tracks is not None:
+            return list(self._raw_tracks), list(self._external_val_raw_tracks)
         if self._val_track_fraction <= 0.0:
             return list(self._raw_tracks), []
         shuffled = list(self._raw_tracks)

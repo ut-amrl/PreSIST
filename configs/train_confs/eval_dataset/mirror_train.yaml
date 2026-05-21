@@ -9,4 +9,10 @@ segmentation_config_name: ${train_dataset.segmentation_config_name}
 full_results_config_name: ${train_dataset.full_results_config_name}
 split_id_kind: ${train_dataset.split_id_kind}
 split_granularity: ${train_dataset.split_granularity}
-split_json: ${train_dataset.split_json}
+split_json: ${oc.select:train_dataset.split_json,null}
+split_dir: ${oc.select:train_dataset.split_dir,null}
+train_split_file: ${oc.select:train_dataset.train_split_file,null}
+val_split_file: ${oc.select:train_dataset.val_split_file,null}
+test_split_file: ${oc.select:train_dataset.test_split_file,null}
+label_transform: ${oc.select:train_dataset.label_transform,null}
+val_max_instances_per_image: ${oc.select:train_dataset.val_max_instances_per_image,null}

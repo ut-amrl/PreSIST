@@ -21,7 +21,7 @@ HOST="0.0.0.0"
 # MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507-FP8"
 # MODEL="Qwen/Qwen3-30B-A3B-Thinking-2507"
 # MODEL="Qwen/Qwen3-VL-8B-Instruct"
-# MODEL="Qwen/Qwen3-VL-8B-Thinking"
+MODEL="Qwen/Qwen3-VL-8B-Thinking"
 # MODEL="Qwen/Qwen3-235B-A22B-Instruct-2507"
 # MODEL="Qwen/Qwen3-Next-80B-A3B-Instruct"
 # MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
@@ -29,14 +29,14 @@ HOST="0.0.0.0"
 # MODEL="Qwen/Qwen3.5-122B-A10B"
 
 # MODEL="Qwen/Qwen3-Next-80B-A3B-Thinking"
-MODEL="Qwen/Qwen3-Next-80B-A3B-Thinking-FP8"
+# MODEL="Qwen/Qwen3-Next-80B-A3B-Thinking-FP8"
 
 
 # ---- Engine/runtime params (fixed at server start) ----
-# DTYPE="bfloat16"                  # float16 | bfloat16 | float32
+DTYPE="bfloat16"                  # float16 | bfloat16 | float32
 # Use FP8
 # DTYPE="torch.float8"
-DTYPE="auto"
+# DTYPE="auto"
 QUANTIZATION=""                   # e.g. "awq" or "gptq" or "" for none
 TENSOR_PARALLEL_SIZE=""           # leave empty to auto = number of GPUs passed
 GPU_MEMORY_UTILIZATION="0.90"

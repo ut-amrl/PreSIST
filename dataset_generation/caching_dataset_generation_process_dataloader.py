@@ -353,6 +353,20 @@ class CachingSceneInstanceAndRelationalDatasetGenerator(AbstractDatasetGenerator
                 print(f"Skipping image {img_id}: segmentation failed or skipped — {e}")
                 return
 
+            # Raise if segmentation produced zero masks so downstream phases
+            # (object descriptions, persistence) don't emit dangling entries
+            # for instance_ids that have no corresponding mask. The outer
+            # try/except in callers that loop over images will turn this
+            # into a clear "Skipping image {img_id}: segmentation returned
+            # 0 masks" message; here we let it propagate.
+            n_masks = int(getattr(instances, "masks", None).shape[0]) if instances is not None and getattr(instances, "masks", None) is not None else 0
+            if n_masks == 0:
+                raise RuntimeError(
+                    f"segmentation returned 0 masks for image_id={ctx.image_id} "
+                    f"(path={imageInfo.get('relpath') or imageInfo.get('path')!r}); "
+                    f"refusing to run downstream phases to avoid emitting dangling labels"
+                )
+
         if ("scene_caption" in run):
             try:
                 captionLambda = lambda: self.sceneCaptioner.generateCaption(lazy_image.get(), image_id=ctx.image_id)

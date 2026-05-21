@@ -8,7 +8,10 @@ Builds a parallel HD-EPIC output tree at
 with three pieces per sequence:
   rgb/<unix_us>.png            — RGB frames named ENTIRELY via VRS device time:
                                  unix_us = (vrs_ns[N] + vrs_offset_ns) / 1000.
-                                 Coverage = 1 fps source-frame grid ∪ all mask-annotated frames.
+                                 Coverage = target-fps source-frame grid ∪ all mask-annotated frames.
+                                 Default target fps is 5; the 1 fps grid is a strict subset of the
+                                 5 fps grid (native is 30 fps, strides 30 and 6 are nested), so
+                                 bumping fps only adds new frames — existing PNGs are kept.
   masks/<mask_id>.png          — segmentation masks re-rectified with the per-sequence
                                  calibration (fixes the latent bug in rectify_masks_hd_epic.py
                                  that uses the FIRST per-participant calibration for ALL sequences).
@@ -42,10 +45,8 @@ Usage:
 import argparse
 import csv as csvlib
 import json
-import os
-import shutil
+import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import cv2
@@ -63,7 +64,6 @@ from extract_mask_frames_hd_epic import (
     build_rectify_maps,
     get_calib_json,
     get_native_fps,
-    extract_one_frame,
 )
 from rectify_masks_hd_epic import detect_mask_size, crop_from_frame_size
 
@@ -121,6 +121,93 @@ MAPPING_FIELDS = [
     "mask_id", "mask_filename", "mask_path", "mask_exists",
     "fixture", "bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Batched ffmpeg extraction
+# ---------------------------------------------------------------------------
+
+def probe_native_size(mp4_path: Path) -> tuple:
+    """Return (width, height) of the first video stream."""
+    out = subprocess.check_output([
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=,:p=0",
+        str(mp4_path),
+    ]).decode().strip()
+    w, h = out.split(",")
+    return int(w), int(h)
+
+
+def stream_grid_frames(mp4_path: Path, stride: int, native_w: int, native_h: int):
+    """Yield (source_frame_number, raw_bgr_ndarray) for every stride-th frame in one
+    ffmpeg invocation, decoding sequentially and piping rawvideo to stdout. The i-th
+    yielded frame corresponds to source frame i*stride (matches
+    `range(0, len(csv_rows), stride)` in process_sequence)."""
+    cmd = [
+        "ffmpeg", "-loglevel", "error",
+        "-i", str(mp4_path),
+        "-vf", f"select='not(mod(n\\,{stride}))'",
+        "-vsync", "0",
+        "-f", "rawvideo",
+        "-pix_fmt", "bgr24",
+        "-",
+    ]
+    frame_bytes = native_w * native_h * 3
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            bufsize=frame_bytes * 4)
+    i = 0
+    try:
+        while True:
+            buf = proc.stdout.read(frame_bytes)
+            if len(buf) < frame_bytes:
+                break
+            frame = np.frombuffer(buf, dtype=np.uint8).reshape(native_h, native_w, 3)
+            yield i * stride, frame
+            i += 1
+    finally:
+        proc.stdout.close()
+        proc.wait()
+
+
+def stream_specific_frames(mp4_path: Path, frame_numbers: list,
+                            native_w: int, native_h: int,
+                            chunk_size: int = 1500):
+    """Yield (source_frame_number, raw_bgr_ndarray) for the listed frames. Chunks the
+    select expression to keep the ffmpeg command line bounded. Each chunk is one ffmpeg
+    invocation that streams rawvideo to stdout."""
+    if not frame_numbers:
+        return
+    sorted_frames = sorted(frame_numbers)
+    frame_bytes = native_w * native_h * 3
+
+    for chunk_start in range(0, len(sorted_frames), chunk_size):
+        chunk = sorted_frames[chunk_start:chunk_start + chunk_size]
+        select_expr = "+".join(f"eq(n\\,{n})" for n in chunk)
+        cmd = [
+            "ffmpeg", "-loglevel", "error",
+            "-i", str(mp4_path),
+            "-vf", f"select='{select_expr}'",
+            "-vsync", "0",
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-",
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                bufsize=frame_bytes * 4)
+        idx = 0
+        try:
+            while idx < len(chunk):
+                buf = proc.stdout.read(frame_bytes)
+                if len(buf) < frame_bytes:
+                    break
+                frame = np.frombuffer(buf, dtype=np.uint8).reshape(native_h, native_w, 3)
+                yield chunk[idx], frame
+                idx += 1
+        finally:
+            proc.stdout.close()
+            proc.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -232,54 +319,68 @@ def process_sequence(participant: str,
     for fn in mask_indices:
         frame_source[fn] = "both" if fn in fps_indices else "mask"
 
+    # Precompute unix_us for every union frame and decide which ones still need work.
+    for fn in union_indices:
+        fn_to_unix[fn] = frame_to_unix_us(csv_rows, fn, vrs_offset_ns)
+
+    needs_extract = set()
+    for fn in union_indices:
+        out_file = rgb_dir / f"{fn_to_unix[fn]}.png"
+        if force or not out_file.exists():
+            needs_extract.add(fn)
+
+    rgb_skipped = len(union_indices) - len(needs_extract)
     rgb_extracted = 0
-    rgb_skipped   = 0
     rgb_errors    = 0
 
-    tmp_fd, tmp_str = tempfile.mkstemp(suffix=".png")
-    os.close(tmp_fd)
-    tmp_path = Path(tmp_str)
+    if not needs_extract:
+        print(f"  Phase 1 RGB: 0 new, {rgb_skipped} skipped, 0 errors "
+              f"(everything already on disk)")
+    else:
+        native_w, native_h = probe_native_size(mp4_path)
+        print(f"  native size: {native_w}x{native_h}  stride={stride}  "
+              f"to extract: {len(needs_extract)}")
 
-    try:
-        for i, fn in enumerate(union_indices):
-            unix_us = frame_to_unix_us(csv_rows, fn, vrs_offset_ns)
-            fn_to_unix[fn] = unix_us
-            out_file = rgb_dir / f"{unix_us}.png"
-
+        def process_frame(fn: int, raw: np.ndarray):
+            """Rectify, crop, write final PNG. Returns ('new', 'err', or None for skip)."""
+            nonlocal rgb_extracted, rgb_errors
+            out_file = rgb_dir / f"{fn_to_unix[fn]}.png"
             if out_file.exists() and not force:
-                rgb_skipped += 1
-                continue
-
-            if tmp_path.exists():
-                tmp_path.unlink()
-
-            if not extract_one_frame(mp4_path, fn, native_fps, tmp_path):
-                print(f"    WARN: ffmpeg failed for frame {fn}")
+                return  # raced with a parallel run or already-done; leave alone
+            try:
+                rectified = cv2.remap(raw, map1_rgb, map2_rgb, cv2.INTER_LINEAR,
+                                      borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+                cv2.imwrite(str(out_file), rectified[y0:y1, x0:x1])
+                rgb_extracted += 1
+            except Exception as e:
+                print(f"    WARN: failed to rectify/write frame {fn}: {e}")
                 rgb_errors += 1
-                continue
 
-            raw = cv2.imread(str(tmp_path))
-            if raw is None:
-                print(f"    WARN: could not read extracted frame {fn}")
-                rgb_errors += 1
-                continue
+        # Pass A: grid frames via decimated decode. ffmpeg yields ALL grid frames in
+        # one invocation; we skip any that are already on disk.
+        grid_needed = needs_extract & fps_indices
+        if grid_needed:
+            for fn, raw in stream_grid_frames(mp4_path, stride, native_w, native_h):
+                if fn not in fps_indices:
+                    continue  # defensive: ffmpeg should only emit grid frames
+                if fn in needs_extract:
+                    process_frame(fn, raw)
+                    if rgb_extracted % 100 == 0 and rgb_extracted > 0:
+                        print(f"    Phase 1 (grid): {rgb_extracted} new / "
+                              f"{len(needs_extract)} needed")
 
-            rectified = cv2.remap(raw, map1_rgb, map2_rgb, cv2.INTER_LINEAR,
-                                  borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-            del raw
-            cv2.imwrite(str(out_file), rectified[y0:y1, x0:x1])
-            del rectified
-            rgb_extracted += 1
+        # Pass B: mask-only frames (mask annotations off the fps grid) via batched
+        # select. Usually a small set; chunked to keep the filter string bounded.
+        mask_only_needed = sorted(needs_extract - fps_indices)
+        if mask_only_needed:
+            print(f"    Phase 1 (mask-only): extracting {len(mask_only_needed)} "
+                  f"off-grid frame(s)")
+            for fn, raw in stream_specific_frames(mp4_path, mask_only_needed,
+                                                   native_w, native_h):
+                process_frame(fn, raw)
 
-            if rgb_extracted % 25 == 0:
-                print(f"    Phase 1: {rgb_extracted + rgb_skipped}/{len(union_indices)} "
-                      f"({rgb_extracted} new)")
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
-
-    print(f"  Phase 1 RGB: {rgb_extracted} new, {rgb_skipped} skipped, "
-          f"{rgb_errors} errors  (crop {rgb_w_actual}x{rgb_h_actual})")
+        print(f"  Phase 1 RGB: {rgb_extracted} new, {rgb_skipped} skipped, "
+              f"{rgb_errors} errors  (crop {rgb_w_actual}x{rgb_h_actual})")
 
     # 6. Phase 2 — mask re-rectification
     mask_src_dir = masks_root / video_id
@@ -323,14 +424,14 @@ def process_sequence(participant: str,
             print(f"  Phase 2 masks: {mask_extracted} new, {mask_skipped} skipped, "
                   f"{mask_errors} errors  (mask src {ms_w}x{ms_h}, crop {mx1-mx0}x{my1-my0})")
 
-    # 7. Phase 3 — frame_index_to_unix_us.csv
+    # 7. Phase 3 — frame_index_to_unix_us.csv (always refreshed; row set depends
+    # on target_fps and may grow between runs even without --force).
     f_csv = seq_out_dir / "frame_index_to_unix_us.csv"
-    if force or not f_csv.exists():
-        with open(f_csv, "w", newline="") as f:
-            writer = csvlib.writer(f)
-            writer.writerow(["source_frame_number", "unix_us", "source"])
-            for fn in union_indices:
-                writer.writerow([fn, fn_to_unix[fn], frame_source[fn]])
+    with open(f_csv, "w", newline="") as f:
+        writer = csvlib.writer(f)
+        writer.writerow(["source_frame_number", "unix_us", "source"])
+        for fn in union_indices:
+            writer.writerow([fn, fn_to_unix[fn], frame_source[fn]])
 
     # 8. Accumulate mapping rows for the per-participant CSV.
     # Bbox is in source-mask 1408x1408 space; convert to rectified-cropped space by
@@ -451,11 +552,10 @@ def process_participant(participant: str,
         print(f"[{participant}] No mapping rows accumulated; not writing mapping.csv")
         return
 
+    # mapping.csv is always refreshed: the row set depends on --target_fps and on
+    # which RGB/mask files exist on disk, both of which can change between runs
+    # without --force. Rewriting it is cheap and keeps the index in sync.
     mapping_path = output_root / participant / "mapping.csv"
-    if mapping_path.exists() and not force:
-        print(f"[{participant}] mapping.csv exists; not overwriting (use --force)")
-        return
-
     mapping_path.parent.mkdir(parents=True, exist_ok=True)
     # Sort rows by (video_id, frame_number, mask_id) for stable output
     mapping_rows.sort(key=lambda r: (r["video_id"], r["frame_number"], r["mask_id"]))
@@ -584,7 +684,7 @@ def main():
     parser.add_argument("--calib_root",  default=DEFAULT_CALIB_ROOT)
     parser.add_argument("--masks_root",  default=DEFAULT_MASKS_ROOT)
     parser.add_argument("--output_root", default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--target_fps",  type=float, default=1.0)
+    parser.add_argument("--target_fps",  type=float, default=5.0)
     parser.add_argument("--participant", default="P01",
                         help="Participant ID (e.g. P01). Ignored if --all is set.")
     parser.add_argument("--video", default="P01-20240202-110250",

@@ -7,7 +7,7 @@ Usage:
   python extract_hd_epic.py \
     --input_root /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/hd-epic/HD-EPIC/Videos \
     --output_root /robodata/<yourdir>/hd-epic-processed \
-    --fps 1          # set to None to extract every frame
+    --fps 5          # set to None to extract every frame
     --location P01   # optional: only process one location
 """
 

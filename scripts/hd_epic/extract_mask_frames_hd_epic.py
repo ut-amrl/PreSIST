@@ -4,13 +4,14 @@ extract_mask_frames_hd_epic.py
 
 Extracts only the exact MP4 frames that have mask annotations, rectifies them,
 and saves them into the existing extracted_data/hd-epic/ folder structure
-alongside the 1fps frames.
+alongside the base fps-grid frames produced by extract_hd_epic.py + rectify_hd_epic.py
+(target fps is whatever extract_hd_epic.py was run with — 5 fps is the current default).
 
 MEMORY SAFE: Processes one frame at a time using direct ffmpeg seeking.
 Never loads more than one raw frame into memory at a time.
 
-Frame filenames use Unix microsecond epoch timestamps (same format as 1fps frames)
-derived from mp4_to_vrs_time_ns.csv for exact accuracy.
+Frame filenames use Unix microsecond epoch timestamps (same format as the base
+grid frames) derived from mp4_to_vrs_time_ns.csv for exact accuracy.
 
 Folder structure (output merges into existing):
   extracted_data/hd-epic/<PXX>/<PXX-YYYYMMDD-HHMMSS>/rgb/<timestamp_us>.png
@@ -234,7 +235,7 @@ def process_sequence(video_id: str, participant: str,
     # Crop
     crop = get_crop_from_existing_frames(output_root, participant, video_id)
     if crop is None:
-        print(f"    [SKIP] No existing 1fps frames — run rectify_hd_epic.py first")
+        print(f"    [SKIP] No existing base-grid frames — run rectify_hd_epic.py first")
         return
     x0, y0, x1, y1 = crop
     print(f"    Crop: ({x0},{y0})→({x1},{y1})")

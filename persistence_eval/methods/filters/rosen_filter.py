@@ -33,7 +33,14 @@ def _logdiff(lx: float, ly: float) -> float:
     diff = ly - lx
     if diff >= 0.0:
         return _NEG_INF
-    return lx + math.log1p(-math.exp(diff))
+    # `exp(diff)` underflows to 1.0 in float64 for diff ≲ -2.2e-16, in which
+    # case the correction is below ulp at 1.0 and the interval mass is
+    # numerically zero. `math.log1p(-1.0)` raises ValueError (pole), so handle
+    # this corner explicitly. Same answer mathematically: log(1 - 1) = -inf.
+    expdiff = math.exp(diff)
+    if expdiff >= 1.0:
+        return _NEG_INF
+    return lx + math.log1p(-expdiff)
 
 
 class RosenPersistenceFilter(AbsPersistenceFilter):
@@ -44,7 +51,7 @@ class RosenPersistenceFilter(AbsPersistenceFilter):
     Computes P(X_t = 1 | Y_{1:N}) by marginalising over all times at which the
     feature could have disappeared:
 
-        P(alive at t | Y_{1:N}) = L(Y_{1:N}) * S(t − anchor_time) / p(Y_{1:N})
+        P(alive at t | Y_{1:N}) = P(Y_{1:N}|alive at t) * S(t − anchor_time) / p(Y_{1:N})
 
     where L is the accumulated detector likelihood assuming continuous survival,
     and p(Y_{1:N}) sums over all possible disappearance epochs weighted by S.

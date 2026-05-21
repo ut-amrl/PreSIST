@@ -1,0 +1,42 @@
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: annotation_tool_pucpr_repaired_split_test
+  - inferencer: vision_anchor_midpoint
+  - model: vision_scalar_predictor
+  - survival_generator: single_exp
+  - persistence_filter: rosen
+  - predictor: survival_based
+  - benchmark: pucpr_images
+  - eval_scenario: percentile_horizons
+  - analysis: basic
+  - _self_
+
+mode: run_all
+
+# Mirrors the train-side template so eval results land alongside the matching
+# trained checkpoint when invoked with the same experiment.* values.
+experiment:
+  name: vision_anchor_midpoint_pucpr_repaired_split_50_50
+  subsample_fraction: 1.0
+  subsample_seed: 0
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  model_root: /workspace/data/output/perpetua/
+  # NOTE: vision trainer writes frac<F>_seed<S> with the fraction value verbatim
+  # (no dot-to-p slug), so we match that here — unlike the perpetua eval
+  # configs, which slug the fraction.
+  model_dir: ${paths.model_root}/${experiment.name}/frac${experiment.subsample_fraction}_seed${experiment.subsample_seed}
+  explicit_inference_run_dir: null
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null
+
+# Embed (training-fraction, seed) into the method-level subdir name so all
+# evals for one trained cell live under a single
+#   <output_root>/<dataset>/<experiment.name>_frac<F>_seed<S>/<benchmark>/...
+# subtree.
+inferencer:
+  name: ${experiment.name}_frac${experiment.subsample_fraction}_seed${experiment.subsample_seed}

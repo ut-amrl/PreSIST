@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SAVE_FROM_SPF=0
-TARGET_CONTAINER="pf_plus_datasets"
+TARGET_CONTAINER="pf_plus_datasets_v2"
 SOURCE_CONTAINER="spf_container"
 IMAGE_REPO="spf_with_datasets"
 SAVED_TAG="${IMAGE_REPO}:saved"
@@ -51,7 +51,7 @@ if [ ! "$(podman ps -a -q -f name="^${TARGET_CONTAINER}$")" ]; then
     echo "Creating new container ${TARGET_CONTAINER}..."
 
     if ! podman run -d --gpus all \
-        --shm-size=12g \
+        --shm-size=128g \
         -v "$(pwd)":/workspace/code/semantic-persistence-filter \
         -v /scratch/aaadkins/data/semantic-persistence-filter:/workspace/data \
         -v /robodata/aaadkins/Datasets/semPersFilter/trainCandidates/kitti/dataset/:/workspace/data/input/kitti/ \

@@ -23,6 +23,8 @@ from torch.utils.data import Dataset
 import torchvision.transforms as T
 from torchvision.transforms import InterpolationMode
 
+from persistence_eval.datasets._mask_io import load_mask_bool
+
 from persistence_eval.methods.training.base import TrainingTrack
 
 
@@ -107,10 +109,7 @@ class AnchorMidpointDataset(Dataset):
         image = torch.from_numpy(arr).permute(2, 0, 1).contiguous()  # (3,H,W) uint8
         image = self._image_tx(image)
 
-        with Image.open(mask_path) as mk:
-            mk = mk.convert("L")
-            marr = np.array(mk)
-        mask_bool = torch.from_numpy(marr > 0).to(torch.float32).unsqueeze(0)  # (1,H,W)
+        mask_bool = load_mask_bool(mask_path).to(torch.float32).unsqueeze(0)  # (1,H,W)
         # Resize mask to image_size with nearest to preserve binary edges.
         mask_resized = torch.nn.functional.interpolate(
             mask_bool.unsqueeze(0),

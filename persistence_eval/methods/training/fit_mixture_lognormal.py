@@ -50,13 +50,21 @@ def _quantile_inits_lognormal(
 
 
 def _track_to_seq(track: TrainingTrack) -> tuple[list[float], list[int]]:
-    """Track-relative observation times. See fit_mixture_exponential for rationale."""
-    raw = list(track.observation_times)
-    if not raw:
+    """Track-relative observation times. See fit_mixture_exponential for rationale.
+
+    Leading non-positive observations are dropped: the persistence model
+    assumes alive at t=0, so anchor at the first Positive.
+    """
+    raw_times = list(track.observation_times)
+    raw_pos = list(track.is_positive)
+    first_pos = next((i for i, p in enumerate(raw_pos) if p), None)
+    if first_pos is None:
         return [], []
-    t0 = min(raw)
-    times = [t - t0 for t in raw]
-    y_bool = [1 if b else 0 for b in track.is_positive]
+    raw_times = raw_times[first_pos:]
+    raw_pos = raw_pos[first_pos:]
+    t0 = raw_times[0]
+    times = [t - t0 for t in raw_times]
+    y_bool = [1 if b else 0 for b in raw_pos]
     return times, y_bool
 
 
@@ -106,8 +114,7 @@ class MixtureLogNormalTrainer:
         p_m: float = 0.1,
         p_f: float = 0.05,
         min_mixture_samples: int = 20,
-        delta_log_evidence_rel: float = 1e-5,
-        min_iters: int = 5,
+        delta: float = 1e-6,
         n_iter: int = 200,
         rng_seed: int = 42,
         name: str = "mixture_lognormal",
@@ -129,8 +136,7 @@ class MixtureLogNormalTrainer:
         self.p_m = float(p_m)
         self.p_f = float(p_f)
         self.min_mixture_samples = int(min_mixture_samples)
-        self.delta_log_evidence_rel = float(delta_log_evidence_rel)
-        self.min_iters = int(min_iters)
+        self.delta = float(delta)
         self.n_iter = int(n_iter)
         self.rng_seed = int(rng_seed)
 
@@ -210,11 +216,9 @@ class MixtureLogNormalTrainer:
                 iter_pbar.set_postfix(K=K, log_evidence=f"{loss_t:.1f}")
             if math.isnan(loss_t):
                 break
-            if iters_run >= self.min_iters and math.isfinite(loss_prev):
-                rel = abs(loss_t - loss_prev) / max(abs(loss_prev), 1.0)
-                if rel < self.delta_log_evidence_rel:
-                    loss_prev = loss_t
-                    break
+            if math.isfinite(loss_prev) and abs(loss_t - loss_prev) < self.delta:
+                loss_prev = loss_t
+                break
             loss_prev = loss_t
 
         if iter_pbar is not None:
@@ -261,9 +265,26 @@ class MixtureLogNormalTrainer:
             return None
 
         n_pruned = 0
+        pre_prune: dict | None = None
         if any(w < self.prune_threshold for w in best["pis"]):
             keep = [i for i, w in enumerate(best["pis"]) if w >= self.prune_threshold]
             if keep and len(keep) < len(best["pis"]):
+                # Capture the full converged (logmu, std, π) BEFORE we drop
+                # low-weight components and renormalize. Surfaced via metadata
+                # for post-hoc analyses.
+                pre_prune = {
+                    "K": best["K"],
+                    "logmus": list(best["logmus"]),
+                    "stds": list(best["stds"]),
+                    "pis": list(best["pis"]),
+                    "kept_indices": list(keep),
+                    "dropped_indices": [
+                        i for i in range(len(best["pis"])) if i not in set(keep)
+                    ],
+                    "log_evidence": best["log_evidence"],
+                    "aic": best["aic"],
+                    "prune_threshold": self.prune_threshold,
+                }
                 pruned_logmus = [best["logmus"][i] for i in keep]
                 pruned_stds = [best["stds"][i] for i in keep]
                 pruned_pis = [best["pis"][i] for i in keep]
@@ -306,6 +327,8 @@ class MixtureLogNormalTrainer:
 
         best["n_pruned_components"] = n_pruned
         best["n_refinement_improvements"] = n_refinement_improvements
+        if pre_prune is not None:
+            best["pre_prune"] = pre_prune
         return best
 
     # ------------------------------------------------------------------
@@ -347,6 +370,7 @@ class MixtureLogNormalTrainer:
                 "params_range": list(self.params_range),
                 "p_m": self.p_m,
                 "p_f": self.p_f,
+                **({"pre_prune": result["pre_prune"]} if "pre_prune" in result else {}),
             },
         }
 
@@ -389,8 +413,8 @@ class MixtureLogNormalTrainer:
         out: dict[str, ParamEntry] = {GLOBAL_FALLBACK_KEY: global_entry}
 
         n_mixture = 0
-        n_fallback_single = 0
-        n_fallback_global = 0
+        n_fallback_too_small = 0   # bucket below min_mixture_samples → use global mixture
+        n_fallback_em_failed = 0   # bucket large enough but EM failed → use global mixture
         K_seen: list[int] = []
         bucket_pbar = tqdm(
             buckets.items(),
@@ -400,14 +424,16 @@ class MixtureLogNormalTrainer:
         )
         for key, bucket in bucket_pbar:
             if len(bucket) < self.min_mixture_samples:
-                fb = _entry_single_fallback([t.duration_s for t in bucket], len(bucket))
-                out[key] = fb if fb is not None else _copy_with_fallback(global_entry)
-                n_fallback_single += 1
+                # Per-bucket naive MLE on 1-2 (possibly censored) observations
+                # produces wildly biased (μ̂, σ̂)s; borrow strength from the
+                # full-pool mixture fit instead.
+                out[key] = _copy_with_fallback(global_entry, "too_small")
+                n_fallback_too_small += 1
             else:
                 entry = self._fit_bucket(bucket)
                 if entry is None:
-                    out[key] = _copy_with_fallback(global_entry)
-                    n_fallback_global += 1
+                    out[key] = _copy_with_fallback(global_entry, "em_failed")
+                    n_fallback_em_failed += 1
                 else:
                     out[key] = entry
                     n_mixture += 1
@@ -415,24 +441,26 @@ class MixtureLogNormalTrainer:
             median_K = sorted(K_seen)[len(K_seen) // 2] if K_seen else 0
             bucket_pbar.set_postfix(
                 mix=n_mixture,
-                fb_single=n_fallback_single,
-                fb_global=n_fallback_global,
+                fb_small=n_fallback_too_small,
+                fb_em=n_fallback_em_failed,
                 med_K=median_K,
             )
         bucket_pbar.close()
         K_dist = dict(Counter(K_seen)) if K_seen else {}
         print(
             f"[MixtureLogNormalTrainer] done. "
-            f"mixture={n_mixture}, fallback_single={n_fallback_single}, "
-            f"fallback_global={n_fallback_global}, K_distribution={K_dist}",
+            f"mixture={n_mixture}, fallback_too_small={n_fallback_too_small}, "
+            f"fallback_em_failed={n_fallback_em_failed}, K_distribution={K_dist}",
             flush=True,
         )
         return out
 
 
-def _copy_with_fallback(entry: ParamEntry) -> ParamEntry:
+def _copy_with_fallback(entry: ParamEntry, kind: str | None = None) -> ParamEntry:
     new_meta = dict(entry.get("metadata", {}))
     new_meta["fallback_to_global"] = True
+    if kind is not None:
+        new_meta["fallback_kind"] = kind
     return {
         "params": dict(entry["params"]),
         "confidence": entry.get("confidence"),

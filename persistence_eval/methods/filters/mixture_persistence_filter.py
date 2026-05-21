@@ -5,17 +5,19 @@ vendored upstream package. Translates our (MixtureSurvivalFunction, anchor_time,
 query times, observations) into upstream's (FilterState, observation sequence,
 query array), runs the filter, and returns a torch tensor.
 
-Returns the marginal posterior across all components at each query time:
+Returns the **argmax-component** posterior per Perpetua eq. (14):
 
-    P(alive at t | obs) = Σ_k τ_k(N) · P(alive at t | k, obs)
+    k* = argmax_k p(C_k | Y_{1:N})
+    return p(X_t = 1 | C_{k*}, Y_{1:N})
 
-where τ_k(N) is the per-component posterior weight after the N observations
-are folded in (`state.log_tau`). With no observations τ_k = π_k and the result
-collapses to the mixture prior survival.
+The paper explicitly rejects posterior-weighted marginalisation here — "due to
+potential destructive interference between mixture components, we instead use
+the component with the largest posterior weight."
 
-The survival function is anchored at `anchor_time` (passed in), not at any
-observation timestamp. Caller is responsible for causal masking — every
-observation in the list is consumed for every query.
+Times handed to upstream are re-anchored to `t = 0` at `anchor_time` to keep
+JAX float32 arithmetic in a regime that resolves sub-second dt; passing raw
+Unix timestamps (~1.35e9) would collapse sub-128 s horizons to identical
+float32 values.
 
 The filter accepts only MixtureSurvivalFunction; passing a single-component
 function raises IncompatibleEstimateError.
@@ -68,31 +70,29 @@ class MixturePersistenceFilter(AbsPersistenceFilter):
         log_s, params, pi = survival_fn.build_jax_state()
 
         anchor_time = float(anchor_time)
-        # Anchor the upstream filter's internal time origin at artifact.anchor_time
-        # so survival is evaluated at dt = abs_time - anchor_time consistently for
-        # both observation updates and query lookups.
-        state = mix_filter.init(log_s, params, pi, initialization_time=anchor_time)
+        # Re-anchor everything to t=0 before crossing into JAX. Upstream is
+        # float32 by default; raw Unix timestamps (~1.35e9) snap to ~128 s ulps
+        # and observation/query dt's quantise to that grid. With init_time=0
+        # and rel_t = float(obs.timestamp) - anchor_time computed in float64
+        # before the cast, max realistic dt is ~3e6 s where float32 ulp ≈ 0.25 s.
+        state = mix_filter.init(log_s, params, pi, initialization_time=0.0)
 
-        # Drive observations in chronological order.
+        # Drive observations in chronological order, in track-relative seconds.
         for obs in sorted(observations or [], key=lambda o: o.timestamp):
+            rel_t = float(obs.timestamp) - anchor_time
             state = mix_filter.update(
                 state,
                 bool(obs.is_positive),
-                float(obs.timestamp),
+                rel_t,
                 self.p_m,
                 self.p_f,
             )
 
-        abs_query_times = anchor_time + query_times.to(torch.float64).cpu().numpy()
-        q_jnp = jnp.asarray(abs_query_times, dtype=jnp.float32)
+        # query_times are already dt from anchor (AbsPersistenceFilter contract).
+        q_jnp = jnp.asarray(query_times.to(torch.float64).cpu().numpy(), dtype=jnp.float32)
 
         # Upstream returns (best_component_posterior, all_component_posteriors).
-        #   best:        shape (1, Q)
-        #   all (per_k): shape (K, Q)
-        # Marginalise over components using the posterior τ_k(N).
-        _best, per_k = mix_filter.predict(state, q_jnp)
-        log_tau = state.log_tau  # (K,)
-        tau = jnp.exp(log_tau)
-        tau = tau / jnp.sum(tau)
-        marginal = jnp.sum(per_k * tau[:, None], axis=0)
-        return jnp_to_torch(marginal, dtype=torch.float64)
+        #   best:        shape (1, Q)  — argmax_k p(C_k | Y_{1:N}), per eq. (14)
+        #   per_k:       shape (K, Q)
+        best, _per_k = mix_filter.predict(state, q_jnp)
+        return jnp_to_torch(best[0], dtype=torch.float64)

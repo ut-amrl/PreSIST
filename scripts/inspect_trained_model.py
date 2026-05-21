@@ -106,11 +106,25 @@ def main() -> int:
     n_global = sum(1 for k in keys if k == "__global__")
     real_buckets = [k for k in keys if k != "__global__"]
 
+    # Legacy: pre-mixture-fallback-rewrite runs tagged small-bucket fallbacks
+    # with `fallback_to_single`. Post-rewrite, every fallback uses the global
+    # mixture and is tagged `fallback_to_global` with a `fallback_kind` of
+    # "too_small" (small bucket) or "em_failed" (mixture EM failed). The
+    # single-component trainers still emit `fallback_to_global` without a kind.
     n_fb_single = sum(
         1 for k in real_buckets if params[k]["metadata"].get("fallback_to_single")
     )
-    n_fb_global = sum(
-        1 for k in real_buckets if params[k]["metadata"].get("fallback_to_global")
+    fb_global_keys = [
+        k for k in real_buckets if params[k]["metadata"].get("fallback_to_global")
+    ]
+    n_fb_global = len(fb_global_keys)
+    n_fb_too_small = sum(
+        1 for k in fb_global_keys
+        if params[k]["metadata"].get("fallback_kind") == "too_small"
+    )
+    n_fb_em_failed = sum(
+        1 for k in fb_global_keys
+        if params[k]["metadata"].get("fallback_kind") == "em_failed"
     )
     n_full = len(real_buckets) - n_fb_single - n_fb_global
 
@@ -141,8 +155,10 @@ def main() -> int:
         print(f"  n_tracks_used:       {meta.get('n_tracks_used')}")
         print(f"  n_buckets:           {n_buckets} ({n_global} global + {len(real_buckets)} real)")
         print(f"    full mixture/single fits: {n_full}")
-        print(f"    fallback_to_single:       {n_fb_single}")
-        print(f"    fallback_to_global:       {n_fb_global}")
+        print(f"    fallback_to_single:       {n_fb_single}  (legacy naive-MLE path; pre-rewrite runs only)")
+        print(f"    fallback_to_global:       {n_fb_global}  "
+              f"(too_small={n_fb_too_small}, em_failed={n_fb_em_failed}, "
+              f"unknown={n_fb_global - n_fb_too_small - n_fb_em_failed})")
         print(f"  bucket size:         min={min_size} median={median_size} max={max_size}")
         print(f"  global mean lifetime: {global_mean_h:.2f} h")
         if degen:
@@ -155,25 +171,31 @@ def main() -> int:
         flags = []
         if degen:
             flags.append(f"DEGENERATE={len(degen)}")
-        if n_fb_global:
-            flags.append(f"fb_global={n_fb_global}")
+        # Only EM-failure fallbacks indicate a data-quality problem worth
+        # surfacing. too_small fallbacks are expected at low N and are not a
+        # red flag — the bucket simply borrows strength from the global fit.
+        if n_fb_em_failed:
+            flags.append(f"fb_em_failed={n_fb_em_failed}")
         flag_str = (" [" + ", ".join(flags) + "]") if flags else ""
         print(
             f"OK: {meta.get('trainer_name', '?')} {meta.get('grouping', '?')} "
             f"frac={meta.get('subsample_fraction', '?')} | "
-            f"buckets={n_buckets} (full={n_full}, fb_single={n_fb_single}, fb_global={n_fb_global}) | "
+            f"buckets={n_buckets} (full={n_full}, fb_single={n_fb_single}, "
+            f"fb_global={n_fb_global} [too_small={n_fb_too_small}, em_failed={n_fb_em_failed}]) | "
             f"bucket_size median={median_size} | "
             f"global_mean_lifetime={global_mean_h:.2f}h"
             f"{flag_str}"
         )
 
     # Hard fail: degenerate global, implausible mean, or > 25% of real buckets
-    # are degenerate or fb_global (data-quality red flag).
+    # are degenerate or had EM failures. too_small fallbacks are NOT a fail
+    # condition — they're the expected behavior when a bucket can't support
+    # its own mixture fit and borrows strength from the global pool.
     if global_entry is not None and _degenerate(global_entry) is not None:
         return 1
     if real_buckets and (len(degen) / max(1, len(real_buckets)) > 0.25):
         return 1
-    if real_buckets and (n_fb_global / max(1, len(real_buckets)) > 0.25):
+    if real_buckets and (n_fb_em_failed / max(1, len(real_buckets)) > 0.25):
         return 1
     return 0
 

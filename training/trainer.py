@@ -146,10 +146,45 @@ class TrainerConfig:
     device: Optional[Union[str, torch.device]] = None
 
     batch_size: int = 8
+    # Validation batch size. Falls back to `batch_size` when unset/None.
+    # Val has no grads so it can usually fit a much larger batch than train.
+    val_batch_size: Optional[int] = None
+    # DataLoader worker counts. Bump these if val/train batches are CPU/IO
+    # bound (GPU under-utilized).
+    num_workers: int = 4
+    val_num_workers: Optional[int] = None
     # Wandb entity
     wandb_entity: Optional[str] = None
     # Wandb project name
     wandb_project: Optional[str] = None
+
+    # When true, the train DataLoader uses a WeightedRandomSampler with
+    # weight = 1/n_instances_in_image, so each image contributes equal
+    # expected probability regardless of how many instances it contains.
+    # Off by default — existing configs are unaffected.
+    image_balanced_sampling: bool = False
+
+    # Cap the number of batches processed when running the validator
+    # against the *training* loader (the per-epoch "train-as-val" pass).
+    # None = no cap (full epoch over train_loader). Set this to limit
+    # train-as-val wall time without touching the actual training loop
+    # — the training loop iterates train_loader normally.
+    train_eval_max_batches: Optional[int] = None
+
+    # Cap the number of batches processed during the per-epoch val pass.
+    # None = no cap (full val_loader). Same early-break mechanism as
+    # train_eval_max_batches.
+    val_max_batches: Optional[int] = None
+
+    # Number of samples drawn per epoch by the training WeightedRandomSampler.
+    # None = len(dataset) (one logical pass per epoch — historical default).
+    # Set lower to make each epoch shorter (more frequent val / checkpoint /
+    # LR step) without dropping any data: each draw still picks any image
+    # with probability 1/N_images, the dataset is unchanged, only the
+    # *number of draws per epoch* changes. Use when val cadence matters
+    # more than "one full pass = one epoch" semantics. Only takes effect
+    # when image_balanced_sampling=True.
+    train_samples_per_epoch: Optional[int] = None
 
     validationConfig: ValConfig = ValConfig()
 
@@ -428,7 +463,7 @@ class Trainer:
             # Log initial validation metrics before training starts (epoch=0)
             print("Running initial validation before training starts...")
             val_score, val_metrics = self._validate(epoch=0, useValSplit=True, batchUseFreq=1)
-            train_score, train_metrics = self._validate(epoch=0, useValSplit=False, batchUseFreq=10)
+            train_score, train_metrics = self._validate(epoch=0, useValSplit=False, batchUseFreq=1)
             self.log_metrics({"aggregate_score": val_score, **val_metrics}, category="validation", step=0, allow_wandb=True)
             self.log_metrics({"aggregate_score": train_score, **train_metrics}, category="val_on_train", step=0, allow_wandb=True)
 
@@ -450,7 +485,7 @@ class Trainer:
             # Validate (epoch-based)
             val_score, val_metrics = self._validate(epoch, useValSplit=True, batchUseFreq=1)
             # Also compute the merics on the training set for this epoch to see train vs val metric gap (epoch-based)
-            train_score, train_metrics = self._validate(epoch, useValSplit=False, batchUseFreq=10)
+            train_score, train_metrics = self._validate(epoch, useValSplit=False, batchUseFreq=1)
             # Log train metrics on the training set as well (step=epoch)
             self.log_metrics({"aggregate_score": train_score, **train_metrics}, category="val_on_train", step=epoch, allow_wandb=True)
 
@@ -652,9 +687,23 @@ class Trainer:
     def _validate(self, epoch: int, useValSplit: bool=True, batchUseFreq: int = 1) -> Tuple[float, Dict[str, float]]:
         self.model.eval()
         if (useValSplit):
-            agg_score, metrics = self.validator.validate(self.model, self.val_loader, batchUseFreq=batchUseFreq)
+            agg_score, metrics = self.validator.validate(
+                self.model, self.val_loader, batchUseFreq=batchUseFreq,
+                max_batches=getattr(self.cfg, "val_max_batches", None),
+            )
         else:
-            agg_score, metrics = self.validator.validate(self.model, self.train_loader, batchUseFreq=batchUseFreq)
+            # Train-as-val pass: cap the number of batches we process
+            # via TrainerConfig.train_eval_max_batches so this stays
+            # bounded even when the train loader is huge. Caps via an
+            # early break in the validator so DataLoader workers don't
+            # keep producing batches we'd discard. Does NOT modify the
+            # training loop's use of train_loader.
+            agg_score, metrics = self.validator.validate(
+                self.model,
+                self.train_loader,
+                batchUseFreq=batchUseFreq,
+                max_batches=getattr(self.cfg, "train_eval_max_batches", None),
+            )
 
         # normalize validation metrics dict to floats
         val_metrics: Dict[str, float] = {}

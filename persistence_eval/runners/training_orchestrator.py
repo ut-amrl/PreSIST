@@ -46,6 +46,17 @@ class TrainingOrchestrator:
             host_root=cfg.train_dataset.get("host_root"),
             container_root=cfg.train_dataset.get("container_root"),
         )
+        # Optional external validation manifest. Used by the day-count sweep on
+        # the 50/20/30 split so val is decoupled from the (possibly tiny) train
+        # pool. Mutually exclusive with val_track_fraction>0.
+        external_val_raw_tracks: list[dict] | None = None
+        ext_val_path = cfg.train_dataset.get("external_val_manifest_path")
+        if ext_val_path:
+            external_val_raw_tracks = load_manifest_with_resolved_paths(
+                Path(ext_val_path),
+                host_root=cfg.train_dataset.get("host_root"),
+                container_root=cfg.train_dataset.get("container_root"),
+            )
         dataset = TrainingDataset(
             raw_tracks=raw_tracks,
             cell_size_px=int(cfg.train_dataset.get("cell_size_px", 64)),
@@ -55,6 +66,7 @@ class TrainingOrchestrator:
             val_track_fraction=float(cfg.experiment.get("val_track_fraction", 0.0)),
             val_split_seed=int(cfg.experiment.get("val_split_seed", 0)),
             manifest_dir=manifest_path.parent,
+            external_val_raw_tracks=external_val_raw_tracks,
         )
         trainer_kwargs: dict[str, Any] = {"grouping": cfg.grouping}
         # Vision trainers consume a pre-instantiated model from cfg.model;

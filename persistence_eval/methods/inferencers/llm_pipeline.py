@@ -51,17 +51,46 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
         param_keys: list[str] | None = None,
         debug_log: bool = False,
         debug_visualizations: bool = True,
+        strict_object_coverage: bool = False,
     ) -> None:
+        """
+        strict_object_coverage: when True, raise instead of returning
+            empty-params sentinels if the querier exhausts all retries and
+            the group still has tracks without params. Default False
+            preserves the prior silent-fill behaviour. Per-seg-id retries
+            on partial LLM output are handled inside the querier itself
+            (see ChainedPromptQueryPersistenceQuerier.missingIdRetryAttempts).
+        """
         self._captioner = sceneCaptioner
         self._describer = objectDescriber
         self._querier = llmPersistenceQuerier
         self._param_keys = param_keys
         self._debug_log = debug_log
         self._debug_visualizations = debug_visualizations
+        self._strict_object_coverage = bool(strict_object_coverage)
         self._debug_output_dir: Path | None = None
         self._captioner_warmed_up = False
         self._describer_warmed_up = False
         self._querier_warmed_up = False
+
+        # The chained querier asks DebugPayloadFactory for a payload, which is
+        # disabled by default outside the dataset-generation pipeline (factory
+        # is never configured here). Configure it for the persistence phase so
+        # the querier's per-batch prompts and raw LLM responses are buffered
+        # and propagate back via the 4th return value of
+        # estimatePersistenceParameters. We never call flush(), so text/JSON
+        # entries stay in-memory only — no files are written by the factory.
+        if self._debug_log:
+            from dataset_generation.intermediate_results_logger.debug_data import (  # noqa: PLC0415
+                DebugConfig,
+                DebugPayloadFactory,
+            )
+            DebugPayloadFactory.instance().configure(
+                debug_config=DebugConfig(enabled=True, phases=["persistence"]),
+                base_log_directory="/tmp",  # unused: we never flush
+                config_file_name="eval_inferencer_debug",
+                component_names={},  # persistence phase layout only needs configFileName
+            )
 
     def set_run_dir(self, run_dir: Path) -> None:
         if self._debug_visualizations:
@@ -98,10 +127,11 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
 
         querier_ctx = timer.time_block(f"Timer::llm_querier::{type(self._querier).__name__}") if self._querier_warmed_up else nullcontext()
         raw_estimates = None
+        querier_debug = None
         for attempt in range(3):
             try:
                 with querier_ctx:
-                    _, _, raw_estimates, _ = self._querier.estimatePersistenceParameters(
+                    _, _, raw_estimates, querier_debug = self._querier.estimatePersistenceParameters(
                         scene_caption,
                         object_descriptions,
                         {},    # relationship descriptions — always empty at inference time
@@ -119,11 +149,37 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
         self._querier_warmed_up = True
 
         if raw_estimates is None:
+            msg = (
+                f"[llm_pipeline] querier exhausted retries for anchor_time="
+                f"{group.anchor_time} image={group.image_path}; whole group "
+                f"({len(group.track_ids)} tracks) lost."
+            )
+            if self._strict_object_coverage:
+                raise RuntimeError(msg)
+            print(f"WARNING {msg}", file=sys.stderr, flush=True)
             return [PersistenceParameterEstimate(params={}, metadata={"track_id": tid, "raw_estimate": {}}) for tid in group.track_ids]
 
         estimates = self._map_to_persistence_estimates(raw_estimates, group.track_ids)
-        self._maybe_debug(group, scene_caption, object_descriptions, raw_estimates, estimates)
-        # exit(1)
+
+        # Even after the querier's own per-sub-batch missing-id retries, the
+        # final merged output can still under-cover the requested seg_ids
+        # (e.g. retries exhausted with errorOnMissingObjectIds=False, or the
+        # LLM persistently dropped certain ids). Surface this once per anchor
+        # so it's never silent, and escalate to a raise under strict mode.
+        missing_idx = [i for i, est in enumerate(estimates) if not est.params]
+        if missing_idx:
+            missing_tids = [group.track_ids[i] for i in missing_idx]
+            msg = (
+                f"[llm_pipeline] anchor_time={group.anchor_time} "
+                f"image={group.image_path}: {len(missing_idx)}/{len(group.track_ids)} "
+                f"tracks have empty params after querier finished: "
+                f"{missing_tids[:5]}{'...' if len(missing_tids) > 5 else ''}"
+            )
+            if self._strict_object_coverage:
+                raise RuntimeError(msg)
+            print(f"WARNING {msg}", file=sys.stderr, flush=True)
+
+        self._maybe_debug(group, scene_caption, object_descriptions, raw_estimates, estimates, querier_debug)
         return estimates
 
     # TODO: temporary visualization — remove when done debugging
@@ -172,6 +228,7 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
         object_descriptions: dict,
         raw_estimates: list[dict],
         estimates: list[PersistenceParameterEstimate],
+        querier_debug=None,
     ) -> None:
         if not self._debug_log and self._debug_output_dir is None:
             return
@@ -211,6 +268,42 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
             self._debug_output_dir.mkdir(parents=True, exist_ok=True)
             fname = self._debug_output_dir / f"debug_{group.anchor_time:.6f}.json"
             fname.write_text(json.dumps(record, indent=2, default=str))
+
+        # The querier's DebugPayload (prompts + raw LLM responses per sub-batch)
+        # is gated on debug_log so the default fast path stays cheap. Flip
+        # debug_log: true in the inferencer config (or override on the CLI) to
+        # capture it.
+        if self._debug_log and querier_debug is not None:
+            querier_record = self._serialize_querier_debug(querier_debug)
+            print(
+                json.dumps(
+                    {"anchor_time": group.anchor_time, "querier_debug": querier_record},
+                    indent=2,
+                    default=str,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            if self._debug_output_dir is not None:
+                qfname = self._debug_output_dir / f"debug_{group.anchor_time:.6f}_querier_payload.json"
+                qfname.write_text(json.dumps(querier_record, indent=2, default=str))
+
+    @staticmethod
+    def _serialize_querier_debug(querier_debug) -> list[dict]:
+        """Flatten a DebugPayload to a JSON-serializable list of entries.
+
+        Text/JSON entries keep their value inline; other kinds (image, tensor,
+        numpy, pickle) only record their name/kind so the dump stays readable.
+        """
+        out: list[dict] = []
+        for rec in querier_debug:
+            entry = {"name": rec.name, "kind": rec.kind}
+            if rec.kind in ("text", "json"):
+                entry["value"] = rec.value
+            else:
+                entry["value"] = f"<{rec.kind} omitted>"
+            out.append(entry)
+        return out
 
     # ------------------------------------------------------------------
     # Helpers
