@@ -1,0 +1,11 @@
+# @package inferencer
+#
+# Loads a VisionAnchorMidpoint checkpoint (best_model.pt) and emits per-track
+# t50 estimates. Pair with `survival_generator: single_exp` to get an
+# exponential survival function with lam = t50 / ln(2).
+
+_target_: persistence_eval.methods.inferencers.vision_anchor_midpoint_inferencer.VisionAnchorMidpointInferencer
+checkpoint_path: ${paths.model_dir}/best_model.pt
+device: ${runtime.device}
+image_size: 518
+name: vision_anchor_midpoint

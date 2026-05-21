@@ -1,0 +1,19 @@
+# @package eval_scenario
+# Variant of percentile_scaled_horizons with a 15-minute recency cap. Each
+# query at dt_q from anchor sees only observations within
+# `[anchor, anchor + 900 s]` AND strictly earlier than t_q − min(900, dt_q/2).
+# Sits between the 5-minute and 30-minute variants — at PKLot's ~5-minute
+# cadence the visible window holds ~3 frames immediately post-anchor.
+#
+# Eval outputs land under `survival_based__percentile_scaled_horizons_15min/`
+# so they do not collide with the other two recency_cap variants.
+_target_: persistence_eval.sampling.percentile_scaled_horizon_episode_provider.PercentileScaledHorizonEpisodeProvider
+name: percentile_scaled_horizons_15min
+percentile: 90.0
+num_query_times: 20
+spacing: power
+power_exponent: 2.0
+t_min: 1.0
+max_query_inflation: 1.0
+recency_cap: 900.0    # 15 minutes
+require_disappearance_observed: false

@@ -1,0 +1,22 @@
+# @package eval_scenario
+# Combines the percentile-derived per-D query horizons (same as the
+# percentile_horizons scenario) with ScaledHorizonEpisodeProvider's per-query
+# observation cutoff t_q − min(recency_cap, dt_q/2). Replaces the previous
+# workflow of overriding query_horizons + recency_cap via the
+# scripts/run_observation_window_sweep.py driver — eval configs can now just
+# reference this scenario and Hydra will instantiate it correctly.
+#
+# Notes vs. percentile_horizons:
+#   - t_min must be > 0 here (ScaledHorizon rejects dt_q = 0). Default 1.0 s.
+#   - Everything else (percentile, num_query_times, spacing, etc.) mirrors
+#     percentile_horizons so the horizon grid is comparable at matching D.
+_target_: persistence_eval.sampling.percentile_scaled_horizon_episode_provider.PercentileScaledHorizonEpisodeProvider
+name: percentile_scaled_horizons
+percentile: 90.0
+num_query_times: 20
+spacing: power
+power_exponent: 2.0
+t_min: 1.0
+max_query_inflation: 1.0
+recency_cap: 1800.0     # 30 minutes
+require_disappearance_observed: false

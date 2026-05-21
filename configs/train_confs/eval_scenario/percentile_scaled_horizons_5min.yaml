@@ -1,0 +1,21 @@
+# @package eval_scenario
+# Variant of percentile_scaled_horizons with a 5-minute recency cap. Each
+# query at dt_q from anchor sees only observations within
+# `[anchor, anchor + 300 s]` AND strictly earlier than t_q − min(300, dt_q/2).
+# At PKLot's ~5-minute observation cadence the visible-obs window is exactly
+# the one immediately-post-anchor frame in most cases — useful for isolating
+# the effect of "filter sees the closest in-time observation" without the
+# 30-min window of the default percentile_scaled_horizons scenario.
+#
+# Eval outputs land under `survival_based__percentile_scaled_horizons_5min/`
+# so they do not collide with the 30-min variant.
+_target_: persistence_eval.sampling.percentile_scaled_horizon_episode_provider.PercentileScaledHorizonEpisodeProvider
+name: percentile_scaled_horizons_5min
+percentile: 90.0
+num_query_times: 20
+spacing: power
+power_exponent: 2.0
+t_min: 1.0
+max_query_inflation: 1.0
+recency_cap: 300.0    # 5 minutes
+require_disappearance_observed: false

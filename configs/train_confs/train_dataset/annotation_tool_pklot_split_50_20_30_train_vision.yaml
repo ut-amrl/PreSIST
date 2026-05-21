@@ -1,0 +1,19 @@
+# @package train_dataset
+#
+# Vision-anchor train manifest preset for the 50/20/30 temporal split of
+# PUCPR_repaired_split_flanks_fixed. Sibling of
+# annotation_tool_pklot_split_50_20_30_train.yaml; cell_size_px matches the
+# Perpetua side so vision shares the same per-track location sidecar.
+#
+# Day-count sweeps override `manifest_path` to point at one of the
+# splits/50_20_30/daycount/days_NNNN/train_first_*.json files.
+# `external_val_manifest_path` decouples val from train so small-N training
+# pools aren't further reduced by an internal val slice.
+
+name: pklot_pucpr_split_train_50_20_30_vision
+manifest_path: /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/splits/50_20_30/train_through_2012-10-15.json
+external_val_manifest_path: /workspace/data/input/new_pklot/postprocessed/annotations/PUCPR_repaired_split_flanks_fixed/splits/50_20_30/val_from_2012-10-16_through_2012-10-29.json
+cell_size_px: 128
+class_id: 0
+host_root: /robodata/aaadkins/Datasets/semPersFilter/evalCandidates/new_pklot
+container_root: /workspace/data/input/new_pklot

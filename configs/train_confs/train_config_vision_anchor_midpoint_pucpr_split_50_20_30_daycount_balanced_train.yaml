@@ -1,0 +1,31 @@
+defaults:
+  - trainer: vision_anchor_midpoint_balanced
+  - model: vision_scalar_predictor
+  - train_dataset: annotation_tool_pklot_split_50_20_30_train_vision
+  - _self_
+
+# Paired counterpart: eval_config_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train_balanced_eval.yaml
+# experiment.day_count is mandatory and is supplied by the day-count sweep
+# wrapper (scripts/sweep_vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train.sh).
+#
+# val_track_fraction is 0.0 here because the train_dataset preset binds an
+# external_val_manifest_path (the 50/20/30 val window). The orchestrator
+# loads val from that manifest, so we don't slice train for val even at
+# small N.
+
+grouping: class
+
+experiment:
+  name: vision_anchor_midpoint_pucpr_split_50_20_30_daycount_balanced_train
+  day_count: ???
+  subsample_fraction: 1.0
+  subsample_seed: 0
+  val_track_fraction: 0.0
+  val_split_seed: 0
+
+paths:
+  model_root: /workspace/data/output/perpetua/
+  model_dir: ${paths.model_root}/${experiment.name}/days${experiment.day_count}_seed${experiment.subsample_seed}
+
+runtime:
+  seed: ${experiment.subsample_seed}

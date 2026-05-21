@@ -1,0 +1,8 @@
+exmaps/2020-06-17/evening/run_1/only_jpgs/frame_1592405271289.jpg
+exmaps/2020-06-17/evening/run_1/only_jpgs/frame_1592405341959.jpg
+exmaps/2020-06-17/evening/run_1/only_jpgs/frame_1592405358219.jpg
+exmaps/2020-06-17/evening/run_1/only_jpgs/frame_1592405360531.jpg
+exmaps/2020-06-17/evening/run_1/only_jpgs/frame_1592405384424.jpg
+exmaps/2020-06-17/evening/run_1/only_jpgs/sub_set/frame_1592405288628.jpg
+exmaps/2020-06-17/evening/run_1/only_jpgs/sub_set/frame_1592405298436.jpg
+openloris_location/restaurant/cafe-1/004.png

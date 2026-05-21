@@ -1,0 +1,29 @@
+name: seg_langSam3Q8T_behav4_mO20_imgbal
+_target_: training.dataset.distillation_dataset.DistillationDatasetConfig
+input_root_dir: /workspace/data/input/
+output_root_dir: /workspace/data/output/
+segmentation_config_name: langGround_p_qwenvl37bT_disc_maxObj30_u3_s_sam3b32__s0p35_mA0p001_dedupe0p9
+full_results_config_name: seg_langSam3Q8T_capG31bp7_idG31b3imgL_pG31bv3iqr_only_behav4_mO20
+split_id_kind: relpath
+split_granularity: image
+train_split_file: train_dataset_manifests/seg_langSam3Q8T_behav4_mO20/train.txt
+val_split_file:   train_dataset_manifests/seg_langSam3Q8T_behav4_mO20/val.txt
+# test_split_file intentionally omitted.
+
+# Set these to null so the existing mirror_train.yaml interpolation
+# (`split_json: ${train_dataset.split_json}`) resolves cleanly when
+# train.py calls OmegaConf.to_yaml(..., resolve=True).
+split_json: null
+split_dir: null
+
+# Cap instances per image for the val split to keep val passes fast on
+# images with many masks (median 29, max ~175). The image-weighted
+# validation metric (via sample_weight = 1/n_after_cap) keeps per-image
+# contributions uniform regardless of the cap.
+val_max_instances_per_image: 25
+
+# New persistence results use p25/p75 percentile fields instead of p50/p90.
+# This transform reads p25/p75/conf and emits (log p25, log IQR-ratio, conf).
+label_transform:
+  _target_: training.dataset.distillation_dataset.label_transform_log_ratio_p25_p75
+  _partial_: true

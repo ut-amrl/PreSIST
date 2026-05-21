@@ -1,0 +1,28 @@
+defaults:
+  - trainer: persistence_fit_single_exp
+  - train_dataset: annotation_tool_pklot_split_50_20_30_train
+  - _self_
+
+# Paired counterpart: eval_config_perpetua_single_exp_class_pucpr_split_50_20_30_daycount_emk1_balanced.yaml
+# K=1 EM variant of the daycount single-component trainer. Uses upstream
+# perpetua's em_step with n_components=1 instead of the naive closed-form
+# MLE. Requires the spf_perpetua container (jax). experiment.day_count is
+# supplied by the day-count sweep wrapper.
+
+trainer:
+  fit_method: em_k1
+
+grouping: class
+
+experiment:
+  name: perpetua_single_exp_${grouping}_pucpr_split_50_20_30_daycount_emk1
+  day_count: ???
+  subsample_fraction: 1.0
+  subsample_seed: 0
+
+paths:
+  model_root: /workspace/data/output/perpetua/
+  model_dir: ${paths.model_root}/${experiment.name}/days${experiment.day_count}_seed${experiment.subsample_seed}
+
+runtime:
+  seed: ${experiment.subsample_seed}

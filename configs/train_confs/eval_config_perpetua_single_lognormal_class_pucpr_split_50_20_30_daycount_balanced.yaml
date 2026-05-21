@@ -1,0 +1,37 @@
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: annotation_tool_pucpr_split_50_20_30_test_balanced
+  - inferencer: class_keyed_lookup
+  - survival_generator: single_lognormal
+  - persistence_filter: rosen
+  - predictor: survival_based
+  - benchmark: pucpr_images
+  - eval_scenario: percentile_horizons
+  - analysis: basic
+  - _self_
+
+mode: run_all
+
+# Paired counterpart: train_config_perpetua_single_lognormal_class_pucpr_split_50_20_30_daycount.yaml
+# experiment.name matches the train cfg so paths.model_dir resolves to the
+# right Perpetua checkpoint. experiment.day_count is supplied by the day-count
+# sweep wrapper.
+experiment:
+  name: perpetua_single_lognormal_class_pucpr_split_50_20_30_daycount
+  day_count: ???
+  subsample_fraction: 1.0
+  subsample_seed: 0
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  model_root: /workspace/data/output/perpetua/
+  model_dir: ${paths.model_root}/${experiment.name}/days${experiment.day_count}_seed${experiment.subsample_seed}
+  explicit_inference_run_dir: null
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null
+
+inferencer:
+  name: ${experiment.name}_days${experiment.day_count}_seed${experiment.subsample_seed}

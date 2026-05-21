@@ -1,0 +1,13 @@
+# @package persistence_filter
+#
+# Ablation variant of MixturePersistenceFilter: observations evolve the
+# component posterior log_tau (so argmax-k picks a sensible component per
+# track), but the prediction itself is just S_{k*}(query_dt) — without the
+# per-observation Rosen update applied to the chosen component.
+#
+# Defaults match RosenPersistenceFilter and MixturePersistenceFilter so this
+# is a clean swap-in for ablations.
+_target_: persistence_eval.methods.filters.mixture_prior_pick_filter.MixturePriorPickFilter
+false_detection_prob: 0.05
+missed_detection_prob: 0.1
+name: mixture_prior_pick_filter

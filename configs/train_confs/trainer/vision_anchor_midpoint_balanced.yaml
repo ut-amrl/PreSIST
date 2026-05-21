@@ -1,0 +1,42 @@
+defaults:
+  - _self_
+
+# Same as vision_anchor_midpoint.yaml but enables per_track_balanced_sampler,
+# which swaps the uniform shuffle DataLoader for a WeightedRandomSampler whose
+# per-record weight is 1/n_records_in_that_track. Result: each track
+# contributes equal expected gradient mass per epoch, rather than mass
+# proportional to its (image, mask) anchor count.
+_target_: persistence_eval.methods.training.vision_anchor_midpoint.VisionAnchorMidpointTrainer
+name: vision_anchor_midpoint_balanced
+
+epochs: 100
+batch_size: 32
+num_workers: 4
+early_stopping_patience: 10
+image_size: 518
+grad_clip_norm: 1.0
+device: null
+log_every_n_batches: 20
+
+per_track_balanced_sampler: true
+
+use_wandb: true
+wandb_entity: ut-amrl-amanda
+wandb_project: semantic-persistence-filter
+wandb_run_name: null
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 0.05
+  amsgrad: false
+
+lr_scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _partial_: true
+  T_max: ${trainer.epochs}
+  eta_min: 1.0e-6
+  last_epoch: -1

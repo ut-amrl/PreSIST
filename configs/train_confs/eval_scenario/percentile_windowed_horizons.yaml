@@ -1,0 +1,21 @@
+# @package eval_scenario
+# Variant of percentile_scaled_horizons WITHOUT per-query causal masking.
+# Every query receives the same observation set — all observations in
+# [anchor, anchor + recency_cap], regardless of whether their timestamps
+# fall before or after the query time.
+#
+# Use for diagnostics where you want a stable observation context across the
+# horizon sweep (e.g., ablating "component selection" from "horizon scaling").
+# Not appropriate for claims about online filtering accuracy; this is acausal.
+#
+# Eval outputs land under `survival_based__percentile_windowed_horizons/`.
+_target_: persistence_eval.sampling.percentile_windowed_horizon_episode_provider.PercentileWindowedHorizonEpisodeProvider
+name: percentile_windowed_horizons
+percentile: 90.0
+num_query_times: 20
+spacing: power
+power_exponent: 2.0
+t_min: 1.0
+max_query_inflation: 1.0
+recency_cap: 1800.0    # 30 minutes — same default as the scaled variant
+require_disappearance_observed: false

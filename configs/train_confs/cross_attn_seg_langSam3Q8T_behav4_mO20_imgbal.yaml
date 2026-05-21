@@ -1,0 +1,35 @@
+defaults:
+  - train_dataset: seg_langSam3Q8T_behav4_mO20_imgbal
+  - eval_dataset: mirror_train
+  - model: obj_conditioned_cross_attn
+  - registry_info: registry_default
+  - trainer: default
+  - _self_
+
+
+model_output_root_dir: "/workspace/data/output/training_outputs/"
+
+trainer:
+  loop:
+    image_balanced_sampling: true
+    batch_size: 32
+    val_batch_size: 32
+    num_workers: 8
+    val_num_workers: 12
+    # Caps for the per-epoch validation passes (both val-on-val and
+    # val-on-train). Bounded via an early break in the validator so
+    # the DataLoader doesn't keep producing batches we'll discard.
+    # The actual training loop is unaffected — it iterates train_loader
+    # in full each epoch.
+    # 500 batches × 32 = 16,000 samples per pass.
+    val_max_batches: 500
+    train_eval_max_batches: 500
+    # Shrink "epoch" to 1,000 train batches × 32 = 32k samples so
+    # validation / checkpointing happens more often. Dataset is
+    # unchanged; the WeightedRandomSampler just draws fewer times
+    # per epoch (each draw still has equal probability across all
+    # ~22k images). Tune max_epochs accordingly so total samples
+    # ≈ desired image-coverage (full dataset is ~1M instances; this
+    # default at 32k/epoch needs ~30+ epochs to match a single full
+    # logical pass).
+    train_samples_per_epoch: 64000

@@ -1,0 +1,21 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal
+  - _self_
+
+# Smoke-test variant: keep 2% of train and 2% of val so a full epoch
+# completes in a couple of minutes. Use this to verify the end-to-end
+# pipeline (dataloader, model fwd, loss, val, checkpoint save, wandb)
+# before kicking off a real run with the parent config.
+train_dataset:
+  train_subsample_fraction: 0.02
+  val_subsample_fraction: 0.02
+
+trainer:
+  loop:
+    max_epochs: 2
+    save_every_n_epochs: 1
+    use_wandb: false
+    # Smoke-test caps: a handful of batches per val pass so each
+    # epoch finishes in seconds.
+    val_max_batches: 10
+    train_eval_max_batches: 10
