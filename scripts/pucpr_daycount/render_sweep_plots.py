@@ -16,7 +16,7 @@ Plot styling:
   - Legend: 2-column at the bottom of the figure
   - Linear x-scale (training day count)
   - Method labels: Exponential, Log-Normal, Exponential Mixture,
-    Log-Normal Mixture, Vision only, PerSIST-Lang
+    Log-Normal Mixture, Vision only, PreSIST-Lang
   - One marker per method; class -> solid, location -> dashed; all lines
     differently coloured.
   - In "both" mode the per-method curves are suffixed " (Global)" for class
@@ -118,7 +118,7 @@ def write_latex_table(
     perp_csv: Path, vl_csv: Path, grouping_mode: str, out_dir: Path,
     metric: str, ylabel: str, out_basename: str, lower_is_better: bool,
 ) -> None:
-    """Per-metric LaTeX table: methods as rows, days as columns. PerSIST-Lang
+    """Per-metric LaTeX table: methods as rows, days as columns. PreSIST-Lang
     spans all day columns via \\multicolumn. Best per column is \\bfseries."""
     perp = load_perp(perp_csv, metric)
     vision, llm = load_vl(vl_csv, metric)
@@ -151,7 +151,7 @@ def write_latex_table(
     if vision:
         rows.append(("Vision only", dict(vision)))
 
-    # Best per column among the per-D rows; PerSIST-Lang competes too via its
+    # Best per column among the per-D rows; PreSIST-Lang competes too via its
     # single value being valid for every D.
     best_per_d: dict[float, float] = {}
     for d in days:
@@ -174,7 +174,7 @@ def write_latex_table(
     lines: list[str] = []
     lines.append(f"% {ylabel} | scenario CSVs: {perp_csv.name}, {vl_csv.name}")
     lines.append(f"% grouping_mode={grouping_mode}; bold = best in column "
-                 f"({'min' if lower_is_better else 'max'}); PerSIST-Lang spans all D.")
+                 f"({'min' if lower_is_better else 'max'}); PreSIST-Lang spans all D.")
     lines.append("\\begin{tabular}{" + col_spec + "}")
     lines.append("\\hline")
     header = "Method & " + " & ".join(f"D={_fmt_day(d)}" for d in days) + " \\\\"
@@ -191,7 +191,7 @@ def write_latex_table(
         if llm_is_best_anywhere:
             llm_str = f"\\bfseries {llm_str}"
         lines.append(
-            "PerSIST-Lang & "
+            "PreSIST-Lang & "
             f"\\multicolumn{{{n_days}}}{{c}}{{{llm_str}}} \\\\"
         )
     lines.append("\\hline")
@@ -226,7 +226,7 @@ def render_one(
     # Track plotted (handle, label) entries grouped by which legend column they
     # belong to: column 1 = single-component methods (Exponential, Log-Normal),
     # column 2 = multi-component (Exponential Mixture, Log-Normal Mixture),
-    # column 3 = Vision only + PerSIST-Lang.
+    # column 3 = Vision only + PreSIST-Lang.
     SINGLE_TOKENS = {"single_exp", "single_lognormal"}
     MIXTURE_TOKENS = {"mixture_exp", "mixture_lognormal"}
     single_handles: list[tuple] = []
@@ -263,9 +263,9 @@ def render_one(
     if llm is not None:
         hline = ax.axhline(
             llm, color=LLM_COLOR, linestyle="-.", linewidth=1.5,
-            label=f"PerSIST-Lang ({llm:.3f})",
+            label=f"PreSIST-Lang ({llm:.3f})",
         )
-        extra_handles.append((hline, f"PerSIST-Lang ({llm:.3f})"))
+        extra_handles.append((hline, f"PreSIST-Lang ({llm:.3f})"))
 
     ticks = [0.5, 1, 2, 3, 4, 5, 7, 10, 14, 21, 28, 35]
     ax.set_xticks(ticks)
@@ -287,7 +287,7 @@ def render_one(
     # 3-column legend below the axes, column-major fill:
     #   col 1 — single-component (Exponential, Log-Normal) × groupings
     #   col 2 — multi-component  (Exponential Mixture, Log-Normal Mixture) × groupings
-    #   col 3 — Vision only + PerSIST-Lang
+    #   col 3 — Vision only + PreSIST-Lang
     columns: list[list[tuple]] = []
     if single_handles:  columns.append(single_handles)
     if mixture_handles: columns.append(mixture_handles)

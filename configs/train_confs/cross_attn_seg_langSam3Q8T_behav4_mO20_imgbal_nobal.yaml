@@ -1,0 +1,15 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal
+  - _self_
+
+# Ablation: same recipe, but turn OFF image-balanced sampling. Use this
+# to isolate whether the rising train/val/val-on-train losses are caused
+# by the WeightedRandomSampler reweighting (which upweights rare-instance
+# images that tend to have noisier pseudo-labels) vs. something else.
+#
+# Without image_balanced_sampling, train_samples_per_epoch is ignored —
+# an epoch is one shuffle of the instance index. Keep max_epochs in the
+# parent (cosine T_max stays consistent) so LR schedule is comparable.
+trainer:
+  loop:
+    image_balanced_sampling: false

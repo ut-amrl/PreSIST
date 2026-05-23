@@ -24,7 +24,10 @@ from training.task import (
 from persistence_parameter_networks.models.dense_persistence_predictor import (
     DensePersistencePredictor,
 )
-from persistence_parameter_networks.losses.dense_losses import DenseWeightedMultiLoss
+from persistence_parameter_networks.losses.dense_losses import (
+    DenseWeightedMultiLoss,
+    DenseWeightedMultiLossWithInstanceAux,
+)
 from persistence_parameter_networks.losses.weighted_multi_loss import WeightedMultiLoss
 
 import hydra
@@ -315,10 +318,19 @@ def main(cfg: DictConfig):
     # Wrap the (model, loss_fn) pair in the appropriate TrainingTask. The
     # task owns the forward + loss call shape; the trainer only sees
     # task.compute_loss(batch).
+    # Target-normalization stats (if any) live on the dataset cfg. Pull
+    # them off here so the validation/inferencer path can un-apply them.
+    # All four must be set together or none.
+    norm_kwargs = dict(
+        y50_mean=OmegaConf.select(cfg, "train_dataset.y50_mean"),
+        y50_std=OmegaConf.select(cfg, "train_dataset.y50_std"),
+        yr_mean=OmegaConf.select(cfg, "train_dataset.yr_mean"),
+        yr_std=OmegaConf.select(cfg, "train_dataset.yr_std"),
+    )
     task: TrainingTask = (
-        DensePersistenceTask(model=model, loss_fn=loss_fn)
+        DensePersistenceTask(model=model, loss_fn=loss_fn, **norm_kwargs)
         if is_dense
-        else PerMaskPersistenceTask(model=model, loss_fn=loss_fn)
+        else PerMaskPersistenceTask(model=model, loss_fn=loss_fn, **norm_kwargs)
     )
 
     # Determine output directory. When resuming, reuse the original run's directory so
@@ -359,19 +371,27 @@ def main(cfg: DictConfig):
     # ``loss_fn``; for dense training we build a matching
     # ``WeightedMultiLoss`` whose confidence-channel handling mirrors
     # the dense training loss so val numbers stay calibrated.
-    if is_dense and isinstance(loss_fn, DenseWeightedMultiLoss):
+    if is_dense and isinstance(loss_fn, DenseWeightedMultiLossWithInstanceAux):
+        # Aux loss composes a DenseWeightedMultiLoss; pull it out for val.
+        dense_inner = loss_fn.dense_loss
+    elif is_dense and isinstance(loss_fn, DenseWeightedMultiLoss):
+        dense_inner = loss_fn
+    else:
+        dense_inner = None
+
+    if dense_inner is not None:
         validator_loss_fn = WeightedMultiLoss(
-            w50=loss_fn.w50,
-            wr=loss_fn.wr,
-            wc=loss_fn.wc,
-            useHuberForLogVals=loss_fn.useHuberForLogVals,
-            delta_50=loss_fn.delta_50,
-            delta_r=loss_fn.delta_r,
-            confidence_loss=loss_fn.confidence_loss,
-            confidence_from_logits=loss_fn.confidence_from_logits,
-            delta_c=loss_fn.delta_c,
-            clamp_confidence_probs=loss_fn.clamp_confidence_probs,
-            eps=loss_fn.eps,
+            w50=dense_inner.w50,
+            wr=dense_inner.wr,
+            wc=dense_inner.wc,
+            useHuberForLogVals=dense_inner.useHuberForLogVals,
+            delta_50=dense_inner.delta_50,
+            delta_r=dense_inner.delta_r,
+            confidence_loss=dense_inner.confidence_loss,
+            confidence_from_logits=dense_inner.confidence_from_logits,
+            delta_c=dense_inner.delta_c,
+            clamp_confidence_probs=dense_inner.clamp_confidence_probs,
+            eps=dense_inner.eps,
         ).to(device)
     else:
         validator_loss_fn = loss_fn

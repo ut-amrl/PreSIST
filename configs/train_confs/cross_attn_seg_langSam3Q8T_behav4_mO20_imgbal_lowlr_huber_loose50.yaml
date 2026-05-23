@@ -1,0 +1,27 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber
+  - _self_
+
+# Variant where Huber's robustness threshold for y50 is loosened so the
+# small-y50 (short-lived object) tail stops getting its gradient capped.
+#
+# Context: y50 has std ≈ 5.16 in log-space. Default Huber delta_50=1.0
+# means residuals larger than 1 nat (a factor-of-e prediction error)
+# enter the linear regime where each sample contributes at most `delta`
+# of gradient regardless of how wrong it is. Early in training, the
+# small-y50 tail (~10% of data, the part we care about most) has the
+# largest residuals → it's exactly the regime Huber suppresses.
+#
+# delta_50=5.0 ≈ 1 std of y50:
+#   - Typical residuals stay in the MSE regime → small-end samples
+#     contribute proportional gradient.
+#   - Only catastrophic residuals (|err| > 5 in log-space, i.e. a
+#     factor-of-150 prediction error) get gradient-capped — the spike
+#     protection we wanted Huber for in the first place.
+# delta_r is left at 1.0 — yr's std is ~0.87, so delta=1 is already
+# roughly 1 std for it.
+trainer:
+  name: lowlr_huber_loose50
+  loss_function:
+    delta_50: 5.0
+    # delta_r: 1.0   # default, leave as-is

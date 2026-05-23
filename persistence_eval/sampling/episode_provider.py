@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import logging
 from typing import Iterable
 
 from persistence_eval.core.domain import BinaryObservationEvent, EvaluationContext, TrackTemporalBounds
 from persistence_eval.core.protocols import TrackDataset
+
+logger = logging.getLogger(__name__)
+
+
+def _log_query_horizons(provider_cls_name: str, query_horizons_s: list[float]) -> None:
+    """Log a fixed query-horizon list in hours so it's visible before eval starts."""
+    hrs = ", ".join(f"{q / 3600.0:.4g}" for q in query_horizons_s)
+    logger.info(
+        "%s: %d fixed query horizons (hours): [%s]",
+        provider_cls_name, len(query_horizons_s), hrs,
+    )
 
 
 class TrackBasedEpisodeProvider:
@@ -28,6 +40,7 @@ class TrackBasedEpisodeProvider:
         require_disappearance_observed: bool = False,
     ) -> None:
         self._query_horizons = list(query_horizons)
+        _log_query_horizons(type(self).__name__, self._query_horizons)
 
         self._lookup: dict[str, tuple[list[BinaryObservationEvent], TrackTemporalBounds]] = {}
         for track_id, observations, bounds in track_dataset.iter_tracks():

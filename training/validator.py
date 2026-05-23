@@ -310,6 +310,23 @@ class SurvivalValidationRunner:
             y50 = b["y50"]
             yr = b["yr"]
             yc = b["yc"].float()
+
+            # When the validation model is a DenormalizingValidationModel,
+            # its outputs (y50_hat, yr_hat) have had the dataset's z-score
+            # inverted, but the targets in the batch are still z-scored.
+            # Without matching spaces, every metric here would compare
+            # un-normalized preds against normalized targets — silently
+            # inflating SE and collapsing aggregate_score toward 0. We
+            # apply the same inverse-affine to the targets so both sides
+            # are un-normalized. No-op for non-`_norm` runs (buffers
+            # absent → `None`).
+            _y50_mean = getattr(model, "y50_mean", None)
+            _y50_std = getattr(model, "y50_std", None)
+            _yr_mean = getattr(model, "yr_mean", None)
+            _yr_std = getattr(model, "yr_std", None)
+            if all(b is not None for b in (_y50_mean, _y50_std, _yr_mean, _yr_std)):
+                y50 = y50.float() * _y50_std + _y50_mean
+                yr = yr.float() * _yr_std + _yr_mean
             # Per-sample weights (1/n_instances_in_image) for the parallel
             # image-weighted meters. Defaults to uniform if absent (e.g.
             # legacy loaders that don't emit sample_weight).

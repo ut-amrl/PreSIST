@@ -1,0 +1,27 @@
+# @package inferencer
+#
+# ClosedSetCLIPInferencer variant using the p25/p75 (lower/upper quartile)
+# persistence parameter cache instead of the t50/t90 one. Emits {'p25', 'p75'}
+# per track — pair with survival_generator=weibull_p25_p75.
+
+_target_: persistence_eval.methods.inferencers.closed_set_clip_inferencer.ClosedSetCLIPInferencer
+name: closed_set_clip_coco_stuff_p25_p75
+
+clipAligner:
+  _target_: persistence_eval.methods.inferencers.closed_set_clip_align.closed_set_clip_embedder.CLIPAligner
+  clip_embedder:
+    _target_: persistence_eval.methods.inferencers.closed_set_clip_align.closed_set_clip_embedder.CLIPEmbedder
+    model_name: "openai/clip-vit-large-patch14"
+    device: "cuda"
+  cache:
+    _target_: persistence_eval.methods.inferencers.closed_set_clip_align.closed_set_clip_embedder.CachedCLIPAlignment
+    cache_file: "cached_closed_set_info/closed_set_clip_embeddings/coco-stuff.pt"
+  class_list:
+    _target_: persistence_eval.methods.inferencers.closed_set_semantics.closed_set_semantics.ClosedSetSemanticClassList
+    class_text_file: "cached_closed_set_info/closed_set_lists/coco-stuff.txt"
+    classes_list: null
+  zero_out_background: false
+
+semanticClassPersistenceParamLookup:
+  _target_: persistence_eval.methods.inferencers.closed_set_semantics.semantic_class_persistence_param_lookup.SemanticClassPersistenceParamLookup
+  params_file: "cached_closed_set_info/closed_set_persistence_params_cache/coco-stuff-p25-p75.json"

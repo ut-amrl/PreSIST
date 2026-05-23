@@ -1,0 +1,26 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal
+  - override /trainer/optimizer: adamw
+  - _self_
+
+# Minimal stability fix: lower LR only, no Huber. Tests whether the
+# original lr=1e-4 was the sole cause of the exploding-gradient regime
+# or whether Huber was also doing meaningful work.
+#
+# Compared to siblings:
+#   _lowlr_huber          = lr=1e-5 + Huber(delta=1) on y50/yr
+#   _lowlr_huber_loose50  = lr=1e-5 + Huber(delta=5) on y50
+#   THIS config           = lr=1e-5 + plain MSE on y50/yr (default)
+#
+# If this run is stable with a descent shape similar to _lowlr_huber,
+# then Huber adds little at lr=1e-5 — lower LR alone is the load-bearing
+# fix. If this run shows large spikes (GN p99 in the thousands) or
+# climbing GN average, then Huber's outlier protection is still
+# pulling weight.
+#
+# Pair with grad_spikes.jsonl and per-batch grad_norm telemetry to read
+# the result.
+trainer:
+  name: lowlr
+  optimizer:
+    lr: 1e-5

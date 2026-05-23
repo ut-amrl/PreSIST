@@ -209,6 +209,17 @@ class TrainerConfig:
     # when image_balanced_sampling=True.
     train_samples_per_epoch: Optional[int] = None
 
+    # When True on a resumed run, run one validation+val_on_train pass at
+    # the resumed epoch *before* training continues, and log the results
+    # under the existing `validation/` and `val_on_train/` categories.
+    # Use this after changing something that affects metric values without
+    # changing the weights — e.g. wiring up the denormalizing validation
+    # wrapper so a `_norm` run's val metrics now land in log-space rather
+    # than normalized space. Off by default: a normal resume should not
+    # spend the extra val time. Override at the CLI with
+    # `trainer.loop.revalidate_on_resume=true`.
+    revalidate_on_resume: bool = False
+
     validationConfig: ValConfig = ValConfig()
 
 
@@ -334,9 +345,13 @@ class Trainer:
             key = f"{category}/{k}" if category else str(k)
             payload[key] = _as_float(v)
 
-        # W&B path
+        # W&B path. We deliberately do not pass step= here: the batch
+        # stream auto-increments wandb's internal step via its own
+        # train_batch/global_step axis, so passing a small step=epoch
+        # would be rejected as non-monotonic. Epoch metrics land at
+        # whatever internal step wandb is currently on.
         if allow_wandb and self.wandb is not None and self._wandb_run is not None:
-            self.wandb.log(payload, step=step)  # type: ignore
+            self.wandb.log(payload)  # type: ignore
             return
 
         # JSONL fallback
@@ -496,11 +511,6 @@ class Trainer:
                 )
             self._wandb_run = self.wandb.run
             print("[W&B] Using externally initialized wandb run.")
-            # Register a custom step axis for sub-epoch metrics so they
-            # don't collide with the epoch-step axis used by `train/`,
-            # `validation/`, etc. Without this, W&B's monotonic-step
-            # constraint would drop our small epoch numbers once we
-            # started logging large global_step values.
             if getattr(self.cfg, "wandb_log_every_n_batches", None):
                 try:
                     self.wandb.define_metric("train_batch/global_step")
@@ -530,6 +540,43 @@ class Trainer:
             # self.best_score = float("-inf")  # Don't set best_score based on initial validation; only update after first epoch
             self.save_checkpoint(epoch=0, filename="ckpt_epoch_0_pretrain.pth")
 
+        elif getattr(self.cfg, "revalidate_on_resume", False):
+            # Resumed run, and the user asked us to re-log validation metrics
+            # before training continues — typically because something about
+            # the validation path changed without changing the weights (e.g.
+            # the denormalizing wrapper was added, so a `_norm` run's metrics
+            # now land in log-space). Log at step = start_epoch - 1 so the
+            # new metrics overwrite the same x-axis position as the last
+            # completed epoch in JSONL; W&B ignores the `step` arg and just
+            # appends at the current internal step, which is also what we
+            # want (a single re-validation point in the timeline).
+            revalidate_at = self.start_epoch - 1
+            print(
+                f"[CKPT] revalidate_on_resume=true; running validation at "
+                f"epoch {revalidate_at} before resuming training..."
+            )
+            val_score, val_metrics = self._validate(
+                epoch=revalidate_at, useValSplit=True, batchUseFreq=1
+            )
+            train_score, train_metrics = self._validate(
+                epoch=revalidate_at, useValSplit=False, batchUseFreq=1
+            )
+            self.log_metrics(
+                {"aggregate_score": val_score, **val_metrics},
+                category="validation",
+                step=revalidate_at,
+                allow_wandb=True,
+            )
+            self.log_metrics(
+                {"aggregate_score": train_score, **train_metrics},
+                category="val_on_train",
+                step=revalidate_at,
+                allow_wandb=True,
+            )
+            # Re-seat best_score so early stopping uses the same metric space
+            # as the new (post-revalidate) curve, not the stale pre-resume value.
+            self.best_score = float(val_score)
+            self.best_epoch = revalidate_at
 
         # Epoch 0 is pretrain-only (saved above). Training epochs start at 1.
         # When resuming, start_epoch is already the correct next epoch (never 0).

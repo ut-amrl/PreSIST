@@ -136,7 +136,7 @@ the renderer reads aggregate sweep CSVs.
 |---|---|---|---|
 | Perpetua | survival-fit (EM/AIC); `mixture_persistence_filter` for mixtures, `rosen` for singles | yes (8 variants × D) | `/workspace/data/output/perpetua/perpetua_*` |
 | Vision-only | DINOv2 ViT-L/14 (frozen) + SelaVPR adapter + scalar head | yes (one per D) | `/workspace/data/output/perpetua/vision_anchor_midpoint_*` |
-| PerSIST-Lang (gemma) | gemma 4.31b with `cap_proc_long7__gemmaVLMDesc_blur_bg_context_crop_mask_t3_cmd1_no_holes_longPrompt__ph_v3IqrBehav4` | no (inference-only, no D axis) | `/workspace/data/output/persistence_eval_outputs/.../gemma_*` |
+| PreSIST-Lang (gemma) | gemma 4.31b with `cap_proc_long7__gemmaVLMDesc_blur_bg_context_crop_mask_t3_cmd1_no_holes_longPrompt__ph_v3IqrBehav4` | no (inference-only, no D axis) | `/workspace/data/output/persistence_eval_outputs/.../gemma_*` |
 
 Perpetua expands to 8 variants: cartesian product of `{single_exp,
 single_lognormal, mixture_exp, mixture_lognormal} × {class, location}`.
@@ -217,12 +217,12 @@ LaTeX tables — under
 `/workspace/data/output/persistence_eval_plots/daycount_<scenario>_matched_noise_<grouping>/{bacc,accuracy,f1,mae}.{pdf,tex}`.
 
 Grouping modes:
-- `both` — Perpetua class (G) + location (L) overlaid; vision + PerSIST-Lang as separate lines
-- `class` — Perpetua class-grouped only + vision + PerSIST-Lang
-- `location` — Perpetua location-grouped only + vision + PerSIST-Lang
+- `both` — Perpetua class (G) + location (L) overlaid; vision + PreSIST-Lang as separate lines
+- `class` — Perpetua class-grouped only + vision + PreSIST-Lang
+- `location` — Perpetua location-grouped only + vision + PreSIST-Lang
 
 Plot styling: 10.5×5.5 figsize, linear x-axis with `xlim(0, 36)`, 45° tick
-rotation, 3-column legend (singles | mixtures | Vision + PerSIST-Lang),
+rotation, 3-column legend (singles | mixtures | Vision + PreSIST-Lang),
 brown+tan / green / red / purple / orange / teal palette, best-in-column
 bolded in the LaTeX tables.
 

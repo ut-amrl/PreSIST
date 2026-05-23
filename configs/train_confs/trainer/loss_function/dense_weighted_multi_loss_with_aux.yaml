@@ -1,0 +1,6 @@
+_target_: persistence_parameter_networks.losses.dense_losses.DenseWeightedMultiLossWithInstanceAux
+aux_weight: 0.1
+dense_loss:
+  _target_: persistence_parameter_networks.losses.dense_losses.DenseWeightedMultiLoss
+  confidence_loss: mse
+  confidence_from_logits: false

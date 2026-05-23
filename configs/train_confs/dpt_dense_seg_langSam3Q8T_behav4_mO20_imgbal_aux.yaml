@@ -1,0 +1,28 @@
+defaults:
+  - train_dataset: seg_langSam3Q8T_behav4_mO20_imgbal_dense
+  - eval_dataset: mirror_train
+  - model: dpt_dense_predictor
+  - registry_info: registry_default
+  - trainer: default
+  - _self_
+  - override /trainer/loss_function: dense_weighted_multi_loss_with_aux
+
+
+model_output_root_dir: "/workspace/data/output/training_outputs/"
+
+trainer:
+  # Distinct trainer name so the output dir + W&B run name don't collide
+  # with the vanilla dense run (same dataset/model otherwise). Path slot:
+  # <root>/<dataset>/<model>/<trainer.name>/<timestamp>/
+  name: dense_aux
+  loop:
+    image_balanced_sampling: false
+    batch_size: 16
+    val_batch_size: 32
+    num_workers: 8
+    val_num_workers: 12
+    val_max_batches: 500
+    train_eval_max_batches: 500
+    train_samples_per_epoch: null
+    validationConfig:
+      confidence_from_logits: false

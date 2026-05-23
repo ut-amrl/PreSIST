@@ -306,6 +306,27 @@ class DistillationDatasetConfig:
     masks_dtype: torch.dtype = torch.uint8
     boxes_dtype: torch.dtype = torch.float32
 
+    # Optional target normalization (z-score) applied AFTER label_transform.
+    # When all four stats are set, the per-instance ``y50`` and ``yr``
+    # emitted by the dataset are transformed to
+    #
+    #   y50' = (y50 - y50_mean) / y50_std
+    #   yr'  = (yr  - yr_mean)  / yr_std
+    #
+    # so that targets have ~zero mean and unit variance. This narrows
+    # the range the model has to learn and makes the Huber delta meaningful
+    # ("1 std" rather than "1 nat in log-space"). ``yc`` is left alone —
+    # it's already in [0,1] and well-conditioned. None disables the
+    # transform (default; existing configs unaffected).
+    #
+    # WARNING: when enabled, all downstream code (validator metrics, the
+    # inferencer, snapshot scripts) sees normalized values. To recover
+    # log-space predictions, multiply by std and add mean externally.
+    y50_mean: Optional[float] = None
+    y50_std: Optional[float] = None
+    yr_mean: Optional[float] = None
+    yr_std: Optional[float] = None
+
     # ----------------------------
     # Dense-supervision mode
     # ----------------------------
@@ -404,6 +425,10 @@ class _SegmentationDataset(Dataset):
         self._cached_image_path: Optional[Path] = None
         self._cached_image_u8: Optional[torch.Tensor] = None
         self._cached_image_transformed: Optional[torch.Tensor] = None
+
+        # Paths whose persistence_parameters.json had at least one
+        # un-coercible label field; logged once per file (see _load_labels).
+        self._bad_label_paths: Set[Path] = set()
 
         # ----------------------------
         # Load split entries
@@ -924,14 +949,14 @@ class _SegmentationDataset(Dataset):
     # -------------------------
     # __getitem__
     # -------------------------
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int, _depth: int = 0):
         if self.mode == "per_image":
             # Not worrying about per_image mode currently
             # Should still implement necessary components in the constructor so it's easier to pivot to later if needed
             raise NotImplementedError("per_image mode is not implemented yet. Use per_instance mode.")
 
         if self.mode == "dense":
-            return self._get_dense(idx)
+            return self._get_dense(idx, _depth=_depth)
 
         rec_idx, inst_id = self._instance_index[idx]
         rec = self._records[rec_idx]
@@ -969,8 +994,18 @@ class _SegmentationDataset(Dataset):
             self._cached_image_u8 = image_u8
             self._cached_image_transformed = image
 
-        # Load label
-        label = self._load_labels(labels_path, [inst_id])[0]
+        # Load label. _load_labels skips entries with bad/missing fields;
+        # if this single instance is one of those, advance to the next idx
+        # so the dataloader sees a valid sample.
+        loaded_labels, _ = self._load_labels(labels_path, [inst_id])
+        if not loaded_labels:
+            if _depth >= 32:
+                raise RuntimeError(
+                    f"Too many consecutive bad per-instance samples starting "
+                    f"near idx={idx - _depth}; aborting to avoid infinite recursion."
+                )
+            return self.__getitem__((idx + 1) % len(self), _depth=_depth + 1)
+        label = loaded_labels[0]
 
         # Find mask
         ids = seg["ids"]
@@ -1015,7 +1050,7 @@ class _SegmentationDataset(Dataset):
 
 
 
-    def _get_dense(self, idx: int) -> Dict[str, object]:
+    def _get_dense(self, idx: int, _depth: int = 0) -> Dict[str, object]:
         """One image + its valid instances + rasterized supervision."""
         rec_idx = self._image_index[idx]
         rec = self._records[rec_idx]
@@ -1075,8 +1110,23 @@ class _SegmentationDataset(Dataset):
         instance_masks = torch.stack(rows, dim=0)  # (N, img_size, img_size)
 
         # Labels: (N, 3) float tensor. Label transform is the same one
-        # used by per_instance.
-        per_instance_labels = self._load_labels(labels_path, inst_ids)
+        # used by per_instance. _load_labels skips entries whose required
+        # fields can't be coerced (None/missing/non-numeric); if some
+        # are dropped, subset instance_masks to match. If all are dropped,
+        # advance to the next image so the dataloader sees a valid sample.
+        per_instance_labels, valid_iids = self._load_labels(labels_path, inst_ids)
+        if not per_instance_labels:
+            if _depth >= 32:
+                raise RuntimeError(
+                    f"Too many consecutive bad dense samples starting near "
+                    f"idx={idx - _depth}; aborting to avoid infinite recursion."
+                )
+            return self._get_dense((idx + 1) % len(self._image_index), _depth=_depth + 1)
+        if len(valid_iids) < len(inst_ids):
+            valid_set = set(valid_iids)
+            keep_rows = [i for i, iid in enumerate(inst_ids) if int(iid) in valid_set]
+            instance_masks = instance_masks[keep_rows]
+            inst_ids = valid_iids
         instance_labels = torch.stack(
             [lab.to(torch.float32).view(-1) for lab in per_instance_labels],
             dim=0,
@@ -1208,6 +1258,19 @@ class _SegmentationDataset(Dataset):
         label = label.to(torch.float32).view(-1)
         y50, yr, yc = label[0], label[1], label[2]
 
+        # Optional z-score normalization of y50 / yr. All four stats must
+        # be set together for the transform to fire; otherwise targets pass
+        # through in log-space unchanged (preserving backwards compatibility
+        # with existing configs).
+        if (
+            self.cfg.y50_mean is not None
+            and self.cfg.y50_std is not None
+            and self.cfg.yr_mean is not None
+            and self.cfg.yr_std is not None
+        ):
+            y50 = (y50 - float(self.cfg.y50_mean)) / float(self.cfg.y50_std)
+            yr = (yr - float(self.cfg.yr_mean)) / float(self.cfg.yr_std)
+
         if mask.dtype not in (torch.uint8, torch.bool):
             mask = mask.to(torch.uint8)
 
@@ -1253,22 +1316,42 @@ class _SegmentationDataset(Dataset):
         self._cached_seg = out
         return out
 
-    def _load_labels(self, path: Path, instance_ids: Sequence[int]) -> List[object]:
+    def _load_labels(
+        self, path: Path, instance_ids: Sequence[int]
+    ) -> Tuple[List[object], List[int]]:
+        """Returns ``(labels, valid_iids)``.
+
+        Entries whose required fields can't be coerced to floats (None /
+        non-numeric / missing) are skipped with a one-time warning per
+        file. Callers must handle a shorter result than the input.
+        """
         obj = self._load_label_obj(path)
 
         required = _required_fields_for_transform(self._label_transform)
         labels: List[object] = []
+        valid_iids: List[int] = []
         for iid in instance_ids:
             key = str(int(iid))
             if key not in obj:
                 raise KeyError(f"Label for instance_id={iid} not found in {path}")
             raw = obj[key]
             if required:
-                base = {field: float(raw[field]) for field in required}
+                try:
+                    base = {field: float(raw[field]) for field in required}
+                except (TypeError, ValueError, KeyError) as e:
+                    if path not in self._bad_label_paths:
+                        self._bad_label_paths.add(path)
+                        print(
+                            f"[{self.__class__.__name__}] WARN: skipping bad "
+                            f"label in {path} (iid={iid}, error={e!r}); "
+                            f"further bad entries in this file will be silently dropped."
+                        )
+                    continue
             else:
                 base = raw
             labels.append(self._label_transform(base))
-        return labels
+            valid_iids.append(int(iid))
+        return labels, valid_iids
 
 
 

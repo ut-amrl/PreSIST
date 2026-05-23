@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -26,6 +28,30 @@ class WeibullSurvivalFunction(AbsSurvivalFunction):
 
     def forward(self, dt: torch.Tensor) -> torch.Tensor:
         return torch.where(dt <= 0, torch.ones_like(dt), torch.exp(self.log_survival(dt)))
+
+
+def weibull_median_from_quantiles(
+    t_low: float,
+    t_high: float,
+    p_low: float = 0.25,
+    p_high: float = 0.75,
+) -> float:
+    """Median disappearance time for a Weibull fit through two failure quantiles.
+
+    Defaults are p25/p75. Returns the time at which S(t) = 0.5, i.e. half of
+    objects have disappeared. Times are in whatever unit t_low/t_high are given in.
+    """
+    if not (0.0 < p_low < p_high < 1.0):
+        raise ValueError(f"need 0 < p_low < p_high < 1; got {p_low}, {p_high}")
+    if not (0.0 < t_low < t_high):
+        raise ValueError(f"need 0 < t_low < t_high; got {t_low}, {t_high}")
+    log_tlow, log_thigh = math.log(t_low), math.log(t_high)
+    a_low = math.log(-math.log1p(-p_low))
+    a_high = math.log(-math.log1p(-p_high))
+    k = (a_high - a_low) / (log_thigh - log_tlow)
+    log_lam = log_tlow - a_low / k
+    # median: S(t)=0.5 -> t = lam * (ln 2)^(1/k)
+    return math.exp(log_lam) * math.log(2.0) ** (1.0 / k)
 
 
 class WeibullSurvivalFunctionGenerator(AbsSurvivalFunctionGenerator):

@@ -1,0 +1,40 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber
+  - _self_
+
+# Z-score-normalized targets variant of the lowlr+huber recipe.
+#
+# Empirical stats from scripts/compute_label_stats.py over the full
+# training instance index (1,071,992 samples):
+#
+#     y50:  mean=3.2072, std=5.1614  (range [-18.4, 12.1] in log-space)
+#     yr:   mean=2.2722, std=0.8733  (range [-18.4, 15.4]; bulk [1.1, 4.7])
+#
+# After normalization, both targets are ~zero-mean unit-variance. Most
+# samples fall in [-3, +3], with rare legitimate hard samples reaching
+# [-4, +2] for y50 and [-1.5, +3] for yr (plus the single yr=15 outlier).
+#
+# Consequences:
+#   - The model output head only needs to span ~5–6 units instead of
+#     ~30 — a much smaller dynamic range to learn.
+#   - Huber delta=1.0 now means "1 std" — the canonical robustness
+#     threshold rather than an arbitrary nat-of-log threshold.
+#   - Loss-term variances are now ~1 by construction → leaving
+#     w50=1.0, wr=1.0 (the WeightedMultiLoss dataclass defaults) gives
+#     balanced multi-task contributions automatically. No need for the
+#     _balw weight overrides.
+#
+# WARNING: all training-time metrics (val_loss, val_aggregate_score,
+# val_on_train) will now be in normalized space — different scale from
+# the _lowlr_huber numbers. To compare predictions in log-space at
+# inference time, apply the inverse transform externally:
+#   y50_log = y50_pred * 5.1614 + 3.2072
+#   yr_log  = yr_pred  * 0.8733 + 2.2722
+trainer:
+  name: lowlr_huber_norm
+
+train_dataset:
+  y50_mean: 3.2072
+  y50_std: 5.1614
+  yr_mean: 2.2722
+  yr_std: 0.8733

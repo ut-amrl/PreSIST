@@ -1,0 +1,20 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm
+  - _self_
+
+# Stacked variant: target normalization + loose Huber on y50.
+#
+# In normalized space y50 has std=1 by construction. Default delta_50=1.0
+# would put the linear regime at |residual|>1 std, which is exactly where
+# the small-y50 tail (normalized ~ -3 std) lives early in training. That
+# would re-trigger the Huber-suppresses-small-end issue.
+#
+# delta_50=3.0 means the linear regime only kicks in at |residual|>3 std.
+# Typical residuals (even on hard samples) stay quadratic; only the
+# legitimately catastrophic outliers (the yr=15 sample and friends) get
+# gradient-capped. delta_r=1.0 left alone since yr is well-behaved.
+trainer:
+  name: lowlr_huber_norm_loose50
+  loss_function:
+    delta_50: 3.0
+    # delta_r: 1.0   # default

@@ -27,6 +27,7 @@ from persistence_eval.core.domain import (
     TrackTemporalBounds,
 )
 from persistence_eval.core.protocols import TrackDataset
+from persistence_eval.sampling.episode_provider import _log_query_horizons
 
 
 class ScaledHorizonEpisodeProvider:
@@ -49,6 +50,7 @@ class ScaledHorizonEpisodeProvider:
                 "(dt_q = 0 has h_eff = 0 by construction)."
             )
         self._query_horizons = list(query_horizons)
+        _log_query_horizons(type(self).__name__, self._query_horizons)
         self._recency_cap = float(recency_cap)
         self.name = name
 

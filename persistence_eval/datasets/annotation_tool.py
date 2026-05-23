@@ -336,6 +336,73 @@ class AnnotationToolTrackView(TrackView):
             yield track_id, events, bounds
 
 
+def MultiAnnotationToolBackingDataset(
+    sources: list[dict],
+    *,
+    name: str | None = None,
+    image_mask_view=None,
+    track_view=None,
+    max_anchor_observations: int | None = None,
+    shuffle_seed: int | None = None,
+    per_track_balanced: bool = False,
+) -> AnnotationToolBackingDataset:
+    """Combine multiple annotation-tool manifest exports into one backing dataset.
+
+    Each entry in ``sources`` is a dict with keys ``manifest_path`` (required),
+    ``host_root`` / ``container_root`` (optional, for paths needing prefix swap),
+    and ``source_name`` (optional, used to namespace track_id / space_id). We
+    load each source via a temporary ``AnnotationToolBackingDataset`` (so the
+    existing parse + remap logic is reused), then rewrite every observation's
+    ``image_path`` to be absolute by prepending the per-source ``location_root``.
+    Mask paths are already absolute. With both paths absolute, the views' usual
+    ``root / path`` joins become no-ops (absolute right-hand side wins under
+    ``pathlib``), so we pass ``Path("/")`` as the combined ``location_root``.
+
+    Globally applied ``max_anchor_observations`` / ``shuffle_seed`` /
+    ``per_track_balanced`` mean balancing happens across the namespaced track ids
+    of all sources — each (source, track) pair contributes roughly equally.
+    """
+    if not sources:
+        raise ValueError("MultiAnnotationToolBackingDataset: sources is empty")
+
+    combined_raw: list[dict] = []
+    combined_run_id_parts: list[str] = []
+    for i, src in enumerate(sources):
+        manifest_path = src["manifest_path"]
+        source_name = src.get("source_name") or f"source_{i}"
+        child = AnnotationToolBackingDataset(
+            manifest_path=manifest_path,
+            host_root=src.get("host_root"),
+            container_root=src.get("container_root"),
+        )
+        combined_run_id_parts.append(f"{source_name}={child._run_id}")
+        child_root = child._location_root
+        for track in child._raw_tracks:
+            new_obs = []
+            for obs in track["observations"]:
+                if "image_path" in obs:
+                    obs = {**obs, "image_path": str(child_root / obs["image_path"])}
+                new_obs.append(obs)
+            new_track = {
+                **track,
+                "track_id": f"{source_name}::{track['track_id']}",
+                "observations": new_obs,
+            }
+            if "space_id" in new_track:
+                new_track["space_id"] = f"{source_name}::{new_track['space_id']}"
+            combined_raw.append(new_track)
+
+    combined_run_id = name or "multi[" + ",".join(combined_run_id_parts) + "]"
+    return AnnotationToolBackingDataset._from_raw(
+        run_id=combined_run_id,
+        location_root=Path("/"),
+        raw_tracks=combined_raw,
+        max_anchor_observations=max_anchor_observations,
+        shuffle_seed=shuffle_seed,
+        per_track_balanced=per_track_balanced,
+    )
+
+
 def split_at_boundary(
     backing: AnnotationToolBackingDataset,
     boundary_timestamp: float,

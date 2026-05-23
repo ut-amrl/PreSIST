@@ -1,0 +1,36 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr
+  - _self_
+
+# Next-step config: lowlr + Huber on the log-space losses.
+#
+# Stacks two cheap, mostly-orthogonal fixes for the exploding-gradient
+# regime observed at lr=1e-4 on the parent config:
+#
+#   1. LR=1e-5 (inherited from _lowlr): keeps per-step updates well
+#      under the regime where the second-moment estimator destabilizes.
+#
+#   2. useHuberForLogVals=true: bounds each per-sample loss gradient
+#      magnitude to `delta` regardless of residual size. With MSE,
+#      a single y50 residual of e.g. 15 contributes a gradient of
+#      magnitude ~30; with Huber(delta=1.0) it contributes 1.0. This
+#      is the right tool for the one-off `GN 10780` spike we saw at
+#      [11][3232] — likely a pseudo-label outlier on a single instance.
+#
+# We deliberately do NOT change w50/wr/wc here. The principled fix for
+# loss-term imbalance is 1/Var weighting from empirical statistics on
+# the training set; do that as a follow-up once you've measured.
+#
+# delta_50 / delta_r are left at their dataclass defaults of 1.0 — a
+# residual of 1.0 in log-space corresponds to a factor-of-e prediction
+# error, which is roughly the boundary between "normal" and "outlier"
+# for these targets.
+trainer:
+  # Tag the run-output subdir so it doesn't land alongside the lr=1e-4
+  # parent runs under `.../default/<timestamp>/`. With this set, output
+  # goes to `.../<model>/lowlr_huber/<timestamp>/`.
+  name: lowlr_huber
+  loss_function:
+    useHuberForLogVals: true
+    # delta_50: 1.0   # default
+    # delta_r: 1.0    # default

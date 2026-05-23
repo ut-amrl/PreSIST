@@ -3,10 +3,14 @@
 defaults:
   - /model: obj_conditioned_cross_attn
   - /model/cross_attn_pooler: mask_downsample_soft
+  - /mask_pooler@pooler: masked_mean   # only used for dense models; harmless for per-mask
   - _self_
 
 _target_: persistence_eval.methods.inferencers.learned_model.LearnedModelInferencer
-checkpoint_path: ???    # required — override at runtime: +inferencer.checkpoint_path=<path>
+checkpoint_path: ???    # required — set in the per-checkpoint eval config or override on CLI
 device: ${runtime.device}
-output_param_keys: [t50, t90]
-# model_cfg is passed from cfg.model by BenchmarkOrchestrator.from_cfg()
+# Leave null to auto-detect (t50/t90 vs t25/t75) from the checkpoint's embedded
+# trainer_cfg. Set explicitly to override.
+output_param_keys: null
+# model_cfg is passed from cfg.model by BenchmarkOrchestrator.from_cfg(); pooler
+# is the instantiated MaskPooler (defaults to MaskedMeanPooler).

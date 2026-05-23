@@ -1,0 +1,10 @@
+# @package survival_generator
+# Weibull fit from the 25th and 75th persistence percentiles (in hours).
+# Pairs with inferencers that emit raw 'p25'/'p75' keys, e.g.
+# closed_set_clip_p25_p75 (which loads coco-stuff-p25-p75.json).
+
+_target_: persistence_eval.methods.survival.weibull.WeibullSurvivalFunctionGenerator
+low_key: p25
+high_key: p75
+time_scale_factor: 3600.0  # params are in hours; framework uses seconds
+name: weibull_p25_p75
