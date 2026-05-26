@@ -1,34 +1,28 @@
 from __future__ import annotations
 
-import json
 import sys
+import time
 from contextlib import nullcontext
 from pathlib import Path
-
-import torch
+from typing import Any, Optional
 
 from utils.timing import timer
-from instance_segmentation.abs_instance_segmenter import SegmentationResults
 from dataset_generation.scene_level_captioning.abs_scene_level_captioner import AbstractSceneLevelCaptioner
 from dataset_generation.instance_descriptions.abs_object_describer import AbstractObjectDescriber
 from dataset_generation.llm_persistence_querying.abs_llm_persistence_querier import AbsLLMPersistenceQuerier
 
 from persistence_eval.core.domain import ImageMaskGroup, PersistenceParameterEstimate
 from persistence_eval.methods.inferencers.base import AbsPersistenceParameterInferencer
-
-
-def _masks_to_boxes(masks: torch.Tensor) -> torch.Tensor:
-    """Compute tight XYXY bounding boxes from a (K, H, W) bool tensor."""
-    boxes = []
-    for mask in masks:  # iterate K dimension
-        nonzero = mask.nonzero(as_tuple=False)  # (N, 2) rows=[row, col]
-        if nonzero.numel() == 0:
-            boxes.append([0.0, 0.0, 0.0, 0.0])
-        else:
-            r_min, c_min = nonzero[:, 0].min().item(), nonzero[:, 1].min().item()
-            r_max, c_max = nonzero[:, 0].max().item(), nonzero[:, 1].max().item()
-            boxes.append([float(c_min), float(r_min), float(c_max), float(r_max)])
-    return torch.tensor(boxes, dtype=torch.float32)
+from persistence_eval.methods.inferencers._seg_helpers import build_segmentation_results
+from persistence_eval.methods.inferencers._pipeline_cache import (
+    PipelineCache,
+    replay_timing,
+)
+from persistence_eval.methods.inferencers._pipeline_helpers import (
+    map_to_persistence_estimates,
+    save_mask_visualization,
+    write_debug_record,
+)
 
 
 class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
@@ -50,8 +44,11 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
         llmPersistenceQuerier: AbsLLMPersistenceQuerier,
         param_keys: list[str] | None = None,
         debug_log: bool = False,
-        debug_visualizations: bool = True,
+        debug_visualizations: bool = False,
         strict_object_coverage: bool = False,
+        cache_dir: Optional[Path] = None,
+        cache_force_regen: bool = False,
+        cache_force_regen_phases: Optional[list[str]] = None,
     ) -> None:
         """
         strict_object_coverage: when True, raise instead of returning
@@ -60,6 +57,20 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
             preserves the prior silent-fill behaviour. Per-seg-id retries
             on partial LLM output are handled inside the querier itself
             (see ChainedPromptQueryPersistenceQuerier.missingIdRetryAttempts).
+        cache_dir: when set, results for each phase (scene caption,
+            per-object descriptions, persistence-querier output) are read
+            from / written to this directory and indexed by component name,
+            image_id, and track_id(s). Cached entries replay their original
+            elapsed time into the timer so timing reports stay meaningful.
+            None (default) disables caching entirely.
+        cache_force_regen: when True, skip all cache reads (writes still
+            happen). Useful for a clean re-run without ``rm -rf``ing the
+            cache directory. Ignored when ``cache_force_regen_phases`` is
+            non-empty.
+        cache_force_regen_phases: per-phase allow-list of phases to
+            regenerate; all others still hit cache. Valid entries are
+            ``scene_caption``, ``object_descriptions``, ``persistence``.
+            Wins over ``cache_force_regen``.
         """
         self._captioner = sceneCaptioner
         self._describer = objectDescriber
@@ -69,9 +80,22 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
         self._debug_visualizations = debug_visualizations
         self._strict_object_coverage = bool(strict_object_coverage)
         self._debug_output_dir: Path | None = None
-        self._captioner_warmed_up = False
-        self._describer_warmed_up = False
-        self._querier_warmed_up = False
+
+        self._cache: Optional[PipelineCache] = (
+            PipelineCache(
+                cache_dir,
+                force_regen=cache_force_regen,
+                force_regen_phases=cache_force_regen_phases,
+            )
+            if cache_dir is not None
+            else None
+        )
+
+        # Component identifiers used as cache-key prefixes. Fall back to the
+        # class name if the component doesn't expose its own name.
+        self._captioner_name = getattr(sceneCaptioner, "name", None) or type(sceneCaptioner).__name__
+        self._describer_name = getattr(objectDescriber, "name", None) or type(objectDescriber).__name__
+        self._querier_name = getattr(llmPersistenceQuerier, "name", None) or type(llmPersistenceQuerier).__name__
 
         # The chained querier asks DebugPayloadFactory for a payload, which is
         # disabled by default outside the dataset-generation pipeline (factory
@@ -92,61 +116,59 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
                 component_names={},  # persistence phase layout only needs configFileName
             )
 
+    def wants_warmup(self) -> bool:
+        """True iff any of the three pipeline components want to be warmed.
+        Each component opts in/out via its own ``wants_warmup()`` (defaulting
+        to True if absent — local model backends typically benefit). Returns
+        False only when *every* component is HTTP-only or otherwise warmup-
+        unfriendly (e.g. all-Gemini pipelines).
+        """
+        def _wants(component) -> bool:
+            fn = getattr(component, "wants_warmup", None)
+            return bool(fn()) if callable(fn) else True
+        return _wants(self._captioner) or _wants(self._describer) or _wants(self._querier)
+
     def set_run_dir(self, run_dir: Path) -> None:
         if self._debug_visualizations:
             self._debug_output_dir = run_dir / "debug_vis"
             if hasattr(self._describer, "set_debug_dir"):
                 self._describer.set_debug_dir(self._debug_output_dir / "object_describer")
 
-    def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]:
+    def infer(
+        self, group: ImageMaskGroup, *, one_off: bool = False,
+    ) -> tuple[list[PersistenceParameterEstimate], Optional[float]]:
         # print(
         #     f"[llm_pipeline] image={group.image_path or 'unknown'}  tracks={group.track_ids}",
         #     file=sys.stderr, flush=True,
         # )
-        self._save_visualization(group)
-        instances = self._build_segmentation_results(group.masks, group.image.shape[-2:])
+        save_mask_visualization(group, self._debug_output_dir)
+        instances = build_segmentation_results(group.masks, group.image.shape[-2:])
 
         image_id = group.image_path or f"anchor_t{group.anchor_time}_{'_'.join(group.track_ids)}"
 
-        describer_ctx = timer.time_block(f"Timer::obj_desc::{type(self._describer).__name__}") if self._describer_warmed_up else nullcontext()
-        with describer_ctx:
-            object_descriptions, _ = self._describer.describeObjects(group.image, instances, image_id=image_id)
-        self._describer_warmed_up = True
+        object_descriptions, desc_elapsed_s = self._get_object_descriptions(
+            group, instances, image_id, one_off=one_off,
+        )
+        scene_caption, caption_elapsed_s = self._get_scene_caption(
+            group, image_id, one_off=one_off,
+        )
+        raw_estimates, querier_debug, persistence_elapsed_s = self._get_persistence(
+            group, instances, image_id, scene_caption, object_descriptions, one_off=one_off,
+        )
 
-        # self._maybe_debug(group, "", object_descriptions, "", "")
-        # return []  # TEMP: skip querying while debugging describer output
+        # Sum of original-computation elapseds (live for misses, replayed for
+        # cache hits) so cache hits don't collapse the reported latency to ~0.
+        # Debug/viz overhead (mask save, debug record write) lives outside
+        # this sum. None on one_off so callers don't fold warmup into stats.
+        elapsed_ms: Optional[float] = (
+            None
+            if one_off
+            else (caption_elapsed_s + desc_elapsed_s + persistence_elapsed_s) * 1000.0
+        )
 
-        captioner_ctx = timer.time_block(f"Timer::scene_cap::{type(self._captioner).__name__}") if self._captioner_warmed_up else nullcontext()
-        with captioner_ctx:
-            scene_caption, _ = self._captioner.generateCaption(group.image, image_id=image_id)
-        self._captioner_warmed_up = True
-
-        # print("Object descriptions:", object_descriptions)
-
-
-
-        querier_ctx = timer.time_block(f"Timer::llm_querier::{type(self._querier).__name__}") if self._querier_warmed_up else nullcontext()
-        raw_estimates = None
-        querier_debug = None
-        for attempt in range(3):
-            try:
-                with querier_ctx:
-                    _, _, raw_estimates, querier_debug = self._querier.estimatePersistenceParameters(
-                        scene_caption,
-                        object_descriptions,
-                        {},    # relationship descriptions — always empty at inference time
-                        None,  # time_and_date
-                        group.image,
-                        instances,
-                        image_id,
-                    )
-                break
-            except ValueError as e:
-                if attempt < 2:
-                    print(f"[llm_pipeline] querier failed (attempt {attempt + 1}/3), retrying: {e}", file=sys.stderr, flush=True)
-                else:
-                    print(f"[llm_pipeline] querier failed after 3 attempts, skipping group: {e}", file=sys.stderr, flush=True)
-        self._querier_warmed_up = True
+        # Below is the original post-querier handling, unchanged. We bail out
+        # early with empty-params sentinels iff every retry attempt raised
+        # ValueError inside _get_persistence.
 
         if raw_estimates is None:
             msg = (
@@ -157,9 +179,12 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
             if self._strict_object_coverage:
                 raise RuntimeError(msg)
             print(f"WARNING {msg}", file=sys.stderr, flush=True)
-            return [PersistenceParameterEstimate(params={}, metadata={"track_id": tid, "raw_estimate": {}}) for tid in group.track_ids]
+            return (
+                [PersistenceParameterEstimate(params={}, metadata={"track_id": tid, "raw_estimate": {}}) for tid in group.track_ids],
+                elapsed_ms,
+            )
 
-        estimates = self._map_to_persistence_estimates(raw_estimates, group.track_ids)
+        estimates = map_to_persistence_estimates(raw_estimates, group.track_ids, self._param_keys)
 
         # Even after the querier's own per-sub-batch missing-id retries, the
         # final merged output can still under-cover the requested seg_ids
@@ -179,189 +204,177 @@ class LLMPipelineInferencer(AbsPersistenceParameterInferencer):
                 raise RuntimeError(msg)
             print(f"WARNING {msg}", file=sys.stderr, flush=True)
 
-        self._maybe_debug(group, scene_caption, object_descriptions, raw_estimates, estimates, querier_debug)
-        return estimates
+        write_debug_record(
+            group=group,
+            scene_caption=scene_caption,
+            object_descriptions=object_descriptions,
+            raw_estimates=raw_estimates,
+            estimates=estimates,
+            querier_debug=querier_debug,
+            debug_log=self._debug_log,
+            debug_output_dir=self._debug_output_dir,
+        )
+        return estimates, elapsed_ms
 
-    # TODO: temporary visualization — remove when done debugging
-    def _save_visualization(self, group: ImageMaskGroup) -> None:
-        import tempfile
+    # ----------------------------------------------------------- cached phases
 
-        import matplotlib.pyplot as plt
-        import numpy as np
+    def _scene_caption_timer_name(self) -> str:
+        return f"Timer::scene_cap::{type(self._captioner).__name__}"
 
-        image_np = group.image.permute(1, 2, 0).numpy()  # CHW → HWC
-        fig, ax = plt.subplots(figsize=(12, 8))
-        ax.imshow(image_np)
+    def _describer_timer_name(self) -> str:
+        return f"Timer::obj_desc::{type(self._describer).__name__}"
 
-        cyan = (0.0, 1.0, 1.0)
-        for mask, track_id in zip(group.masks, group.track_ids):
-            mask_np = mask.numpy()
-            overlay = np.zeros((*mask_np.shape, 4), dtype=np.float32)
-            overlay[mask_np] = [*cyan, 0.3]
-            ax.imshow(overlay)
-            # outline via erosion difference
-            from scipy.ndimage import binary_erosion  # noqa: PLC0415
-            outline = mask_np & ~binary_erosion(mask_np)
-            outline_rgba = np.zeros((*mask_np.shape, 4), dtype=np.float32)
-            outline_rgba[outline] = [*cyan, 0.8]
-            ax.imshow(outline_rgba)
+    def _querier_timer_name(self) -> str:
+        return f"Timer::llm_querier::{type(self._querier).__name__}"
 
-        track_str = "  |  ".join(group.track_ids)
-        image_str = group.image_path or f"anchor_time={group.anchor_time:.3f}s"
-        ax.set_title(f"{image_str}\ntracks: {track_str}", fontsize=9)
-        ax.axis("off")
+    def _get_scene_caption(
+        self, group: ImageMaskGroup, image_id: str, *, one_off: bool = False,
+    ) -> tuple[str, float]:
+        timer_name = self._scene_caption_timer_name()
 
-        if self._debug_output_dir is not None:
-            self._debug_output_dir.mkdir(parents=True, exist_ok=True)
-            out = self._debug_output_dir / f"vis_{group.anchor_time:.6f}.png"
+        if self._cache is not None and not one_off:
+            cached_elapsed = self._cache.cached_scene_caption_elapsed(
+                self._captioner_name, image_id,
+            )
+            if cached_elapsed is not None:
+                caption = self._cache.get_scene_caption(self._captioner_name, image_id)
+                if caption is not None:
+                    replay_timing(timer_name, cached_elapsed)
+                    return caption, cached_elapsed
+
+        # Cache miss (or one-off): compute. one_off=True suppresses both the
+        # timer.time_block recording and the cache write so a warmup call
+        # contaminates neither the timing aggregates nor the cached elapsed.
+        live_ctx = nullcontext() if one_off else timer.time_block(timer_name)
+        start = time.perf_counter()
+        with live_ctx:
+            caption, _ = self._captioner.generateCaption(group.image, image_id=image_id)
+        elapsed = time.perf_counter() - start
+
+        if self._cache is not None and not one_off:
+            self._cache.put_scene_caption(
+                self._captioner_name, image_id,
+                caption=caption, elapsed_s=elapsed,
+            )
+        return caption, elapsed
+
+    def _get_object_descriptions(
+        self, group: ImageMaskGroup, instances, image_id: str, *, one_off: bool = False,
+    ) -> tuple[dict, float]:
+        timer_name = self._describer_timer_name()
+        K = len(group.track_ids)
+        merged: dict = {}
+        total_elapsed_s = 0.0
+
+        # Determine which positions are cached vs missing.
+        miss_positions: list[int] = []
+        if self._cache is not None and not one_off:
+            for pos in range(K):
+                tid = group.track_ids[pos]
+                cached = self._cache.get_object_description(
+                    self._describer_name, image_id, tid,
+                )
+                if cached is None:
+                    miss_positions.append(pos)
+                else:
+                    description, elapsed = cached
+                    merged[pos] = description
+                    replay_timing(timer_name, elapsed)
+                    total_elapsed_s += elapsed
         else:
-            out = Path(tempfile.mktemp(suffix=".png"))
+            miss_positions = list(range(K))
 
-        fig.savefig(out, bbox_inches="tight", dpi=120)
-        plt.close(fig)
-        # print(f"[llm_pipeline] visualization → {out}", file=sys.stderr, flush=True)
+        if not miss_positions:
+            return merged, total_elapsed_s
 
-    def _maybe_debug(
+        # Compute the misses. SegmentationResults.ids = positions in the
+        # original group (build_segmentation_results uses arange), so we can
+        # subset directly by position.
+        filtered = instances.filterByIds(miss_positions)
+        live_ctx = nullcontext() if one_off else timer.time_block(timer_name)
+        start = time.perf_counter()
+        with live_ctx:
+            fresh, _ = self._describer.describeObjects(
+                group.image, filtered, image_id=image_id,
+            )
+        elapsed = time.perf_counter() - start
+        total_elapsed_s += elapsed
+
+        # Distribute total elapsed across miss items so per-item cache replays
+        # are realistic. This is an approximation; the describer doesn't
+        # necessarily scale linearly with N, but it's the best we have.
+        per_item_elapsed = elapsed / max(1, len(miss_positions))
+
+        for pos in miss_positions:
+            description = fresh.get(pos, "")
+            merged[pos] = description
+            if self._cache is not None and not one_off:
+                self._cache.put_object_description(
+                    self._describer_name, image_id, group.track_ids[pos],
+                    description=description, elapsed_s=per_item_elapsed,
+                )
+        return merged, total_elapsed_s
+
+    def _get_persistence(
         self,
         group: ImageMaskGroup,
+        instances,
+        image_id: str,
         scene_caption: str,
         object_descriptions: dict,
-        raw_estimates: list[dict],
-        estimates: list[PersistenceParameterEstimate],
-        querier_debug=None,
-    ) -> None:
-        if not self._debug_log and self._debug_output_dir is None:
-            return
+        *,
+        one_off: bool = False,
+    ) -> tuple[Optional[list], Any, float]:
+        timer_name = self._querier_timer_name()
 
-        # Build per-object mapping: track_id → {segmentation_id, description, raw_estimate, params}
-        n = len(group.track_ids)
-        if raw_estimates and "id" in raw_estimates[0]:
-            by_id: dict[int, dict] = {int(e["id"]): e for e in raw_estimates}
-            aligned_raw = [by_id.get(i, {}) for i in range(n)]
-        else:
-            aligned_raw = list(raw_estimates) + [{}] * max(0, n - len(raw_estimates))
-
-        per_object: dict[str, dict] = {}
-        for i, track_id in enumerate(group.track_ids):
-            seg_id = i
-            per_object[track_id] = {
-                "segmentation_id": seg_id,
-                "description": object_descriptions.get(seg_id, ""),
-                "raw_estimate": aligned_raw[i] if i < len(aligned_raw) else {},
-                "params": estimates[i].params if i < len(estimates) else {},
-            }
-
-        record = {
-            "image_path": group.image_path,
-            "anchor_time": group.anchor_time,
-            "track_ids": list(group.track_ids),
-            "scene_caption": scene_caption,
-            "object_descriptions": {str(k): v for k, v in object_descriptions.items()},
-            "raw_estimates": list(raw_estimates),
-            "per_object": per_object,
-        }
-
-        if self._debug_log:
-            print(json.dumps(record, indent=2, default=str), file=sys.stderr, flush=True)
-
-        if self._debug_output_dir is not None:
-            self._debug_output_dir.mkdir(parents=True, exist_ok=True)
-            fname = self._debug_output_dir / f"debug_{group.anchor_time:.6f}.json"
-            fname.write_text(json.dumps(record, indent=2, default=str))
-
-        # The querier's DebugPayload (prompts + raw LLM responses per sub-batch)
-        # is gated on debug_log so the default fast path stays cheap. Flip
-        # debug_log: true in the inferencer config (or override on the CLI) to
-        # capture it.
-        if self._debug_log and querier_debug is not None:
-            querier_record = self._serialize_querier_debug(querier_debug)
-            print(
-                json.dumps(
-                    {"anchor_time": group.anchor_time, "querier_debug": querier_record},
-                    indent=2,
-                    default=str,
-                ),
-                file=sys.stderr,
-                flush=True,
+        # Cache hit: replay timing and skip both the call AND the retry loop.
+        # Returns (raw_estimates, None, cached_elapsed) — querier_debug is not
+        # cached, and write_debug_record already tolerates None. The cache key
+        # folds in a content hash of scene_caption + object_descriptions so any
+        # change upstream invalidates this entry.
+        if self._cache is not None and not one_off:
+            cached = self._cache.get_persistence(
+                self._querier_name, image_id, group.track_ids,
+                scene_caption=scene_caption,
+                object_descriptions=object_descriptions,
             )
-            if self._debug_output_dir is not None:
-                qfname = self._debug_output_dir / f"debug_{group.anchor_time:.6f}_querier_payload.json"
-                qfname.write_text(json.dumps(querier_record, indent=2, default=str))
+            if cached is not None:
+                raw_estimates, elapsed = cached
+                replay_timing(timer_name, elapsed)
+                return raw_estimates, None, elapsed
 
-    @staticmethod
-    def _serialize_querier_debug(querier_debug) -> list[dict]:
-        """Flatten a DebugPayload to a JSON-serializable list of entries.
+        # Cache miss (or one-off): run with the same 3-retry loop as before.
+        raw_estimates = None
+        querier_debug = None
+        elapsed = 0.0
+        for attempt in range(3):
+            try:
+                live_ctx = nullcontext() if one_off else timer.time_block(timer_name)
+                start = time.perf_counter()
+                with live_ctx:
+                    _, _, raw_estimates, querier_debug = self._querier.estimatePersistenceParameters(
+                        scene_caption,
+                        object_descriptions,
+                        {},    # relationship descriptions — always empty at inference time
+                        None,  # time_and_date
+                        group.image,
+                        instances,
+                        image_id,
+                    )
+                elapsed = time.perf_counter() - start
+                break
+            except ValueError as e:
+                if attempt < 2:
+                    print(f"[llm_pipeline] querier failed (attempt {attempt + 1}/3), retrying: {e}", file=sys.stderr, flush=True)
+                else:
+                    print(f"[llm_pipeline] querier failed after 3 attempts, skipping group: {e}", file=sys.stderr, flush=True)
 
-        Text/JSON entries keep their value inline; other kinds (image, tensor,
-        numpy, pickle) only record their name/kind so the dump stays readable.
-        """
-        out: list[dict] = []
-        for rec in querier_debug:
-            entry = {"name": rec.name, "kind": rec.kind}
-            if rec.kind in ("text", "json"):
-                entry["value"] = rec.value
-            else:
-                entry["value"] = f"<{rec.kind} omitted>"
-            out.append(entry)
-        return out
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _build_segmentation_results(
-        masks: torch.Tensor, hw: tuple[int, int]
-    ) -> SegmentationResults:
-        h, w = hw
-        if masks.shape[0] == 0:
-            return SegmentationResults.empty(h=h, w=w)
-        return SegmentationResults(
-            ids=torch.arange(masks.shape[0], dtype=torch.int64),
-            masks=masks.bool(),
-            boxes=_masks_to_boxes(masks),
-            scores=torch.ones(masks.shape[0], dtype=torch.float32),
-        )
-
-    def _map_to_persistence_estimates(
-        self,
-        raw_estimates: list[dict],
-        track_ids: list[str],
-    ) -> list[PersistenceParameterEstimate]:
-        """
-        Align querier output to one estimate per input mask.
-
-        VLM path (ChainedVLMPersistenceQuerier): each dict carries an "id" key equal
-        to the SegmentationResults id (0..N-1), so we match by id and tolerate gaps
-        caused by per-object VLM failures.
-
-        LLM path (ChainedPromptQueryPersistenceQuerier): dicts are in order but may
-        also carry "id" fields parsed from the response; fall back to positional
-        alignment when no "id" is present.
-        """
-        n = len(track_ids)
-
-        if raw_estimates and "id" in raw_estimates[0]:
-            by_id: dict[int, dict] = {int(e["id"]): e for e in raw_estimates}
-            aligned = [by_id.get(i, {}) for i in range(n)]
-        else:
-            aligned = list(raw_estimates) + [{}] * max(0, n - len(raw_estimates))
-
-        return [
-            PersistenceParameterEstimate(
-                params=self._extract_params(raw),
-                metadata={"track_id": track_ids[i], "raw_estimate": raw},
+        if raw_estimates is not None and self._cache is not None and not one_off:
+            self._cache.put_persistence(
+                self._querier_name, image_id, group.track_ids,
+                scene_caption=scene_caption,
+                object_descriptions=object_descriptions,
+                raw_estimates=list(raw_estimates), elapsed_s=elapsed,
             )
-            for i, raw in enumerate(aligned[:n])
-        ]
 
-    def _extract_params(self, raw: dict) -> dict[str, float]:
-        """Extract float-valued entries, optionally filtered to self._param_keys."""
-        extracted = {
-            k: float(v)
-            for k, v in raw.items()
-            if k != "id" and isinstance(v, (int, float))
-        }
-        if self._param_keys is not None:
-            extracted = {k: v for k, v in extracted.items() if k in self._param_keys}
-        return extracted
+        return raw_estimates, querier_debug, elapsed

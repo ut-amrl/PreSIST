@@ -1,0 +1,13 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50
+  - override /model/cross_attn_pooler: local_map
+  - _self_
+
+# local_map pooler requires the encoder to return local feature maps;
+# see the comment in model/obj_conditioned_cross_attn.yaml.
+model:
+  backbone_cfg:
+    use_local: True
+
+trainer:
+  name: lowlr_huber_norm_loose50_pooler_local_map

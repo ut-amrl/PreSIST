@@ -1,0 +1,13 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50
+  - _self_
+
+# Ablation: drop confidence prediction by zeroing its loss weight.
+# Functionally equivalent to dropping the channel — gradient on the
+# confidence row of the final Linear is zero, so those weights stay at
+# init and channel 2 becomes meaningless. The validator still logs
+# diagnostic conf metrics; treat as diagnostic-only in the writeup.
+trainer:
+  name: lowlr_huber_norm_loose50_no_conf
+  loss_function:
+    wc: 0.0

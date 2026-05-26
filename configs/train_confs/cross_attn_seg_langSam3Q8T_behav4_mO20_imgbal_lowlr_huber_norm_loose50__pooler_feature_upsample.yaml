@@ -1,0 +1,7 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50
+  - override /model/cross_attn_pooler: feature_upsample
+  - _self_
+
+trainer:
+  name: lowlr_huber_norm_loose50_pooler_feature_upsample

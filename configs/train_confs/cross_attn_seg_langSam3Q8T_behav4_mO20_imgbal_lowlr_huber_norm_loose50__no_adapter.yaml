@@ -1,0 +1,12 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50
+  - _self_
+
+# Ablation: no adapters in the DINO backbone. DINO stays frozen
+# (inherited freeze_dino=true), so only the cross-attn head + pooler
+# train. Quantifies what adapters add on top of frozen DINO + head.
+trainer:
+  name: lowlr_huber_norm_loose50_no_adapter
+model:
+  backbone_cfg:
+    use_adapter: false

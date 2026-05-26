@@ -1,0 +1,23 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50
+  - _self_
+
+# Ablation: random-init DINO, trained end-to-end (no pretrained weights).
+# Adapters are kept (use_adapter inherited as true) to minimize delta vs
+# Ours — this isolates the "pretraining" variable.
+#
+# Caveat: full-FT ViT-L is a much larger trainable surface than Ours
+# (which only trains adapters + head). The current lr may not be optimal
+# here; revisit after the first epoch if training is unstable.
+trainer:
+  name: lowlr_huber_norm_loose50_no_pretrain
+  loop:
+    # Full ViT-L gradients (vs frozen-DINO+adapters in Ours) cost ~2-3x the
+    # activation memory of the frozen-DINO ablations. On ~96 GB GPUs, half
+    # of Ours' batch_size=32 is the safe ceiling.
+    batch_size: 16
+    val_batch_size: 16
+model:
+  backbone_cfg:
+    foundation_model_path: null
+    freeze_dino: false
