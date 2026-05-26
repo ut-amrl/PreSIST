@@ -36,7 +36,7 @@ import torch
 import torch.nn as nn
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
 from torch.utils.data import DataLoader
 
@@ -47,6 +47,13 @@ from dataset_generation.images_dataset.relpath_id_fn import RelpathToImageId
 
 from training.validator import SurvivalValidationRunner, ValConfig
 from training.dataset.distillation_dataset import DistillationDatasetConfig
+from training.task import build_validation_model
+
+from persistence_parameter_networks.losses.dense_losses import (
+    DenseWeightedMultiLoss,
+    DenseWeightedMultiLossWithInstanceAux,
+)
+from persistence_parameter_networks.losses.weighted_multi_loss import WeightedMultiLoss
 
 from training.checkpointing import load_training_state_from_checkpoint
 
@@ -964,14 +971,53 @@ def main(cfg: DictConfig) -> None:
     ckpt_global_step = int(getattr(meta, "global_step", -1))
     print(f"[CKPT] loaded epoch={ckpt_epoch} global_step={ckpt_global_step}")
 
+    # Mirror train.py's task-level validation wrapper: dense models get a
+    # pooling facade so the per-instance validator can call them with
+    # (image, mask), and target-normalization stats (if set) un-apply the
+    # z-score so predictions land in log-space.
+    val_model = build_validation_model(
+        model,
+        y50_mean=OmegaConf.select(cfg, "train_dataset.y50_mean"),
+        y50_std=OmegaConf.select(cfg, "train_dataset.y50_std"),
+        yr_mean=OmegaConf.select(cfg, "train_dataset.yr_mean"),
+        yr_std=OmegaConf.select(cfg, "train_dataset.yr_std"),
+    ).to(device)
+
     # Output root: epoch_<N>/eval/<eval_dataset>/<eval_timestamp>/
     # A new timestamp per run prevents collision when re-evaluating the same checkpoint.
     eval_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     out_root_epoch = run_root / f"epoch_{ckpt_epoch:04d}" / "eval" / cfg.eval_dataset.name / eval_timestamp
     out_root_epoch.mkdir(parents=True, exist_ok=True)
 
+    # Mirror train.py: dense losses don't have the per-instance signature
+    # the validator expects, so build a sibling WeightedMultiLoss with the
+    # same hyperparameters when the configured loss is dense.
+    if isinstance(loss_fn, DenseWeightedMultiLossWithInstanceAux):
+        dense_inner = loss_fn.dense_loss
+    elif isinstance(loss_fn, DenseWeightedMultiLoss):
+        dense_inner = loss_fn
+    else:
+        dense_inner = None
+
+    if dense_inner is not None:
+        validator_loss_fn = WeightedMultiLoss(
+            w50=dense_inner.w50,
+            wr=dense_inner.wr,
+            wc=dense_inner.wc,
+            useHuberForLogVals=dense_inner.useHuberForLogVals,
+            delta_50=dense_inner.delta_50,
+            delta_r=dense_inner.delta_r,
+            confidence_loss=dense_inner.confidence_loss,
+            confidence_from_logits=dense_inner.confidence_from_logits,
+            delta_c=dense_inner.delta_c,
+            clamp_confidence_probs=dense_inner.clamp_confidence_probs,
+            eps=dense_inner.eps,
+        ).to(device)
+    else:
+        validator_loss_fn = loss_fn
+
     # Validator
-    validator = SurvivalValidationRunner(cfg=val_cfg, loss_fn=loss_fn, device=device)
+    validator = SurvivalValidationRunner(cfg=val_cfg, loss_fn=validator_loss_fn, device=device)
 
     # Optional eval toggles via cfg.eval.*
     # viz = bool(getattr(getattr(cfg, "eval", {}), "viz", False)) if hasattr(cfg, "eval") else False
@@ -1001,7 +1047,7 @@ def main(cfg: DictConfig) -> None:
     for split in splits:
         payload = _evaluate_split(
             split=split,
-            model=model,
+            model=val_model,
             validator=validator,
             distillation_cfg=distillation_cfg,
             registry_cfg=registry_cfg,

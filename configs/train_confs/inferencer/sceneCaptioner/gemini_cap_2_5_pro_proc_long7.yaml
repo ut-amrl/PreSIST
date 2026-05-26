@@ -1,0 +1,21 @@
+# @package inferencer.sceneCaptioner
+# Gemini-2.5-pro scene captioner, same prompt as gemma_cap_proc_long7 so
+# results can be compared head-to-head. The Gemini engine pulls its API key,
+# client, and usage tracker from the process-wide singleton in
+# `gemini._shared`; configure it once via `configure_gemini_shared(...)`
+# (eval_persistence.py auto-calls it when the top-level eval config has a
+# `gemini:` block).
+name: gemini_cap_2_5_pro_proc_long7
+_target_: dataset_generation.scene_level_captioning.gemini_scene_level_captioner.GeminiSceneLevelCaptioner
+model_name: "gemini-2.5-pro"
+prompt_file: "prompt_files/scene_level_captioner/process_long7.txt"
+max_new_tokens: 16384
+temperature: 0.0
+top_p: 1.0
+# Mirror the Gemma primary pipeline (gemma_cap_proc_long7.yaml:
+# enable_thinking: false). Gemini 2.5 has adaptive thinking on by default;
+# setting thinking_budget=0 disables it. Engine drops this config with a
+# one-shot warning for non-thinking models (3.5-flash, 3.1-flash-lite).
+thinking_config:
+  _target_: google.genai.types.ThinkingConfig
+  thinking_budget: 0

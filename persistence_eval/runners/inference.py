@@ -1,14 +1,30 @@
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
+import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from persistence_eval.core.domain import InferenceArtifact
+from persistence_eval.core.domain import ImageMaskGroup, InferenceArtifact
 from persistence_eval.core.protocols import ArtifactStore, PersistenceParameterInferencer
 from persistence_eval.datasets.inference_dataset import InferenceDataset
+
+
+def _build_warmup_group() -> ImageMaskGroup:
+    H, W = 224, 224
+    image = torch.zeros((3, H, W), dtype=torch.uint8)
+    masks = torch.zeros((1, H, W), dtype=torch.bool)
+    masks[0, H // 4 : 3 * H // 4, W // 4 : 3 * W // 4] = True
+    return ImageMaskGroup(
+        image=image,
+        masks=masks,
+        track_ids=["__warmup__"],
+        anchor_time=0.0,
+        image_path=None,
+    )
 
 
 class InferenceRunner:
@@ -37,6 +53,12 @@ class InferenceRunner:
     ) -> list[InferenceArtifact]:
         run_dir.mkdir(parents=True, exist_ok=True)
         self._inferencer.set_run_dir(run_dir)
+
+        # Park the Gemini token-usage snapshot inside the per-run output dir.
+        # No-op when Gemini isn't in use — the singleton just stores the path
+        # and never writes anything until an engine records usage.
+        from dataset_generation.llm_persistence_querying.gemini import _shared as _gemini_shared
+        _gemini_shared.set_usage_log_file(run_dir / "gemini_token_usage.json")
         loader = DataLoader(
             dataset,
             batch_size=None,
@@ -47,10 +69,37 @@ class InferenceRunner:
         buffer: list[InferenceArtifact] = []
         all_artifacts: list[InferenceArtifact] = []
 
-        for group in tqdm(loader, desc="Inference", unit="group"):
+        # Exercise the inferencer on a synthetic group so first-call costs
+        # (CUDA kernel JIT, lazy weight loads, TLS handshakes, etc.) land
+        # outside the timed loop. one_off=True suppresses cache writes and
+        # timer recording for this call, so it neither persists results nor
+        # contaminates the timing aggregates.
+        #
+        # Inferencers opt out via ``wants_warmup() -> bool`` (default True on
+        # ``AbsPersistenceParameterInferencer``). HTTP-only backends (e.g.
+        # all-Gemini pipelines) override to False so we don't burn a real
+        # billed API call to amortize a ~hundred-ms TCP handshake.
+        if self._inferencer.wants_warmup():
+            try:
+                self._inferencer.infer(_build_warmup_group(), one_off=True)
+            except Exception as e:
+                print(f"[InferenceRunner] warmup infer failed (continuing): {e}", file=sys.stderr, flush=True)
+        else:
+            print("[InferenceRunner] skipping warmup (inferencer.wants_warmup() returned False)", file=sys.stderr, flush=True)
+
+        for group in tqdm(loader, desc="Inference", unit="group", total=len(dataset)):
             t0 = time.perf_counter()
-            estimates = self._inferencer.infer(group)
-            latency_ms = (time.perf_counter() - t0) * 1000.0 / max(len(estimates), 1)
+            estimates, reported_elapsed_ms = self._inferencer.infer(group)
+            # Prefer the inferencer's reported elapsed (sum of original-
+            # computation times across phases, including cached replays) so
+            # cache hits don't collapse the latency. Fall back to wall-clock
+            # for inferencers that don't track this.
+            elapsed_ms = (
+                reported_elapsed_ms
+                if reported_elapsed_ms is not None
+                else (time.perf_counter() - t0) * 1000.0
+            )
+            latency_ms = elapsed_ms / max(len(estimates), 1)
 
             for track_id, estimate in zip(group.track_ids, estimates):
                 artifact = InferenceArtifact(

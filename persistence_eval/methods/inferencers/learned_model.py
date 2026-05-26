@@ -203,7 +203,9 @@ class LearnedModelInferencer(AbsPersistenceParameterInferencer):
 
         return (short_lo, long_lo), (short_hi, long_hi), confidence_from_logits
 
-    def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]:
+    def infer(
+        self, group: ImageMaskGroup, *, one_off: bool = False,
+    ) -> tuple[list[PersistenceParameterEstimate], Optional[float]]:
         from torchvision.transforms import InterpolationMode
         from torchvision.transforms.functional import resize
 
@@ -222,10 +224,11 @@ class LearnedModelInferencer(AbsPersistenceParameterInferencer):
         with torch.no_grad():
             out = self._val_model.forward_multi(img_tensor, masks)          # (K, 3)
 
-        return [
+        estimates = [
             PersistenceParameterEstimate(params=self._decode_outputs(out[k]))
             for k in range(out.shape[0])
         ]
+        return estimates, None
 
     def _decode_outputs(self, row: torch.Tensor) -> dict[str, float]:
         # row: (3,) — columns [y_low, y_ratio, y_conf]. Inverse of

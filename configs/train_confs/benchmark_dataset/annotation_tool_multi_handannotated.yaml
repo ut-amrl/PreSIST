@@ -1,0 +1,24 @@
+# @package benchmark_dataset
+# Combined hand-annotated benchmark: RobotCar location_01 + AHG Amanda Kinect
+# + HD-EPIC P01 run through MultiAnnotationToolBackingDataset, which namespaces
+# track ids by source and absolutizes image paths so the existing views can
+# iterate the union as one dataset.
+
+name: handannotated_combined_robotcar_kinect_hdepic
+_target_: persistence_eval.datasets.annotation_tool.MultiAnnotationToolBackingDataset
+sources:
+  - source_name: robotcar_loc01
+    manifest_path: /workspace/data/semantic-persistence-filter/external_annotated_data/extracted_data/robotcar_queries_annotation_ready/location_01/exports_test/20260513_111554/manifest.json
+  - source_name: ahg_amanda_kinect
+    manifest_path: /workspace/data/semantic-persistence-filter/our_data/raw/extracted_data/ahg_amanda_kinect/exports_test/20260401_014741/manifest.json
+  - source_name: hd_epic_P01
+    manifest_path: /workspace/data/semantic-persistence-filter/external_annotated_data/extracted_data/hd-epic-init-annotations/P01/exports_test/20260511_221848/manifest.json
+max_anchor_observations: 1000
+shuffle_seed: 42
+per_track_balanced: true
+
+image_mask_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolImageMaskView
+
+track_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolTrackView

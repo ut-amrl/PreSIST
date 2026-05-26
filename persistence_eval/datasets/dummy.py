@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable, Optional
 
 import torch
 
@@ -35,6 +35,9 @@ class DummyImageMaskView(ImageMaskView):
         mask = torch.ones(_IMAGE_H, _IMAGE_W, dtype=torch.bool)
         yield AnchorObservation(image=image, mask=mask, anchor_time=_ANCHOR_TIME, track_id=_TRACK_ID)
 
+    def num_anchor_observations(self) -> int:
+        return 1
+
 
 class DummyTrackView(TrackView):
     def iter_tracks(
@@ -60,8 +63,10 @@ class DummyInferencer(AbsPersistenceParameterInferencer):
     def __init__(self, params: dict[str, float] | None = None) -> None:
         self._params = params or {"t50": 10.0, "t90": 30.0}
 
-    def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]:
+    def infer(
+        self, group: ImageMaskGroup, *, one_off: bool = False,
+    ) -> tuple[list[PersistenceParameterEstimate], Optional[float]]:
         return [
             PersistenceParameterEstimate(params=dict(self._params))
             for _ in group.track_ids
-        ]
+        ], None

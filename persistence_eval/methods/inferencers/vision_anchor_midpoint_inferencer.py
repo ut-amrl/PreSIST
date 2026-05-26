@@ -13,6 +13,8 @@ mirror how the trainer dataset feeds samples one at a time.
 
 from __future__ import annotations
 
+from typing import Optional
+
 import math
 from pathlib import Path
 
@@ -83,7 +85,9 @@ class VisionAnchorMidpointInferencer(AbsPersistenceParameterInferencer):
         m = F.interpolate(m, size=(self._image_size, self._image_size), mode="nearest")
         return m.to(self._device)  # 1×1×S×S
 
-    def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]:
+    def infer(
+        self, group: ImageMaskGroup, *, one_off: bool = False,
+    ) -> tuple[list[PersistenceParameterEstimate], Optional[float]]:
         img_tensor = self._prep_image(group.image)
 
         results: list[PersistenceParameterEstimate] = []
@@ -102,4 +106,4 @@ class VisionAnchorMidpointInferencer(AbsPersistenceParameterInferencer):
                         metadata={"pred_log_seconds": log_t},
                     )
                 )
-        return results
+        return results, None

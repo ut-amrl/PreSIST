@@ -1,0 +1,11 @@
+# @package inferencer.llmPersistenceQuerier.llmQuerier
+# Text-only persistence-querier LLM, backed by Gemini Robotics ER 1.6 preview.
+# ``disable_thinking: true`` mirrors ``enable_thinking: false`` from the Gemma
+# sibling and is precise on ER (the model accepts thinking_budget=0).
+name: gemini_robotics_er_default
+_target_: dataset_generation.llm_persistence_querying.llm_querying.gemini_llm_querier.GeminiLLMQuerier
+model_name: "gemini-robotics-er-1.6-preview"
+max_new_tokens: 16384
+temperature: 0.2
+top_p: 0.9
+disable_thinking: true

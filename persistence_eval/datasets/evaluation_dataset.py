@@ -28,3 +28,11 @@ class EvaluationDataset(IterableDataset):
         for artifact in self._artifacts:
             for ctx in self._provider.get_contexts(artifact.track_id, artifact.anchor_time):
                 yield artifact, ctx
+
+    def approx_num_artifacts(self) -> int | None:
+        """Returns the number of input artifacts when sized — used as an approximate
+        progress total. Real (artifact, ctx) count may differ when providers emit
+        multiple contexts per artifact or skip artifacts with no contexts."""
+        if hasattr(self._artifacts, "__len__"):
+            return len(self._artifacts)
+        return None

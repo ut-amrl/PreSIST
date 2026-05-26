@@ -67,6 +67,15 @@ class ChainedPromptQueryPersistenceQuerier(AbsLLMPersistenceQuerier):
         self._per_query_per_call_timer_name = f"{self._per_query_timer_name}_per_call"
 
 
+    def wants_warmup(self) -> bool:
+        """Defer to the wrapped llm_querier: this class is a pure passthrough
+        for warmup purposes (it doesn't hold model weights itself). Defaults
+        to True if the inner querier doesn't express an opinion, since most
+        local model backends benefit from warmup.
+        """
+        inner = getattr(self.llm_querier, "wants_warmup", None)
+        return bool(inner()) if callable(inner) else True
+
     def divideIntoObjectGroups(self, object_descriptions, instances):
         """
         Divides objects into groups for prompting, if maxObjsPerQuery is set.

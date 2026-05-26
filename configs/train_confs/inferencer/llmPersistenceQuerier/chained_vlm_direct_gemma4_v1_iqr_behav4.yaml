@@ -1,0 +1,13 @@
+# @package inferencer.llmPersistenceQuerier
+defaults:
+  - llmQuerier: gemma4_31b_vllm
+  - vlmPromptHandler: direct_v1_iqr_behav4
+
+_target_: dataset_generation.llm_persistence_querying.chained_vlm_persistence_querier.ChainedVLMPersistenceQuerier
+# Per-object retries (parse/schema/VLM error) before giving up on the object.
+perObjectRetryAttempts: 2
+# Raise instead of warning if any object is still missing after retries.
+errorOnMissingObjectIds: false
+# Fan out per-object VLM calls through this many threads when the underlying
+# querier uses a vLLM server. Local-Transformers queriers force serial.
+max_concurrency: 8

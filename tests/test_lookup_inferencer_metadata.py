@@ -49,7 +49,7 @@ def test_hit_and_fallback_metadata():
             track_ids=["track_alpha", "track_beta"],
             anchor_time=0.0,
         )
-        estimates = inferencer.infer(group)
+        estimates, _ = inferencer.infer(group)
         assert len(estimates) == 2
         assert estimates[0].metadata["fallback"] == "hit"
         assert estimates[0].metadata["location_key"] == "spot_A"

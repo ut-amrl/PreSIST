@@ -91,7 +91,9 @@ class EvaluationRunner:
         skipped_empty = 0
         skipped_misformatted = 0
 
-        for artifact, ctx in tqdm(loader, desc="Evaluation", unit="episode"):
+        for artifact, ctx in tqdm(
+            loader, desc="Evaluation", unit="episode", total=dataset.approx_num_artifacts()
+        ):
             query_times_t = torch.tensor(ctx.query_times, dtype=torch.float64)
 
             t0 = time.perf_counter()

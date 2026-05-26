@@ -1,0 +1,18 @@
+# @package benchmark_dataset
+# Hand-annotated HD-EPIC P01 export (18 tracks of 1246; rest below VisibilityLabeling).
+# Manifest paths already use /workspace/data/semantic-persistence-filter/... — usable
+# as-is once docker_start_datasets_plus_spf_handannotated.sh mounts
+# /robodata/aaadkins/semantic-persistence-filter at that container path. No remap kwargs.
+
+name: handannotated_hd_epic_P01_test
+_target_: persistence_eval.datasets.annotation_tool.AnnotationToolBackingDataset
+manifest_path: /workspace/data/semantic-persistence-filter/external_annotated_data/extracted_data/hd-epic-init-annotations/P01/exports_test/20260511_221848/manifest.json
+max_anchor_observations: 1000
+shuffle_seed: 42
+per_track_balanced: true
+
+image_mask_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolImageMaskView
+
+track_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolTrackView

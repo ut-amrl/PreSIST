@@ -1,0 +1,44 @@
+# Template: closed-set CLIP (COCO-Stuff) with p25/p75 persistence quartiles
+# fit through a Weibull survival function, run on the hand-annotated HD-EPIC
+# P01 test export.
+#
+# Copy this file when adding a new (dataset x method) combo:
+#   * For a different dataset:   swap benchmark_dataset in `defaults:` and
+#     update `experiment.name` / `experiment.benchmark_dataset` tags.
+#   * For a different method:    swap `inferencer:` and `survival_generator:`
+#     (and tag fields accordingly).
+#
+# Run with:
+#   python eval_persistence.py --config-name=eval_config_closed_set_clip_p25_p75_hd_epic_P01_test
+
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: annotation_tool_hd_epic_P01_test
+  - inferencer: closed_set_clip_p25_p75
+  - survival_generator: weibull_p25_p75
+  - persistence_filter: rosen
+  - predictor: survival_based
+  - benchmark: persistence_filter
+  - eval_scenario: percentile_horizons
+  - analysis: basic
+  - _self_
+
+mode: run_all    # infer | evaluate | run_all
+
+experiment:
+  # Free-form tag block — these don't drive any runtime logic for this method
+  # (no trained checkpoint to resolve), they just propagate to output dir names
+  # so runs are easy to identify and group later.
+  method: closed_set_clip_p25_p75
+  benchmark_dataset: ${benchmark_dataset.name}
+  name: ${experiment.method}__${experiment.benchmark_dataset}
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  explicit_inference_run_dir: null
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null    # auto-set to YYYYMMDD_HHMMSS when null
+  seed: null

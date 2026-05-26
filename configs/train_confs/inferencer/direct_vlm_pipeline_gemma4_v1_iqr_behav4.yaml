@@ -1,0 +1,20 @@
+# @package inferencer
+#
+# Direct-VLM persistence inferencer: one VLM call per object that returns
+# strict-JSON IQR persistence parameters, skipping the scene-caption and
+# object-description stages used by llm_pipeline.
+#
+# Wire into an eval config by adding under `defaults:`
+#   - inferencer: direct_vlm_pipeline_gemma4_v1_iqr_behav4
+# and setting `experiment.method` to a matching label.
+defaults:
+  - /inferencer/llmPersistenceQuerier: chained_vlm_direct_gemma4_v1_iqr_behav4
+
+_target_: persistence_eval.methods.inferencers.direct_vlm_pipeline.DirectVLMPipelineInferencer
+param_keys: [p25_persistence_hours, p75_persistence_hours]
+# Both flags default to false; flip explicitly when debugging a run.
+# - debug_log: per-anchor JSON dump + stderr echo of every querier response
+# - debug_visualizations: per-anchor mask-overlay PNG + per-object prompt-image dumps
+debug_log: false
+debug_visualizations: false
+strict_object_coverage: false

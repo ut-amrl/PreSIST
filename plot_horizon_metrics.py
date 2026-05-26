@@ -14,9 +14,10 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 
 logger = logging.getLogger("plot_horizon_metrics")
 
-ALL_METRICS = ["accuracy", "bacc", "precision", "recall", "f1", "mae", "mean_pred",
+ALL_METRICS = ["accuracy", "bacc", "precision", "recall", "f1", "fpr", "fnr", "mae", "mean_pred",
                "frac_pred_positive", "auroc", "auprc"]
-BOUNDED_METRICS = {"accuracy", "bacc", "precision", "recall", "f1", "frac_pred_positive", "auroc", "auprc"}
+BOUNDED_METRICS = {"accuracy", "bacc", "precision", "recall", "f1", "fpr", "fnr",
+                   "frac_pred_positive", "auroc", "auprc"}
 DEFAULT_OUTPUT_ROOT = "/workspace/data/output/persistence_eval_plots"
 
 # query_time is stored in seconds; multiplier converts seconds -> target unit.
@@ -103,6 +104,10 @@ def compute_metric(name: str, probs: np.ndarray, gt: np.ndarray, threshold: floa
         return tp / (tp + fp) if (tp + fp) > 0 else 0.0
     if name == "recall":
         return tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    if name == "fpr":
+        return fp / (fp + tn) if (fp + tn) > 0 else 0.0
+    if name == "fnr":
+        return fn / (fn + tp) if (fn + tp) > 0 else 0.0
     if name == "f1":
         denom = 2 * tp + fp + fn
         return (2 * tp) / denom if denom > 0 else 0.0
@@ -141,7 +146,7 @@ def plot_metric(
             any_data = True
 
     ax.set_xlabel(f"Horizon ({x_units})")
-    y_label = f"{metric}@{threshold}" if metric in {"accuracy", "bacc", "precision", "recall", "f1"} else metric
+    y_label = f"{metric}@{threshold}" if metric in {"accuracy", "bacc", "precision", "recall", "f1", "fpr", "fnr"} else metric
     ax.set_ylabel(y_label)
     if metric in BOUNDED_METRICS:
         ax.set_ylim(0.0, 1.05)

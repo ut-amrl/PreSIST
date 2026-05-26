@@ -1,0 +1,26 @@
+# @package inferencer
+# All-Gemini pipeline: Robotics ER 1.6 (preview) for scene caption, object
+# descriptions, and the persistence-querier LLM. Drop-in sibling of
+# llm_pipeline_gemma_capLong7_descBlurMask_v3iqrBehav4 — same prompts and
+# overlay settings throughout so swapping one for the other gives a clean
+# head-to-head comparison.
+#
+# Why Robotics ER instead of Gemini 2.5-pro:
+#   - Same pricing as 2.5-flash (~$1/M input, $5/M output) — about half what
+#     2.5-pro costs.
+#   - Embodied-spatial-reasoning bias is well-suited to our object-motion /
+#     persistence task.
+#   - ``disable_thinking: true`` is precise on ER (accepts thinking_budget=0),
+#     whereas 2.5-pro cannot truly disable thinking. Lets us mirror the Gemma
+#     pipeline's ``enable_thinking: false`` exactly.
+# The 2.5-pro sibling configs (gemini_cap_2_5_pro_proc_long7 etc.) remain
+# available for explicit A/B comparison via Hydra overrides.
+defaults:
+  - /inferencer/sceneCaptioner: gemini_cap_robotics_er_proc_long7
+  - /inferencer/objectDescriber: gemini_robotics_er_vlm_object_describer_blur_bg_context_crop_mask_long
+  - /inferencer/llmPersistenceQuerier: chained_text_gemini_robotics_er_v3iqr_behav4_mO20
+
+_target_: persistence_eval.methods.inferencers.llm_pipeline.LLMPipelineInferencer
+param_keys: [p25_persistence_hours, p75_persistence_hours]
+debug_log: false
+debug_visualizations: true

@@ -1,0 +1,27 @@
+# Dense-persistence visualization on hd_epic_P01_test. See dense_viz.yaml.
+defaults:
+  - eval_config_learned_dpt_dense_hd_epic_P01_test
+  - _self_
+
+experiment:
+  method: dense_viz
+
+inferencer:
+  checkpoint_path: ???
+
+viz:
+  output_dir: ${hydra:runtime.output_dir}/dense_viz
+  device: ${runtime.device}
+  input:
+    image_path: null
+    num_samples: 8
+    seed: 0
+  quantiles:
+    plot: [0.25, 0.5, 0.75]
+    vmin_hours: 1.0
+    vmax_hours: 17520.0
+    norm: log
+  horizons:
+    hours: null
+  cmap: viridis
+  alpha: 0.55

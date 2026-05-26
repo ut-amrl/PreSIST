@@ -1,0 +1,50 @@
+# Per-dataset template config for dpt_dense learned-model evals on
+# hand-annotated HD-EPIC P01 test. Structural sibling of
+# eval_config_learned_obj_conditioned_cross_attn_lowlr_huber_norm_hd_epic_P01_test.yaml;
+# only difference is inferencer -> learned_dpt_dense_model (composes
+# /model: dpt_dense_predictor + /mask_pooler@pooler: masked_mean).
+#
+# This is a TEMPLATE -- the placeholders below are overridden per-checkpoint
+# by scripts/run_8x3_learned_sweep.py. Do not commit a real checkpoint path
+# here; running this config without overrides will fail at load time.
+#
+# Invoke via:
+#   python scripts/run_8x3_learned_sweep.py --datasets hd_epic
+# or directly (with overrides):
+#   python eval_persistence.py \
+#     --config-name=eval_config_learned_dpt_dense_hd_epic_P01_test \
+#     inferencer.checkpoint_path=/workspace/data/output/training_outputs/.../ckpt_best.pth \
+#     experiment.method=learned_dpt_dense__<tag>__ckpt_best
+
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: annotation_tool_hd_epic_P01_test
+  - inferencer: learned_dpt_dense_model
+  - survival_generator: weibull_pucpr_llm
+  - persistence_filter: rosen
+  - predictor: survival_based
+  - benchmark: persistence_filter
+  - eval_scenario: percentile_horizons
+  - analysis: basic
+  - _self_
+
+mode: run_all
+
+experiment:
+  method: TEMPLATE_OVERRIDE_ME    # set via CLI (drives inferencer.name -> per-method output dir)
+  benchmark_dataset: ${benchmark_dataset.name}
+  name: ${experiment.method}__${experiment.benchmark_dataset}
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  explicit_inference_run_dir: null
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null
+  seed: null
+
+inferencer:
+  name: ${experiment.method}
+  checkpoint_path: ???    # set via CLI; ??? means hydra errors if missing

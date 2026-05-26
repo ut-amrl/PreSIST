@@ -38,3 +38,8 @@ class InferenceDataset(IterableDataset):
                     track_ids=[anchor.track_id],
                     anchor_time=anchor.anchor_time,
                 )
+
+    def __len__(self) -> int:
+        if self._mode == "grouped":
+            return self._view.num_image_groups()
+        return self._view.num_anchor_observations()

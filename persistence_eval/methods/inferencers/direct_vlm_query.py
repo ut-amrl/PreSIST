@@ -14,10 +14,15 @@ visual or textual context the VLM needs.
 """
 from __future__ import annotations
 
+import time
+from contextlib import nullcontext
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
+
+from utils.timing import timer
 
 from persistence_eval.core.domain import ImageMaskGroup, PersistenceParameterEstimate
 from persistence_eval.methods.inferencers.base import AbsPersistenceParameterInferencer
@@ -42,7 +47,9 @@ class DirectVLMQueryInferencer(AbsPersistenceParameterInferencer):
         # surface mask paths never touch the filesystem here.
         self._context_dir = Path(run_dir) / _VLM_CONTEXT_SUBDIR
 
-    def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]:
+    def infer(
+        self, group: ImageMaskGroup, *, one_off: bool = False,
+    ) -> tuple[list[PersistenceParameterEstimate], Optional[float]]:
         if group.image_path is None:
             raise ValueError(
                 "DirectVLMQueryInferencer requires ImageMaskGroup.image_path so the "
@@ -54,26 +61,35 @@ class DirectVLMQueryInferencer(AbsPersistenceParameterInferencer):
                 f"match track_ids length ({len(group.track_ids)})."
             )
 
-        estimates: list[PersistenceParameterEstimate] = []
-        for i, track_id in enumerate(group.track_ids):
-            mask_path = (
-                group.mask_paths[i]
-                if group.mask_paths is not None
-                else str(self._save_mask(group.anchor_time, i, group.masks[i]))
-            )
-            estimates.append(
-                PersistenceParameterEstimate(
-                    params={},
-                    metadata={
-                        "track_id": track_id,
-                        "vlm_context": {
-                            "image_path": group.image_path,
-                            "mask_path": mask_path,
-                        },
-                    },
+        # No model call lives here — the VLM query happens later in
+        # DirectVLMPredictor. The only real work is the optional _save_mask
+        # file write when the dataset doesn't surface on-disk masks. Time it
+        # for consistency with the other inferencers.
+        timer_name = f"Timer::vlm_query_inferencer::{type(self).__name__}"
+        live_ctx = nullcontext() if one_off else timer.time_block(timer_name)
+        start = time.perf_counter()
+        with live_ctx:
+            estimates: list[PersistenceParameterEstimate] = []
+            for i, track_id in enumerate(group.track_ids):
+                mask_path = (
+                    group.mask_paths[i]
+                    if group.mask_paths is not None
+                    else str(self._save_mask(group.anchor_time, i, group.masks[i]))
                 )
-            )
-        return estimates
+                estimates.append(
+                    PersistenceParameterEstimate(
+                        params={},
+                        metadata={
+                            "track_id": track_id,
+                            "vlm_context": {
+                                "image_path": group.image_path,
+                                "mask_path": mask_path,
+                            },
+                        },
+                    )
+                )
+        elapsed_ms: Optional[float] = None if one_off else (time.perf_counter() - start) * 1000.0
+        return estimates, elapsed_ms
 
     def _save_mask(self, anchor_time: float, idx: int, mask: torch.Tensor) -> Path:
         if self._context_dir is None:

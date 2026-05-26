@@ -1,0 +1,16 @@
+# @package benchmark_dataset
+# Hand-annotated AHG Amanda Kinect export (71 tracks). See sibling
+# annotation_tool_hd_epic_P01_test.yaml for the mount-vs-remap rationale.
+
+name: handannotated_ahg_amanda_kinect_test
+_target_: persistence_eval.datasets.annotation_tool.AnnotationToolBackingDataset
+manifest_path: /workspace/data/semantic-persistence-filter/our_data/raw/extracted_data/ahg_amanda_kinect/exports_test/20260401_014741/manifest.json
+max_anchor_observations: 1000
+shuffle_seed: 42
+per_track_balanced: true
+
+image_mask_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolImageMaskView
+
+track_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolTrackView

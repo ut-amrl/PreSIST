@@ -281,6 +281,12 @@ class AnnotationToolImageMaskView(ImageMaskView):
             anchor_time = obs["timestamp"] / _US_TO_S
             yield AnchorObservation(image=image, mask=mask, anchor_time=anchor_time, track_id=track_id)
 
+    def num_anchor_observations(self) -> int:
+        return len(self._backing._get_image_observations())
+
+    def num_image_groups(self) -> int:
+        return len({obs["image_path"] for _, obs in self._backing._get_image_observations()})
+
     def iter_image_groups(self) -> Iterable[ImageMaskGroup]:
         """Group all masks sharing an image into one batch, loading each image once."""
         root = self._backing._location_root

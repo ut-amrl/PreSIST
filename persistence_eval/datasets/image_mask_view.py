@@ -35,6 +35,13 @@ class AbsImageMaskDataset(ABC):
                 anchor_time=obs.anchor_time,
             )
 
+    @abstractmethod
+    def num_anchor_observations(self) -> int: ...
+
+    def num_image_groups(self) -> int:
+        """Default matches the default iter_image_groups: one group per anchor."""
+        return self.num_anchor_observations()
+
 
 class ImageMaskView(AbsImageMaskDataset):
     """

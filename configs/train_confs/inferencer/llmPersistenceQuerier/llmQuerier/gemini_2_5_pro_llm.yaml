@@ -1,0 +1,13 @@
+# @package inferencer.llmPersistenceQuerier.llmQuerier
+name: gemini_2_5_pro_default
+_target_: dataset_generation.llm_persistence_querying.llm_querying.gemini_llm_querier.GeminiLLMQuerier
+model_name: "gemini-2.5-pro"
+max_new_tokens: 16384
+temperature: 0.2
+top_p: 0.9
+# Mirror gemma4_31b_llm.yaml (enable_thinking: false). thinking_budget=0
+# disables Gemini 2.5's default adaptive thinking; no-op (with one-shot
+# warning) on non-thinking models.
+thinking_config:
+  _target_: google.genai.types.ThinkingConfig
+  thinking_budget: 0

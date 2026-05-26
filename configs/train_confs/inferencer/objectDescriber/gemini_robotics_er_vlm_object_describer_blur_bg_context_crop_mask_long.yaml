@@ -1,0 +1,32 @@
+# @package inferencer.objectDescriber
+# Gemini Robotics ER 1.6 (preview) VLM object describer, same overlay
+# settings as the Gemma sibling. ``disable_thinking: true`` mirrors
+# ``enable_thinking: false`` exactly on ER (accepts thinking_budget=0).
+name: geminiVLMDesc_robotics_er_blur_bg_context_crop_mask_t3_cmd1_no_holes_longPrompt
+_target_: dataset_generation.instance_descriptions.gemini_vlm_object_describer.GeminiVLMObjectDescriber
+model_name: "gemini-robotics-er-1.6-preview"
+prompt: null
+prompt_file: "prompt_files/instance_describer/movement_and_relationships2.txt"
+prefix: null
+prefix_file: "prompt_files/instance_describer/format_prefix/pref_bgBlur_crop_with_mask_full_no_hole.txt"
+max_new_tokens: 16384
+temperature: 0.2
+top_p: 0.9
+disable_thinking: true
+mask_style: blur_bg_outline_fg
+mask_highlight_color: [0, 255, 255]
+mask_dilation_px: 5
+include_full_img_last: true
+blur_radius: 8
+mask_background_dim_factor: 0.45
+include_context_crop: true
+highlight_alpha: 0.3
+mask_crop: true
+crop_mask_style: blur_bg_outline_fg
+crop_mask_highlight_color: [0, 255, 255]
+crop_mask_dilation_px: 1
+crop_mask_outline_thickness: 3
+crop_blur_radius: 0
+crop_mask_background_dim_factor: 1.0
+crop_highlight_alpha: 0.0
+max_concurrency: 8

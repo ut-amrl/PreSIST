@@ -1,0 +1,57 @@
+# 5-sample smoke test using Gemini-2.5-pro for every phase (scene captioner,
+# object describer, and persistence-querier LLM). Sibling of
+# eval_config_llm_pipeline_geminiCap_cache_smoketest.yaml (which only swaps
+# the captioner) and eval_config_llm_pipeline_cache_smoketest.yaml (all-Gemma).
+#
+# Run with:
+#   python eval_persistence.py --config-name=eval_config_llm_pipeline_allGemini_cache_smoketest
+#
+# Requires GEMINI_API_KEY (or GOOGLE_API_KEY) in the container env.
+
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: annotation_tool_hd_epic_P01_test
+  - inferencer: llm_pipeline_allGemini_v3iqrBehav4
+  - survival_generator: weibull_pucpr_llm
+  - persistence_filter: rosen
+  - predictor: survival_based
+  - benchmark: persistence_filter
+  - eval_scenario: percentile_horizons
+  - analysis: basic
+  - _self_
+
+mode: run_all
+
+experiment:
+  method: llm_pipeline_allGemini_cache_smoketest
+  benchmark_dataset: ${benchmark_dataset.name}
+  name: ${experiment.method}__${experiment.benchmark_dataset}
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  explicit_inference_run_dir: null
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null
+  seed: null
+
+persistence_filter:
+  missed_detection_prob: 0.01
+  false_detection_prob: 0.01
+
+# --- smoke-test overrides ---
+
+benchmark_dataset:
+  # Distinct name so the 5-sample outputs land under their own subdirectory
+  # of paths.output_root instead of polluting the full-run tree.
+  name: handannotated_hd_epic_P01_test_5_sample
+  max_anchor_observations: 5
+
+inferencer:
+  cache_dir: /workspace/data/output/persistence_eval_cache
+
+# --- Gemini process-wide singleton config ---
+gemini:
+  usage_log_every_n_requests: 10

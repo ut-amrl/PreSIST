@@ -1,0 +1,16 @@
+# @package benchmark_dataset
+# Hand-annotated RobotCar queries location_01 export (27 tracks). See sibling
+# annotation_tool_hd_epic_P01_test.yaml for the mount-vs-remap rationale.
+
+name: handannotated_robotcar_loc01_test
+_target_: persistence_eval.datasets.annotation_tool.AnnotationToolBackingDataset
+manifest_path: /workspace/data/semantic-persistence-filter/external_annotated_data/extracted_data/robotcar_queries_annotation_ready/location_01/exports_test/20260513_111554/manifest.json
+max_anchor_observations: 1000
+shuffle_seed: 42
+per_track_balanced: true
+
+image_mask_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolImageMaskView
+
+track_view:
+  _target_: persistence_eval.datasets.annotation_tool.AnnotationToolTrackView

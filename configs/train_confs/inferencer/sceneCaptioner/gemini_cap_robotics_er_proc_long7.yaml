@@ -1,0 +1,16 @@
+# @package inferencer.sceneCaptioner
+# Gemini Robotics ER 1.6 (preview) scene captioner, same prompt as
+# gemma_cap_proc_long7 + gemini_cap_2_5_pro_proc_long7 for apples-to-apples
+# comparison. ER is in the 2.5-flash pricing tier (~$1/M input, $5/M output)
+# but tuned for embodied spatial reasoning — a natural fit for object-motion
+# and persistence reasoning. ``disable_thinking: true`` mirrors the Gemma
+# pipeline's ``enable_thinking: false`` exactly (ER accepts
+# ``thinking_budget=0`` so the off state is unambiguous, unlike on 2.5-pro).
+name: gemini_cap_robotics_er_proc_long7
+_target_: dataset_generation.scene_level_captioning.gemini_scene_level_captioner.GeminiSceneLevelCaptioner
+model_name: "gemini-robotics-er-1.6-preview"
+prompt_file: "prompt_files/scene_level_captioner/process_long7.txt"
+max_new_tokens: 16384
+temperature: 0.0
+top_p: 1.0
+disable_thinking: true

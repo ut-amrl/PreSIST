@@ -1,0 +1,44 @@
+# Sibling of eval_config_learned_obj_conditioned_cross_attn_lowlr_huber_norm_robotcar_loc01_test.yaml
+# (same dataset / experiment scaffolding) but swaps the learned model for the
+# Gemma-VLM three-stage pipeline used by
+# pucpr_eval_config_llm_split_50_20_30_gemma_v3iqrBehav4_mO20_percentile_balanced.yaml
+# (scene caption Long7 -> blur-bg-mask object describer -> v3_iqr_behav4 querier).
+#
+# Run with:
+#   python eval_persistence.py --config-name=eval_config_llm_pipeline_gemma_capLong7_descBlurMask_v3iqrBehav4_robotcar_loc01_test
+
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: annotation_tool_robotcar_loc01_test
+  - inferencer: llm_pipeline_gemma_capLong7_descBlurMask_v3iqrBehav4
+  - survival_generator: weibull_pucpr_llm
+  - persistence_filter: rosen
+  - predictor: survival_based
+  - benchmark: persistence_filter
+  - eval_scenario: percentile_horizons
+  - analysis: basic
+  - _self_
+
+mode: run_all
+
+experiment:
+  method: llm_pipeline_gemma_capLong7_descBlurMask_v3iqrBehav4
+  benchmark_dataset: ${benchmark_dataset.name}
+  name: ${experiment.method}__${experiment.benchmark_dataset}
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  explicit_inference_run_dir: null
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null
+  seed: null
+
+# Matched-noise default (p_m = p_f = 0.01) for the headline sweeps. Overrides
+# the filter YAML's 0.05 / 0.1 defaults. The script-level EVAL_NOISE_PM / PF
+# env knobs still take precedence when explicitly set.
+persistence_filter:
+  missed_detection_prob: 0.01
+  false_detection_prob: 0.01

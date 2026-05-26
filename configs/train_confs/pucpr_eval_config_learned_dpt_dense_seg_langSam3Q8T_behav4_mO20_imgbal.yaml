@@ -1,0 +1,52 @@
+defaults:
+  - registry_info: registry_default
+  - benchmark_dataset: annotation_tool_pucpr_split_50_20_30_test_balanced
+  - inferencer: learned_dpt_dense_model    # composes /model: dpt_dense_predictor + /mask_pooler@pooler: masked_mean
+  - survival_generator: weibull_pucpr_llm
+  - persistence_filter: rosen
+  - predictor: survival_based
+  - benchmark: pucpr_images
+  - eval_scenario: percentile_horizons
+  - analysis: basic
+  - _self_
+
+# Sibling of pucpr_eval_config_learned_obj_conditioned_cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal.yaml.
+# Points the dense DPT-style cross-attention predictor (trained by
+#   CUDA_VISIBLE_DEVICES=1 python3 train.py \
+#     --config-name=dpt_dense_seg_langSam3Q8T_behav4_mO20_imgbal[_<suffix>])
+# at the PUCPR 50/20/30 test split, with the same balanced-anchor sampling
+# and noise model as the per-mask sibling so headline numbers stay
+# apples-to-apples.
+#
+# Run with:
+#   python infer_persistence.py \
+#     --config-name=pucpr_eval_config_learned_dpt_dense_seg_langSam3Q8T_behav4_mO20_imgbal
+
+mode: run_all
+
+experiment:
+  name: learned_dpt_dense_seg_langSam3Q8T_behav4_mO20_imgbal_pucpr_split_50_20_30
+  subsample_fraction: 1.0
+  subsample_seed: 0
+
+paths:
+  output_root: /workspace/data/output/persistence_eval_outputs/
+  explicit_inference_run_dir: null
+
+runtime:
+  device: cuda
+  threshold: 0.5
+  timestamp: null
+  seed: null
+
+# Matched-noise default (p_m = p_f = 0.01), matching the headline LLM + cross_attn sweeps.
+persistence_filter:
+  missed_detection_prob: 0.01
+  false_detection_prob: 0.01
+
+inferencer:
+  # Drives the per-method output folder
+  # (persistence_eval_outputs/<dataset>/<name>/<benchmark>/inference_runs/<ts>);
+  # add_persist_vis_checkpoint.py overrides this per training run.
+  name: learned_dpt_dense_seg_langSam3Q8T_behav4_mO20_imgbal__ckpt_epoch_0_pretrain
+  checkpoint_path: /workspace/data/output/training_outputs/seg_langSam3Q8T_behav4_mO20_imgbal_dense/dpt_dense_predictor/default/2026-05-21_06-19-40/checkpoints/ckpt_epoch_0_pretrain.pth

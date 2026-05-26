@@ -1,0 +1,18 @@
+# @package inferencer
+
+# Sibling of learned_model.yaml — same LearnedModelInferencer class (which
+# only requires the model to expose the unified `predict_persistence(image,
+# masks) -> (n_instances, 3)` contract), but composes the DPT dense predictor
+# instead of the per-mask cross-attention model.
+
+defaults:
+  - /model: dpt_dense_predictor
+  - /mask_pooler@pooler: masked_mean   # dense model uses this to pool predictions over instance masks
+  - _self_
+
+_target_: persistence_eval.methods.inferencers.learned_model.LearnedModelInferencer
+checkpoint_path: ???    # required — set in the per-checkpoint eval config or override on CLI
+device: ${runtime.device}
+# Leave null to auto-detect (t50/t90 vs t25/t75) from the checkpoint's embedded
+# trainer_cfg. Set explicitly to override.
+output_param_keys: null

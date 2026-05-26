@@ -1,0 +1,30 @@
+# Dense-persistence visualization config. Inherits the DPT-dense robotcar
+# eval wiring; pins a default checkpoint and the `viz:` block consumed by
+# visualize_dense_persistence.py. Sibling dense_viz_<dataset>.yaml files
+# swap in other datasets while reusing the same viz defaults.
+defaults:
+  - eval_config_learned_dpt_dense_robotcar_loc01_test
+  - _self_
+
+experiment:
+  method: dense_viz
+
+inferencer:
+  checkpoint_path: /workspace/data/output/training_outputs/seg_langSam3Q8T_behav4_mO20_imgbal_dense/dpt_dense_predictor/default/2026-05-21_10-49-54/checkpoints/ckpt_best.pth
+
+viz:
+  output_dir: ${hydra:runtime.output_dir}/dense_viz
+  device: ${runtime.device}
+  input:
+    image_path: null
+    num_samples: 8
+    seed: 0
+  quantiles:
+    plot: [0.25, 0.5, 0.75]
+    vmin_hours: 1.0
+    vmax_hours: 17520.0
+    norm: log
+  horizons:
+    hours: null
+  cmap: viridis
+  alpha: 0.55

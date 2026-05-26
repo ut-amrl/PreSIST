@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Iterable, Optional, Protocol
 
 import torch
 
@@ -29,6 +29,8 @@ class ImageMaskDataset(Protocol):
 
     def iter_anchor_observations(self) -> Iterable[AnchorObservation]: ...
     def iter_image_groups(self) -> Iterable[ImageMaskGroup]: ...
+    def num_anchor_observations(self) -> int: ...
+    def num_image_groups(self) -> int: ...
 
 
 class TrackDataset(Protocol):
@@ -43,7 +45,17 @@ class PersistenceParameterInferencer(Protocol):
     Estimates persistence parameters for all objects in an ImageMaskGroup.
     Returns one PersistenceParameterEstimate per mask (same order as group.track_ids).
     """
-    def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]: ...
+    def infer(
+        self, group: ImageMaskGroup, *, one_off: bool = False,
+    ) -> tuple[list[PersistenceParameterEstimate], Optional[float]]: ...
+
+    def wants_warmup(self) -> bool:
+        """Whether the runner should fire a one-off synthetic warmup call
+        before the timed loop. Default implementation in
+        ``AbsPersistenceParameterInferencer`` returns True (suits local
+        model backends); HTTP-only backends should override to False.
+        """
+        return True
 
 
 class EpisodeProvider(Protocol):

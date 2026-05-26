@@ -8,6 +8,8 @@ read from a class-keyed JSON cache.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from persistence_eval.core.domain import ImageMaskGroup, PersistenceParameterEstimate
 from persistence_eval.methods.inferencers.base import AbsPersistenceParameterInferencer
 from persistence_eval.methods.inferencers.closed_set_semantics.semantic_class_persistence_param_lookup import (
@@ -27,12 +29,14 @@ class ClassKeyedLookupInferencer(AbsPersistenceParameterInferencer):
         self._class_id = class_id
         self._class_name = class_name
 
-    def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]:
+    def infer(
+        self, group: ImageMaskGroup, *, one_off: bool = False,
+    ) -> tuple[list[PersistenceParameterEstimate], Optional[float]]:
         shared = self._lookup.get_params_for_id(self._class_id)
         meta_extra = {"anchor_class_id": int(self._class_id)}
         if self._class_name is not None:
             meta_extra["anchor_class_name"] = self._class_name
-        return [
+        estimates = [
             PersistenceParameterEstimate(
                 params=shared.params,
                 confidence=shared.confidence,
@@ -40,3 +44,4 @@ class ClassKeyedLookupInferencer(AbsPersistenceParameterInferencer):
             )
             for _ in group.track_ids
         ]
+        return estimates, None

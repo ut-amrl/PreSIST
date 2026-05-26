@@ -14,6 +14,10 @@ from instance_segmentation.abs_instance_segmenter import SegmentationResults
 from utils.visualization_utils import mask_highlight_image, blur_bkg_outline_fg
 
 from dataset_generation.llm_persistence_querying.prompt_handler.abs_vlm_prompt_handler import AbsVLMPromptHandler
+from dataset_generation.llm_persistence_querying.prompt_handler.direct_persistence_vlm_prompt_handler import (
+    _iter_balanced_json_blocks,
+    _strip_code_fences,
+)
 from utils.image_utils import (
     image_tensor_to_pil,
     numpy_bgr_to_pil,
@@ -186,7 +190,7 @@ class VerboseVLMPersistencePromptHandler(AbsVLMPromptHandler):
         cleaned = response_text.strip()
 
         def extract_last_single_object(text: str) -> Dict[str, Any]:
-            text = text.strip()
+            text = _strip_code_fences(text.strip()).strip()
             candidates: list[Dict[str, Any]] = []
 
             # Case A: whole string is a JSON object or array
@@ -195,42 +199,23 @@ class VerboseVLMPersistencePromptHandler(AbsVLMPromptHandler):
             ):
                 try:
                     obj = json.loads(text)
-                    # Normalize to a dict if possible
                     if isinstance(obj, dict):
                         candidates.append(obj)
-                    elif isinstance(obj, list):
-                        # singleton list-of-dict
-                        if len(obj) == 1 and isinstance(obj[0], dict):
-                            candidates.append(obj[0])
-                        # array-of-dicts: take first dict
-                        elif len(obj) >= 1 and isinstance(obj[0], dict):
-                            candidates.append(obj[0])
+                    elif isinstance(obj, list) and obj and isinstance(obj[0], dict):
+                        candidates.append(obj[0])
                 except json.JSONDecodeError:
-                    pass  # fall through to more flexible parsing
+                    pass
 
-            # Case B: find all JSON objects `{...}` in the text (non-greedy)
-            for m in re.finditer(r"\{.*?\}", text, flags=re.DOTALL):
-                candidate = m.group(0)
+            # Case B: brace/bracket-balanced scan (handles nested JSON + prose)
+            for block in _iter_balanced_json_blocks(text):
                 try:
-                    obj = json.loads(candidate)
+                    obj = json.loads(block)
                 except json.JSONDecodeError:
                     continue
-
                 if isinstance(obj, dict):
                     candidates.append(obj)
-                elif isinstance(obj, list) and len(obj) == 1 and isinstance(obj[0], dict):
+                elif isinstance(obj, list) and obj and isinstance(obj[0], dict):
                     candidates.append(obj[0])
-
-            # Case C: find JSON arrays `[...]` and pull dicts from them (non-greedy)
-            for m in re.finditer(r"\[.*?\]", text, flags=re.DOTALL):
-                candidate = m.group(0)
-                try:
-                    arr = json.loads(candidate)
-                except json.JSONDecodeError:
-                    continue
-
-                if isinstance(arr, list) and len(arr) >= 1 and isinstance(arr[0], dict):
-                    candidates.append(arr[0])
 
             if not candidates:
                 raise ValueError("No valid single-object JSON found in text")

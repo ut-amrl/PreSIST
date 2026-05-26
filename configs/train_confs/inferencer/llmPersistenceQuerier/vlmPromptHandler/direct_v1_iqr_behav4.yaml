@@ -1,0 +1,12 @@
+# @package inferencer.llmPersistenceQuerier.vlmPromptHandler
+name: directVlmV1IqrBehav4
+_target_: dataset_generation.llm_persistence_querying.prompt_handler.direct_persistence_vlm_prompt_handler.DirectPersistenceVLMPromptHandler
+prompt_file: "prompt_files/llm_querier/direct_vlm/direct_v1_iqr_behav4.txt"
+prefix_file: "prompt_files/llm_querier/direct_vlm/format_prefix/pref_bgBlur_crop_with_mask_full_no_hole.txt"
+image_formatters:
+  - blur_bg_outline_fg
+  - zoom_crop_blur_bg_outline_fg
+  - full_scene
+mask_highlight_color: [0, 255, 255]
+full_mask_outline_thickness: 1
+crop_mask_outline_thickness: 3

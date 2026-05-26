@@ -9,6 +9,7 @@ into a `LocationPersistenceParamLookup`. Falls back to the lookup's
 from __future__ import annotations
 
 import json
+from typing import Optional
 
 from persistence_eval.core.domain import ImageMaskGroup, PersistenceParameterEstimate
 from persistence_eval.methods.inferencers.base import AbsPersistenceParameterInferencer
@@ -28,7 +29,9 @@ class LocationKeyedLookupInferencer(AbsPersistenceParameterInferencer):
         with open(track_id_to_location_file, "r") as f:
             self._track_id_to_location: dict[str, str] = json.load(f)
 
-    def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]:
+    def infer(
+        self, group: ImageMaskGroup, *, one_off: bool = False,
+    ) -> tuple[list[PersistenceParameterEstimate], Optional[float]]:
         estimates: list[PersistenceParameterEstimate] = []
         for track_id in group.track_ids:
             location_key = self._track_id_to_location.get(track_id)
@@ -51,4 +54,4 @@ class LocationKeyedLookupInferencer(AbsPersistenceParameterInferencer):
                     },
                 )
             )
-        return estimates
+        return estimates, None

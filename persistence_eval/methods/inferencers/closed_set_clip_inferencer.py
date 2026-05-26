@@ -1,3 +1,5 @@
+from typing import Optional
+
 from persistence_eval.core.domain import ImageMaskGroup, PersistenceParameterEstimate
 from persistence_eval.methods.inferencers.base import AbsPersistenceParameterInferencer
 from persistence_eval.methods.inferencers.closed_set_clip_align.closed_set_clip_embedder import CLIPAligner
@@ -14,7 +16,9 @@ class ClosedSetCLIPInferencer(AbsPersistenceParameterInferencer):
         self.clipAligner = clipAligner
         self.semanticClassPersistenceParamLookup = semanticClassPersistenceParamLookup
 
-    def infer(self, group: ImageMaskGroup) -> list[PersistenceParameterEstimate]:
+    def infer(
+        self, group: ImageMaskGroup, *, one_off: bool = False,
+    ) -> tuple[list[PersistenceParameterEstimate], Optional[float]]:
         id_to_class = self.clipAligner.class_list.id_to_class
         estimates = []
         for i in range(len(group.masks)):
@@ -31,4 +35,4 @@ class ClosedSetCLIPInferencer(AbsPersistenceParameterInferencer):
                 },
             )
             estimates.append(estimate)
-        return estimates
+        return estimates, None

@@ -3,7 +3,7 @@ import random
 import hydra
 import numpy as np
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 # Registers OmegaConf resolvers used in our config interpolations
 # (e.g. ${dot_to_p:...}). Must precede @hydra.main.
@@ -20,6 +20,18 @@ def main(cfg: DictConfig) -> None:
         np.random.seed(seed)
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+
+    # Optional top-level `gemini:` block configures the process-wide Gemini
+    # singleton (API client, cumulative token-usage tracker, snapshot file,
+    # safety-prompt opt-out). Configs without a `gemini:` section fall back
+    # to lazy env-var init on first engine construction. The pre-first-call
+    # safety prompt is owned by the engine itself (see _shared.maybe_confirm_first_call).
+    gemini_cfg = cfg.get("gemini") if isinstance(cfg, DictConfig) else None
+    if gemini_cfg is not None:
+        from dataset_generation.llm_persistence_querying.gemini._shared import (
+            configure_gemini_shared,
+        )
+        configure_gemini_shared(**OmegaConf.to_container(gemini_cfg, resolve=True))
 
     print("Starting evaluation with config:")
     print(cfg)
