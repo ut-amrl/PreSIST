@@ -1,0 +1,12 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50
+  - _self_
+
+# Ablation: drop cross-attention to full-image patch tokens. The pooled
+# per-mask query q is projected and fed straight to FF + head, so the
+# model has no access to image context outside the mask region. Tests
+# whether the cross-attn pathway is doing real work.
+trainer:
+  name: lowlr_huber_norm_loose50_masked_only
+model:
+  use_cross_attn: false

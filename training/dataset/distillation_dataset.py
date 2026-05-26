@@ -199,6 +199,8 @@ def label_transform_log_ratio(raw: dict) -> torch.Tensor:
 LABEL_TRANSFORM_REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
     "label_transform_log_ratio": ("median_persistence_hours", "p90_persistence_hours", "persistence_conf"),
     "label_transform_log_ratio_p25_p75": ("p25_persistence_hours", "p75_persistence_hours", "persistence_conf"),
+    "label_transform_linear_p25_gap": ("p25_persistence_hours", "p75_persistence_hours", "persistence_conf"),
+    "label_transform_log_p25_log_gap": ("p25_persistence_hours", "p75_persistence_hours", "persistence_conf"),
 }
 
 
@@ -240,6 +242,32 @@ def label_transform_log_ratio_p25_p75(raw: dict) -> torch.Tensor:
     yr = math.log(max(ratio, eps))
 
     return torch.tensor([ylo, yr, c], dtype=torch.float32)
+
+
+def label_transform_linear_p25_gap(raw: dict) -> torch.Tensor:
+    """Ablation 5a target: (p25_hours, p75_hours - p25_hours, conf).
+    Linear scale; gap is additive. Model is expected to apply softplus on
+    channels 0/1 at the predictor wrapper so p25 >= 0 and p75 >= p25 fall
+    out by construction.
+    """
+    p25 = float(raw["p25_persistence_hours"])
+    p75 = float(raw["p75_persistence_hours"])
+    gap = max(p75 - p25, 0.0)
+    return torch.tensor([p25, gap, float(raw["persistence_conf"])], dtype=torch.float32)
+
+
+def label_transform_log_p25_log_gap(raw: dict) -> torch.Tensor:
+    """Ablation 5b target: (log p25, log(p75 - p25), conf).
+    Differs from label_transform_log_ratio_p25_p75 only in that the gap is
+    in absolute time units (additive log) rather than normalized by p25
+    (multiplicative ratio). Decode: p25 = exp(c0); p75 = p25 + exp(c1).
+    """
+    eps = 1e-8
+    tlo = max(float(raw["p25_persistence_hours"]), eps)
+    thi = max(float(raw["p75_persistence_hours"]), eps)
+    y_p25 = math.log(tlo)
+    y_gap = math.log(max(thi - tlo, eps))
+    return torch.tensor([y_p25, y_gap, float(raw["persistence_conf"])], dtype=torch.float32)
 
 
 @dataclass(frozen=True)

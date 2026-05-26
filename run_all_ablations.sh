@@ -24,6 +24,12 @@ LOG_DIR="${LOG_DIR:-ablation_logs}"
 # overrides handle the big cuts; this handles the long-tail fragment.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
+# On Blackwell (cap 12) there is no xformers memory_efficient_attention
+# fp32 kernel. Set XFORMERS_DISABLED=1 in your environment before running
+# this script in that case to fall back to the in-class PyTorch attention
+# (see persistence_parameter_networks/.../dinov2/attention.py). H100 and
+# below run xformers as normal.
+
 OURS=cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50
 
 # Code-touching ablations (masked_only, p25p75_linear, p25p75_loggap) are
@@ -43,6 +49,8 @@ CONFIGS=(
   "${OURS}__no_pretrain"
   # --- Priority 4: no adapters (config-only) ---
   "${OURS}__no_adapter"
+  # --- Priority 5: masked-only (Phase C, code-touching) ---
+  "${OURS}__masked_only"
 )
 
 exec python run_ablations.py \

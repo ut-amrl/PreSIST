@@ -293,10 +293,12 @@ class MultiMaskObjectConditionedCrossAttnPredictor(AbsRawPredictor):
         attn_dim: int | None = None,
         num_heads: int = 8,
         ff_hidden: int = 512,
+        use_cross_attn: bool = True,
     ):
         super().__init__(outputLength=outputLength)
         self.backbone = backbone
         self.pooler = pooler
+        self.use_cross_attn = use_cross_attn
 
         token_dim = getattr(backbone, "features_dim", None)
         if token_dim is None:
@@ -316,9 +318,9 @@ class MultiMaskObjectConditionedCrossAttnPredictor(AbsRawPredictor):
         self.attn_dim = attn_dim or token_dim
 
         self.q_proj = nn.Linear(q_dim, self.attn_dim)
-        self.kv_proj = nn.Linear(token_dim, self.attn_dim)
-
-        self.attn = nn.MultiheadAttention(self.attn_dim, num_heads=num_heads, batch_first=True)
+        if self.use_cross_attn:
+            self.kv_proj = nn.Linear(token_dim, self.attn_dim)
+            self.attn = nn.MultiheadAttention(self.attn_dim, num_heads=num_heads, batch_first=True)
 
         self.ff = nn.Sequential(
             nn.LayerNorm(self.attn_dim),
@@ -344,15 +346,19 @@ class MultiMaskObjectConditionedCrossAttnPredictor(AbsRawPredictor):
 
         # Project
         q = self.q_proj(q)                          # (B, K, attn_dim)
-        kv = self.kv_proj(patch_tokens)             # (B, N, attn_dim)
 
-        # Flatten queries for attention: treat each object as its own batch element
-        q_flat = q.reshape(B * K, 1, self.attn_dim)               # (B*K, 1, D)
-        kv_flat = kv.unsqueeze(1).expand(B, K, *kv.shape[1:])     # (B, K, N, D)
-        kv_flat = kv_flat.reshape(B * K, kv.shape[1], self.attn_dim)  # (B*K, N, D)
+        if self.use_cross_attn:
+            kv = self.kv_proj(patch_tokens)             # (B, N, attn_dim)
 
-        a, _ = self.attn(q_flat, kv_flat, kv_flat)  # (B*K, 1, D)
-        x = a.squeeze(1)                            # (B*K, D)
+            # Flatten queries for attention: treat each object as its own batch element
+            q_flat = q.reshape(B * K, 1, self.attn_dim)               # (B*K, 1, D)
+            kv_flat = kv.unsqueeze(1).expand(B, K, *kv.shape[1:])     # (B, K, N, D)
+            kv_flat = kv_flat.reshape(B * K, kv.shape[1], self.attn_dim)  # (B*K, N, D)
+
+            a, _ = self.attn(q_flat, kv_flat, kv_flat)  # (B*K, 1, D)
+            x = a.squeeze(1)                            # (B*K, D)
+        else:
+            x = q.reshape(B * K, self.attn_dim)
         x = self.ff(x)
         pred = self.head(x)                         # (B*K, outputLength)
 

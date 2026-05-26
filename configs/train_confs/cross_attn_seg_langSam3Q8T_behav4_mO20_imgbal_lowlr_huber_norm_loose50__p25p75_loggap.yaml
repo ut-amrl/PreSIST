@@ -1,0 +1,32 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50
+  - _self_
+
+# Ablation 5b: predict (log p25, log(p75 - p25)) instead of Ours'
+# (log p25, log(p75/p25 - 1)). Differs from Ours only in that the gap
+# is in absolute time units (additive log) rather than normalized by
+# p25 (multiplicative ratio). Decode: p25 = exp(c0); p75 = p25 + exp(c1)
+# — both exp(.) > 0 gives positivity and ordering for free, no model
+# changes.
+#
+# Tests whether the scale-invariant ratio prior in Ours is doing real
+# work, or whether plain log-space gap would have sufficed. If the
+# prior is real, expect Ours to beat 5b on high-(p75/p25-spread)
+# buckets and tie elsewhere.
+#
+# Channel-0 stats should match Ours' y50 stats closely (same target).
+# Channel-1 stats will differ. Fill via scripts/compute_target_stats.py.
+trainer:
+  name: lowlr_huber_norm_loose50_p25p75_loggap
+  loop:
+    validationConfig:
+      target_parameterization: log_p25_loggap
+train_dataset:
+  label_transform:
+    _target_: training.dataset.distillation_dataset.label_transform_log_p25_log_gap
+    _partial_: true
+  # Placeholders — fill in from compute_target_stats.py
+  y50_mean: ???
+  y50_std:  ???
+  yr_mean:  ???
+  yr_std:   ???

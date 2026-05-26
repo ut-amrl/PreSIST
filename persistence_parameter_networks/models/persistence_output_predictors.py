@@ -17,7 +17,8 @@ from typing import Optional
 
 # Abstract base class for raw parameter predictors
 class PersistenceOutputPredictor(nn.Module, ABC):
-    def __init__(self, baseModel: AbsRawPredictor, name: str, confidenceFromLogits: bool = False):
+    def __init__(self, baseModel: AbsRawPredictor, name: str, confidenceFromLogits: bool = False,
+                 output_activations: Optional[str] = None):
         super(PersistenceOutputPredictor, self).__init__()
         self.baseModel = baseModel
         # Assert that the base model's output legnth is 3 (y50, yr, yc)
@@ -25,6 +26,12 @@ class PersistenceOutputPredictor(nn.Module, ABC):
             raise ValueError(f"Base model outputLength must be 3 (y50, yr, yc). Got {self.baseModel.outputLength}")
         self.confidence_from_logits = confidenceFromLogits
         self.model_name = name
+        # None / "default": channels 0/1 raw (Ours).
+        # "linear_softplus": softplus on channels 0/1 (ablation 5a — enforces
+        # p25 >= 0 and p75 >= p25 by construction in linear-hour space).
+        if output_activations not in (None, "default", "linear_softplus"):
+            raise ValueError(f"Unknown output_activations: {output_activations!r}")
+        self.output_activations = output_activations
 
 
     def forward(self, image: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -35,6 +42,10 @@ class PersistenceOutputPredictor(nn.Module, ABC):
         rawPredictorOutputs = self.baseModel(image, mask)
 
         y50_hat, yr_hat, yc_hat = rawPredictorOutputs[:, 0], rawPredictorOutputs[:, 1], rawPredictorOutputs[:, 2]
+
+        if self.output_activations == "linear_softplus":
+            y50_hat = torch.nn.functional.softplus(y50_hat)
+            yr_hat = torch.nn.functional.softplus(yr_hat)
 
         if (not self.confidence_from_logits):
             yc_hat = torch.sigmoid(yc_hat)
@@ -51,6 +62,8 @@ class PersistenceObjConditionedCrossAttn(PersistenceOutputPredictor):
         num_heads: int = 8,
         ff_hidden: int = 512,
         confidenceFromLogits: bool = False,
+        use_cross_attn: bool = True,
+        output_activations: Optional[str] = None,
         name: str = "obj_conditioned_cross_attn",
     ):
 
@@ -72,8 +85,10 @@ class PersistenceObjConditionedCrossAttn(PersistenceOutputPredictor):
                 attn_dim=attn_dim,
                 num_heads=num_heads,
                 ff_hidden=ff_hidden,
+                use_cross_attn=use_cross_attn,
             ),
             confidenceFromLogits=confidenceFromLogits,
+            output_activations=output_activations,
             name=composed_name,
         )
 

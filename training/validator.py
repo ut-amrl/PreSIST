@@ -63,6 +63,7 @@ from __future__ import annotations
 #     versions compute the true `sqrt(weighted_mean(se))` and are correct.
 # ---------------------------------------------------------------------------
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, Union
@@ -89,6 +90,16 @@ class ValConfig:
     # Optional extra metrics
     compute_original_time_metrics: bool = True
     compute_correlations: bool = True
+
+    # How to decode (y50_hat, yr_hat) back to (p_lo, p_hi) in original time
+    # space for the t50/t90 metrics. Three options:
+    #   - "log_p25_logratio" (default; Ours): p_lo = exp(c0); p_hi = p_lo * (1 + exp(c1))
+    #   - "log_p25_loggap"   (ablation 5b):   p_lo = exp(c0); p_hi = p_lo + exp(c1)
+    #   - "linear_p25_gap"   (ablation 5a):   p_lo = c0;      p_hi = c0 + c1
+    # The metric keys themselves keep the legacy "t50"/"t90" naming for
+    # logging stability, but semantically denote (p_lo, p_hi) under the
+    # configured parameterization.
+    target_parameterization: str = "log_p25_logratio"
 
     # Mixed precision
     use_amp: bool = False
@@ -119,6 +130,50 @@ def _unpack_batch(batch: Union[Dict[str, Any], Tuple[Any, ...]]) -> Dict[str, An
         "Unsupported batch format. Expected dict with keys "
         "('image','mask','y50','yr','yc') or tuple (image, mask, y50, yr, yc, ...)."
     )
+
+
+SUPPORTED_TARGET_PARAMETERIZATIONS = (
+    "log_p25_logratio",  # Ours: (log p25, log(p75/p25 - 1))
+    "log_p25_loggap",    # Ablation 5b: (log p25, log(p75 - p25))
+    "linear_p25_gap",    # Ablation 5a: (p25, p75 - p25) with softplus in-model
+)
+
+
+def decode_to_original_time(
+    c0,
+    c1,
+    target_parameterization: str,
+):
+    """Map post-DenormalizingValidationModel outputs (c0, c1) back to the
+    (p_lo, p_hi) percentile pair in original time units.
+
+    `c0`/`c1` may be torch tensors or floats — the operations work on
+    either. For `linear_p25_gap`, callers are responsible for using the
+    post-softplus model output (already non-negative).
+
+    This is the canonical decode used by:
+      - SurvivalValidationRunner.validate (training-time t50/t90 metrics)
+      - evaluate.py distribution + overlay collection
+      - LearnedModelInferencer._decode_outputs (production inference)
+    Keep these three call sites in sync by routing through this function.
+    """
+    tp = target_parameterization
+    if tp == "log_p25_logratio":
+        p_lo = torch.exp(c0) if torch.is_tensor(c0) else math.exp(c0)
+        p_hi = p_lo * (1.0 + (torch.exp(c1) if torch.is_tensor(c1) else math.exp(c1)))
+    elif tp == "log_p25_loggap":
+        p_lo = torch.exp(c0) if torch.is_tensor(c0) else math.exp(c0)
+        gap = torch.exp(c1) if torch.is_tensor(c1) else math.exp(c1)
+        p_hi = p_lo + gap
+    elif tp == "linear_p25_gap":
+        p_lo = c0
+        p_hi = c0 + c1
+    else:
+        raise ValueError(
+            f"Unknown target_parameterization: {tp!r}. "
+            f"Supported: {SUPPORTED_TARGET_PARAMETERIZATIONS}"
+        )
+    return p_lo, p_hi
 
 
 def _weighted_mean(values: torch.Tensor, weights: torch.Tensor, eps: float = 1e-12) -> float:
@@ -411,10 +466,14 @@ class SurvivalValidationRunner:
 
             # Optional: metrics in original time space
             if self.cfg.compute_original_time_metrics:
-                t50_hat = torch.exp(y50_hat.float())
-                t50_true = torch.exp(y50.float())
-                t90_hat = t50_hat * (1.0 + torch.exp(yr_hat.float()))
-                t90_true = t50_true * (1.0 + torch.exp(yr.float()))
+                t50_hat, t90_hat = decode_to_original_time(
+                    y50_hat.float(), yr_hat.float(),
+                    self.cfg.target_parameterization,
+                )
+                t50_true, t90_true = decode_to_original_time(
+                    y50.float(), yr.float(),
+                    self.cfg.target_parameterization,
+                )
 
                 err_t50 = t50_hat - t50_true
                 err_t90 = t90_hat - t90_true

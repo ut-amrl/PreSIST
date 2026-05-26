@@ -1,0 +1,36 @@
+defaults:
+  - cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50
+  - _self_
+
+# Ablation 5a: predict (p25, p75 - p25) in *linear* hours instead of the
+# Ours (log p25, log(p75/p25 - 1)) parameterization. Predictor applies
+# softplus to channels 0/1 so p25 >= 0 and p75 >= p25 fall out by
+# construction. Tests "log vs linear scale + multiplicative vs additive
+# gap" jointly (no natural multiplicative form in linear space).
+#
+# Huber deltas widened from Ours' (3.0, 1.0) to (5.0, 5.0): linear-hour
+# residuals have a much heavier tail than log-hour residuals (think
+# chairs at ~1e5 h). Treat as a guess; revisit after smoke.
+#
+# Z-score stats are placeholders. Run scripts/compute_target_stats.py
+# (one-off; do not commit) once to fill in actual train-set
+# (mean, std) for (p25_hours, p75_hours - p25_hours).
+trainer:
+  name: lowlr_huber_norm_loose50_p25p75_linear
+  loss_function:
+    delta_50: 5.0
+    delta_r: 5.0
+  loop:
+    validationConfig:
+      target_parameterization: linear_p25_gap
+model:
+  output_activations: linear_softplus
+train_dataset:
+  label_transform:
+    _target_: training.dataset.distillation_dataset.label_transform_linear_p25_gap
+    _partial_: true
+  # Placeholders — fill in from compute_target_stats.py
+  y50_mean: ???
+  y50_std:  ???
+  yr_mean:  ???
+  yr_std:   ???

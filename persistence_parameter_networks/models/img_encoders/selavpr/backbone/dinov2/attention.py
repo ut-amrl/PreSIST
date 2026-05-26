@@ -9,19 +9,24 @@
 #   https://github.com/rwightman/pytorch-image-models/tree/master/timm/models/vision_transformer.py
 
 import logging
+import os
 
 from torch import Tensor, nn
 
 logger = logging.getLogger("dinov2")
 
 
-try:
-    from xformers.ops import fmha, memory_efficient_attention, unbind
-
-    XFORMERS_AVAILABLE = True
-except ImportError:
-    logger.warning("xFormers not available")
+if os.environ.get("XFORMERS_DISABLED", "").lower() in ("1", "true", "yes"):
+    # Blackwell (cap 12) has no xformers fp32 kernel; fall back to torch SDPA.
     XFORMERS_AVAILABLE = False
+else:
+    try:
+        from xformers.ops import fmha, memory_efficient_attention, unbind
+
+        XFORMERS_AVAILABLE = True
+    except ImportError:
+        logger.warning("xFormers not available")
+        XFORMERS_AVAILABLE = False
 
 
 class Attention(nn.Module):

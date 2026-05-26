@@ -23,6 +23,23 @@ _LABEL_TRANSFORM_KEYS: dict[str, Tuple[str, str, str, str]] = {
     "training.dataset.distillation_dataset.label_transform_log_ratio_p25_p75": (
         "t25", "t75", "p25_persistence_hours", "p75_persistence_hours",
     ),
+    "training.dataset.distillation_dataset.label_transform_linear_p25_gap": (
+        "t25", "t75", "p25_persistence_hours", "p75_persistence_hours",
+    ),
+    "training.dataset.distillation_dataset.label_transform_log_p25_log_gap": (
+        "t25", "t75", "p25_persistence_hours", "p75_persistence_hours",
+    ),
+}
+# Mirrors training.validator.SUPPORTED_TARGET_PARAMETERIZATIONS — maps the
+# checkpoint's label_transform target to the decode kind to apply when
+# undoing it. Keep in sync with that module and with the predictor's
+# `output_activations` behavior (softplus already applied in-model for
+# linear_p25_gap).
+_LABEL_TRANSFORM_DECODE: dict[str, str] = {
+    "training.dataset.distillation_dataset.label_transform_log_ratio": "log_p25_logratio",
+    "training.dataset.distillation_dataset.label_transform_log_ratio_p25_p75": "log_p25_logratio",
+    "training.dataset.distillation_dataset.label_transform_linear_p25_gap": "linear_p25_gap",
+    "training.dataset.distillation_dataset.label_transform_log_p25_log_gap": "log_p25_loggap",
 }
 _DEFAULT_TRANSFORM = "training.dataset.distillation_dataset.label_transform_log_ratio"
 
@@ -91,6 +108,7 @@ class LearnedModelInferencer(AbsPersistenceParameterInferencer):
             self._lo_keys,
             self._hi_keys,
             self._confidence_from_logits,
+            self._decode_kind,
         ) = self._resolve_decode(output_param_keys)
         self._img_size = self._resolve_img_size()
         self._transform = self._build_transform(self._img_size)
@@ -151,8 +169,9 @@ class LearnedModelInferencer(AbsPersistenceParameterInferencer):
 
     def _resolve_decode(
         self, output_param_keys_override: Optional[list[str]]
-    ) -> Tuple[Tuple[str, ...], Tuple[str, ...], bool]:
-        """Pick the (low_keys, high_keys) tuples and confidence_from_logits.
+    ) -> Tuple[Tuple[str, ...], Tuple[str, ...], bool, str]:
+        """Pick the (low_keys, high_keys) tuples, confidence_from_logits, and
+        decode kind (one of training.validator.SUPPORTED_TARGET_PARAMETERIZATIONS).
 
         Each "keys" tuple lists every alias the decoded low/high value
         should be reported under (short + long form), so any downstream
@@ -164,6 +183,7 @@ class LearnedModelInferencer(AbsPersistenceParameterInferencer):
         """
         confidence_from_logits = False
         short_lo, short_hi, long_lo, long_hi = _LABEL_TRANSFORM_KEYS[_DEFAULT_TRANSFORM]
+        decode_kind = _LABEL_TRANSFORM_DECODE[_DEFAULT_TRANSFORM]
 
         trainer_cfg_yaml = getattr(self._ckpt_meta, "trainer_cfg", None)
         if trainer_cfg_yaml:
@@ -172,6 +192,7 @@ class LearnedModelInferencer(AbsPersistenceParameterInferencer):
                 transform_target = OmegaConf.select(cfg, "train_dataset.label_transform._target_")
                 if transform_target in _LABEL_TRANSFORM_KEYS:
                     short_lo, short_hi, long_lo, long_hi = _LABEL_TRANSFORM_KEYS[transform_target]
+                    decode_kind = _LABEL_TRANSFORM_DECODE[transform_target]
                 elif transform_target is not None:
                     print(
                         f"[LearnedModelInferencer] Unknown label_transform target "
@@ -199,9 +220,10 @@ class LearnedModelInferencer(AbsPersistenceParameterInferencer):
                 (output_param_keys_override[0],),
                 (output_param_keys_override[1],),
                 confidence_from_logits,
+                decode_kind,
             )
 
-        return (short_lo, long_lo), (short_hi, long_hi), confidence_from_logits
+        return (short_lo, long_lo), (short_hi, long_hi), confidence_from_logits, decode_kind
 
     def infer(
         self, group: ImageMaskGroup, *, one_off: bool = False,
@@ -231,14 +253,16 @@ class LearnedModelInferencer(AbsPersistenceParameterInferencer):
         return estimates, None
 
     def _decode_outputs(self, row: torch.Tensor) -> dict[str, float]:
-        # row: (3,) — columns [y_low, y_ratio, y_conf]. Inverse of
-        # label_transform_log_ratio{,_p25_p75}:
-        #   t_low  = exp(y_low)
-        #   t_high = t_low * (exp(y_ratio) + 1)
-        #   conf   = sigmoid(y_conf) if trained with logits, else y_conf
+        # row: (3,) — columns [c0, c1, y_conf]. The decode of (c0, c1) to
+        # (t_low, t_high) depends on the trainer's label_transform — see
+        # training.validator.decode_to_original_time. For linear_p25_gap,
+        # the model has already applied softplus inside the predictor, so
+        # c0/c1 reaching this point are already non-negative.
+        from training.validator import decode_to_original_time
         y_low, y_ratio, y_conf = row[0], row[1], row[2]
-        t_low = float(torch.exp(y_low))
-        t_high = float(t_low * float(torch.exp(y_ratio) + 1.0))
+        t_low_t, t_high_t = decode_to_original_time(y_low, y_ratio, self._decode_kind)
+        t_low = float(t_low_t)
+        t_high = float(t_high_t)
         conf = float(torch.sigmoid(y_conf) if self._confidence_from_logits else y_conf)
         params: dict[str, float] = {"confidence": conf}
         for k in self._lo_keys:

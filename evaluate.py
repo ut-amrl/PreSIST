@@ -553,6 +553,7 @@ def _collect_split_distributions(
     device: torch.device,
     confidence_from_logits: bool,
     use_amp: bool,
+    target_parameterization: str = "log_p25_logratio",
 ) -> dict[str, dict[str, np.ndarray]]:
     """
     Returns:
@@ -564,6 +565,7 @@ def _collect_split_distributions(
         "t90": {"true": ..., "pred": ...},
       }
     """
+    from training.validator import decode_to_original_time
     model.eval()
     autocast_ctx = torch.cuda.amp.autocast if device.type == "cuda" else torch.cpu.amp.autocast
     use_amp = bool(use_amp and device.type == "cuda")
@@ -586,11 +588,14 @@ def _collect_split_distributions(
             y50_hat, yr_hat, yc_hat = model(image, mask)
             yc_pred = torch.sigmoid(yc_hat) if confidence_from_logits else yc_hat
 
-        # Derived times (compute in float for stability under AMP)
-        t50_true = torch.exp(y50_true.float())
-        t50_pred = torch.exp(y50_hat.float())
-        t90_true = t50_true * (1.0 + torch.exp(yr_true.float()))
-        t90_pred = t50_pred * (1.0 + torch.exp(yr_hat.float()))
+        # Derived times (compute in float for stability under AMP). Decode
+        # depends on the trainer's target_parameterization.
+        t50_true, t90_true = decode_to_original_time(
+            y50_true.float(), yr_true.float(), target_parameterization,
+        )
+        t50_pred, t90_pred = decode_to_original_time(
+            y50_hat.float(), yr_hat.float(), target_parameterization,
+        )
 
         buf["y50"]["true"].append(_as_1d_numpy(y50_true))
         buf["y50"]["pred"].append(_as_1d_numpy(y50_hat))
@@ -675,7 +680,9 @@ def _save_some_overlays(
     max_images: int,
     confidence_from_logits: bool,
     use_amp: bool,
+    target_parameterization: str = "log_p25_logratio",
 ) -> int:
+    from training.validator import decode_to_original_time
     if max_images <= 0:
         return 0
 
@@ -703,10 +710,13 @@ def _save_some_overlays(
             yc_prob = torch.sigmoid(yc_hat) if confidence_from_logits else yc_hat
 
         # --- NEW: compute t50 / t90 (in float for numeric stability under AMP) ---
-        t50_hat = torch.exp(y50_hat.float())
-        t50_true = torch.exp(y50.float())
-        t90_hat = t50_hat * (1.0 + torch.exp(yr_hat.float()))
-        t90_true = t50_true * (1.0 + torch.exp(yr.float()))
+        # Decode depends on the trainer's target_parameterization.
+        t50_hat, t90_hat = decode_to_original_time(
+            y50_hat.float(), yr_hat.float(), target_parameterization,
+        )
+        t50_true, t90_true = decode_to_original_time(
+            y50.float(), yr.float(), target_parameterization,
+        )
         # ------------------------------------------------------------------------
 
         bs = int(image.shape[0])
@@ -847,6 +857,7 @@ def _evaluate_split(
         device=device,
         confidence_from_logits=bool(getattr(vcfg, "confidence_from_logits", False)),
         use_amp=bool(getattr(vcfg, "use_amp", False)),
+        target_parameterization=str(getattr(vcfg, "target_parameterization", "log_p25_logratio")),
     )
     _save_distribution_plots(
         dists,
@@ -871,6 +882,7 @@ def _evaluate_split(
             max_images=viz_max,
             confidence_from_logits=bool(getattr(vcfg, "confidence_from_logits", False)),
             use_amp=bool(getattr(vcfg, "use_amp", False)),
+            target_parameterization=str(getattr(vcfg, "target_parameterization", "log_p25_logratio")),
         )
 
     payload: Dict[str, Any] = {
