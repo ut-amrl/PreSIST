@@ -1,0 +1,33 @@
+# Dense + z-score norm + inverse-frequency label weighting (C3).
+#
+# Extends the z-score-normalized dense dataset config with a label-binned
+# inverse-frequency weight composed multiplicatively onto the per-instance
+# area normalizer. Effect: a pixel's weight is
+#
+#   weight = (1 / area_of_owning_instance) × (inv_freq_weight_for_its_y50_bin)
+#
+# So an instance whose y50 falls in a rare bin contributes
+# proportionally more total loss than a typical-y50 instance of the same
+# size. The mean weight is normalized to 1 by the precompute script, so
+# overall loss magnitude is comparable to the area-only baseline.
+#
+# Before training, generate the freq table:
+#
+#   python scripts/compute_label_inverse_freq.py \
+#       --config-name=dpt_dense_..._lowlr_huber_norm_loose50 \
+#       --out-npz /workspace/data/output/dense_supervision_cache/label_invfreq_y50_post_norm.npz
+#
+# The freq_table_path below must match what you wrote.
+
+defaults:
+  - seg_langSam3Q8T_behav4_mO20_imgbal_dense_norm
+  - _self_
+
+dense_rasterizer:
+  _target_: persistence_parameter_networks.data.dense_target_rasterizer.SmallerWinsRasterizer
+  normalizer:
+    _target_: persistence_parameter_networks.data.dense_target_rasterizer.LabelBinnedFrequencyNormalizer
+    freq_table_path: /workspace/data/output/dense_supervision_cache/label_invfreq_y50_post_norm.npz
+    label_channel: 0
+    base:
+      _target_: persistence_parameter_networks.data.dense_target_rasterizer.PerInstanceAreaNormalizer

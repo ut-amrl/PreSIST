@@ -1,0 +1,20 @@
+# Dense dataset variant using AreaWeightedAverageRasterizer.
+#
+# Inherits from the base dense config; overrides only the rasterizer.
+# Overlap policy: each contributing instance's label is averaged into
+# overlap pixels with weight ~1/area, so smaller instances dominate
+# more at conflicts (similar in spirit to SmallerWins but soft and
+# producing a smoother target than the hard-edged Smaller/LargerWins
+# variants). Non-overlap pixels behave identically to other rasterizers.
+#
+# The rasterizer fingerprint differs from SmallerWins, so this dataset
+# variant gets its own dense supervision cache stage dir.
+
+defaults:
+  - seg_langSam3Q8T_behav4_mO20_imgbal_dense
+  - _self_
+
+dense_rasterizer:
+  _target_: persistence_parameter_networks.data.dense_target_rasterizer.AreaWeightedAverageRasterizer
+  normalizer:
+    _target_: persistence_parameter_networks.data.dense_target_rasterizer.PerInstanceAreaNormalizer

@@ -896,6 +896,7 @@ class _SegmentationDataset(Dataset):
                 rasterizer=cfg.dense_rasterizer,
                 label_transform=self._label_transform,
                 enable=cfg.dense_cache_enabled,
+                target_norm_stats=self._target_norm_stats_dict(),
             )
 
         # Print the number of records and instances indexed for this split
@@ -1159,6 +1160,7 @@ class _SegmentationDataset(Dataset):
             [lab.to(torch.float32).view(-1) for lab in per_instance_labels],
             dim=0,
         )  # (N, 3)
+        instance_labels = self._apply_target_norm_to_dense_labels(instance_labels)
 
         # Rasterize (via cache if available) — passes the actual masks
         # and labels in so the cache stores the result keyed by
@@ -1181,6 +1183,44 @@ class _SegmentationDataset(Dataset):
             "image_id": str(rec["image_id"]),
             "image_path": str(rec["image_path"]),
         }
+
+    def _target_norm_stats_dict(self) -> Optional[Dict[str, float]]:
+        """Return the four-key z-score stats dict if fully set, else None.
+
+        Used by both the dense supervision cache (for fingerprinting) and
+        by ``_apply_target_norm_to_dense_labels`` (for the actual transform)
+        so they can never disagree on whether normalization is active.
+        """
+        if (
+            self.cfg.y50_mean is not None
+            and self.cfg.y50_std is not None
+            and self.cfg.yr_mean is not None
+            and self.cfg.yr_std is not None
+        ):
+            return {
+                "y50_mean": float(self.cfg.y50_mean),
+                "y50_std": float(self.cfg.y50_std),
+                "yr_mean": float(self.cfg.yr_mean),
+                "yr_std": float(self.cfg.yr_std),
+            }
+        return None
+
+    def _apply_target_norm_to_dense_labels(
+        self, instance_labels: torch.Tensor
+    ) -> torch.Tensor:
+        """Z-score y50/yr columns of an (N, 3) label tensor; leave yc alone.
+
+        Mirrors the per-instance z-score step at the bottom of
+        ``_get_per_instance``. No-op when the four stats aren't all set
+        (preserves the existing dense-cache fingerprint for old configs).
+        """
+        stats = self._target_norm_stats_dict()
+        if stats is None or instance_labels.numel() == 0:
+            return instance_labels
+        out = instance_labels.clone()
+        out[:, 0] = (out[:, 0] - stats["y50_mean"]) / stats["y50_std"]
+        out[:, 1] = (out[:, 1] - stats["yr_mean"]) / stats["yr_std"]
+        return out
 
     def _normalize_persistence_obj(self, obj: Any, *, path: Path) -> Dict[str, dict]:
         """

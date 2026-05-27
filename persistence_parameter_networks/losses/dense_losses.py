@@ -99,6 +99,8 @@ class DenseWeightedMultiLoss(DenseLoss):
         delta_c: float = 0.25,
         clamp_confidence_probs: bool = True,
         eps: float = 1e-6,
+        bg_conf_weight: float = 0.0,
+        bg_conf_target: float = 0.0,
     ):
         super().__init__()
         self.w50 = w50
@@ -112,6 +114,15 @@ class DenseWeightedMultiLoss(DenseLoss):
         self.delta_c = delta_c
         self.clamp_confidence_probs = clamp_confidence_probs
         self.eps = eps
+        # Background-only confidence supervision. When >0, every pixel
+        # outside loss_mask is supervised against bg_conf_target on the
+        # confidence channel only (y50/yr untouched on background — they
+        # have no meaningful target there). The bg term is contracted by
+        # bg_conf_weight so a small value like 0.01 nudges the model to
+        # say "low confidence" on unlabeled regions without overwhelming
+        # the primary per-pixel signal.
+        self.bg_conf_weight = float(bg_conf_weight)
+        self.bg_conf_target = float(bg_conf_target)
 
         if self.confidence_from_logits and self.confidence_loss != "bce":
             raise ValueError(
@@ -156,12 +167,29 @@ class DenseWeightedMultiLoss(DenseLoss):
         loss_c = _weighted_reduce(pp_c, loss_mask, pixel_weights)
 
         full = self.w50 * loss_50 + self.wr * loss_r + self.wc * loss_c
-        return full, {
+        metrics: Dict[str, torch.Tensor] = {
             "loss_50": loss_50.detach(),
             "loss_r": loss_r.detach(),
             "loss_c": loss_c.detach(),
-            "full_loss": full.detach(),
         }
+
+        if self.bg_conf_weight > 0.0:
+            # Background = pixels outside loss_mask. Supervise conf only,
+            # target = bg_conf_target (typically 0). Use _conf_per_pixel
+            # so the same confidence_loss kind (mse/bce/huber) applies on
+            # both sides — bg_loss_c is comparable to loss_c in scale.
+            bg_mask = (~loss_mask.to(torch.bool)).to(pred_map.dtype)
+            bg_target = torch.full_like(pred_map[:, 2:3], self.bg_conf_target)
+            bg_pp_c = self._conf_per_pixel(pred_map[:, 2:3], bg_target)
+            # Uniform weight on background — area normalization is
+            # handled by averaging; no need to mirror pixel_weights here.
+            bg_weight = torch.ones_like(bg_mask)
+            bg_loss_c = _weighted_reduce(bg_pp_c, bg_mask, bg_weight)
+            full = full + self.bg_conf_weight * bg_loss_c
+            metrics["bg_loss_c"] = bg_loss_c.detach()
+
+        metrics["full_loss"] = full.detach()
+        return full, metrics
 
 
 class DenseWeightedMultiLossWithInstanceAux(DenseLoss):

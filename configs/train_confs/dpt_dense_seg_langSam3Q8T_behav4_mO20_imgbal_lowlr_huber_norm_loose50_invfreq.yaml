@@ -1,0 +1,44 @@
+# C3: A4 recipe + inverse-frequency label weighting on y50.
+#
+# Stacks on A4. The only delta is the dataset's rasterizer/normalizer:
+# pixel weights are area×inv-freq instead of just area. Goal: pull the
+# model toward predicting well on rare-y50 instances (tails of the
+# label distribution) that the area-balanced baseline still
+# under-represents.
+#
+# Before launching this training run, you MUST generate the freq table:
+#
+#   python scripts/compute_label_inverse_freq.py \
+#       --config-name=dpt_dense_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm_loose50 \
+#       --out-npz /workspace/data/output/dense_supervision_cache/label_invfreq_y50_post_norm.npz
+#
+# Generating against the A4 config ensures the bins are in z-score
+# space (which is also what this config will pass to the normalizer).
+
+defaults:
+  - train_dataset: seg_langSam3Q8T_behav4_mO20_imgbal_dense_norm_invfreq
+  - eval_dataset: mirror_train
+  - model: dpt_dense_predictor
+  - registry_info: registry_default
+  - trainer: default
+  - _self_
+  - override /trainer/loss_function: dense_weighted_multi_loss_with_aux_huber
+
+
+model_output_root_dir: "/workspace/data/output/training_outputs/"
+
+trainer:
+  name: dense_lowlr_huber_norm_loose50_invfreq
+  optimizer:
+    lr: 1e-5
+  loop:
+    image_balanced_sampling: false
+    batch_size: 16
+    val_batch_size: 32
+    num_workers: 8
+    val_num_workers: 12
+    val_max_batches: 500
+    train_eval_max_batches: 500
+    train_samples_per_epoch: null
+    validationConfig:
+      confidence_from_logits: false

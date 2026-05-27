@@ -1,0 +1,34 @@
+# C4: A4 recipe + negative confidence supervision (bg_conf_weight=0.01).
+#
+# Stacks on top of A4 (the headline recipe). The only delta is the loss
+# function: bg pixels get a small per-pixel push to predict low
+# confidence. Goal: cut down on confident-wrong predictions over regions
+# the model had no labeled instance to anchor against.
+
+defaults:
+  - train_dataset: seg_langSam3Q8T_behav4_mO20_imgbal_dense_norm
+  - eval_dataset: mirror_train
+  - model: dpt_dense_predictor
+  - registry_info: registry_default
+  - trainer: default
+  - _self_
+  - override /trainer/loss_function: dense_weighted_multi_loss_with_aux_huber_negconf
+
+
+model_output_root_dir: "/workspace/data/output/training_outputs/"
+
+trainer:
+  name: dense_lowlr_huber_norm_loose50_negconf
+  optimizer:
+    lr: 1e-5
+  loop:
+    image_balanced_sampling: false
+    batch_size: 16
+    val_batch_size: 32
+    num_workers: 8
+    val_num_workers: 12
+    val_max_batches: 500
+    train_eval_max_batches: 500
+    train_samples_per_epoch: null
+    validationConfig:
+      confidence_from_logits: false

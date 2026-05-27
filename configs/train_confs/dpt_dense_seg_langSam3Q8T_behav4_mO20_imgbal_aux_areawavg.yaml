@@ -1,0 +1,31 @@
+# C1: dense + aux loss + AreaWeightedAverageRasterizer.
+#
+# Isolates the overlap-policy axis from the existing `_aux` baseline:
+# same backbone, model, loss, sampling — only the rasterizer differs
+# (AreaWeightedAverage vs SmallerWins).
+
+defaults:
+  - train_dataset: seg_langSam3Q8T_behav4_mO20_imgbal_dense_areawavg
+  - eval_dataset: mirror_train
+  - model: dpt_dense_predictor
+  - registry_info: registry_default
+  - trainer: default
+  - _self_
+  - override /trainer/loss_function: dense_weighted_multi_loss_with_aux
+
+
+model_output_root_dir: "/workspace/data/output/training_outputs/"
+
+trainer:
+  name: dense_aux_areawavg
+  loop:
+    image_balanced_sampling: false
+    batch_size: 16
+    val_batch_size: 32
+    num_workers: 8
+    val_num_workers: 12
+    val_max_batches: 500
+    train_eval_max_batches: 500
+    train_samples_per_epoch: null
+    validationConfig:
+      confidence_from_logits: false

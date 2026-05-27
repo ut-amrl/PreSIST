@@ -1,0 +1,18 @@
+# Dense per-pixel loss with Huber on the log-space channels.
+#
+# Mirrors the per-mask cross_attn lowlr_huber recipe at the dense layer:
+#   - useHuberForLogVals=true caps gradient magnitude at |residual|=delta
+#     for both y50 and yr channels (MSE elsewhere otherwise).
+#   - delta_50 = 3.0 ("loose50") — see the cross_attn ..._loose50 config
+#     for the rationale. In z-score-normalized target space, 3.0 means
+#     "3 std", so only the legitimately catastrophic outliers (e.g. the
+#     yr=15 sample) get gradient-capped; typical residuals stay quadratic.
+#   - delta_r left at 1.0 (yr is already well-behaved post-normalization).
+#   - confidence_loss left at "mse" (yc is in [0,1] post-sigmoid).
+
+_target_: persistence_parameter_networks.losses.dense_losses.DenseWeightedMultiLoss
+useHuberForLogVals: true
+delta_50: 3.0
+delta_r: 1.0
+confidence_loss: mse
+confidence_from_logits: false

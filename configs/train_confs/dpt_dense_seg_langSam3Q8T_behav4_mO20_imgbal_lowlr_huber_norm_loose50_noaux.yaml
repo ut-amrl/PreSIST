@@ -1,0 +1,38 @@
+# A5: same recipe as A4 but with the per-instance aux loss stripped.
+#
+# Disambiguates "is the recipe (lowlr + Huber + norm + loose50) doing the
+# work?" from "is the aux loss doing the work?". If A5 matches or beats
+# A4, the aux loss isn't pulling its weight (and the rasterizer cache
+# misses fewer pixels — faster steps).
+#
+# Mirrors A4 except for the loss-function override; written as a
+# standalone (not inheriting A4) so Hydra doesn't have to merge two
+# competing `override /trainer/loss_function` entries.
+
+defaults:
+  - train_dataset: seg_langSam3Q8T_behav4_mO20_imgbal_dense_norm
+  - eval_dataset: mirror_train
+  - model: dpt_dense_predictor
+  - registry_info: registry_default
+  - trainer: default
+  - _self_
+  - override /trainer/loss_function: dense_weighted_multi_loss_huber
+
+
+model_output_root_dir: "/workspace/data/output/training_outputs/"
+
+trainer:
+  name: dense_lowlr_huber_norm_loose50_noaux
+  optimizer:
+    lr: 1e-5
+  loop:
+    image_balanced_sampling: false
+    batch_size: 16
+    val_batch_size: 32
+    num_workers: 8
+    val_num_workers: 12
+    val_max_batches: 500
+    train_eval_max_batches: 500
+    train_samples_per_epoch: null
+    validationConfig:
+      confidence_from_logits: false

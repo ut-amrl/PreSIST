@@ -1,0 +1,22 @@
+# Z-score-normalized variant of the dense dataset config.
+#
+# Inherits from seg_langSam3Q8T_behav4_mO20_imgbal_dense and adds y50/yr
+# normalization stats. The dense path applies these to instance labels
+# inside _get_dense before the rasterizer paints them, so the cached
+# target_map values are in normalized space. The four stats are included
+# in the dense supervision cache fingerprint, so toggling normalization
+# on/off creates a separate cache stage dir rather than reusing stale
+# entries.
+#
+# Stats are copied from cross_attn_seg_langSam3Q8T_behav4_mO20_imgbal_lowlr_huber_norm.yaml
+# (empirical mean/std over the full per-instance training set; see that
+# config's header for the source).
+
+defaults:
+  - seg_langSam3Q8T_behav4_mO20_imgbal_dense
+  - _self_
+
+y50_mean: 3.2072
+y50_std: 5.1614
+yr_mean: 2.2722
+yr_std: 0.8733

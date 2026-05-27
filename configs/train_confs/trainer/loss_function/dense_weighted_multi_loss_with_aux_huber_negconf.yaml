@@ -1,0 +1,22 @@
+# A4 loss + negative confidence supervision (C4).
+#
+# Same as dense_weighted_multi_loss_with_aux_huber.yaml plus
+# bg_conf_weight=0.01: every pixel outside loss_mask is supervised
+# against bg_conf_target=0 on the confidence channel only. y50/yr are
+# untouched on background (no meaningful target).
+#
+# bg_conf_weight is intentionally very small so the bg term nudges
+# (rather than dominates) the primary per-pixel signal; the aux term is
+# weighted at 0.1 for scale reference.
+
+_target_: persistence_parameter_networks.losses.dense_losses.DenseWeightedMultiLossWithInstanceAux
+aux_weight: 0.1
+dense_loss:
+  _target_: persistence_parameter_networks.losses.dense_losses.DenseWeightedMultiLoss
+  useHuberForLogVals: true
+  delta_50: 3.0
+  delta_r: 1.0
+  confidence_loss: mse
+  confidence_from_logits: false
+  bg_conf_weight: 0.01
+  bg_conf_target: 0.0

@@ -36,8 +36,10 @@ from __future__ import annotations
 import hashlib
 import json
 from abc import ABC, abstractmethod
-from typing import Tuple
+from pathlib import Path
+from typing import Optional, Tuple
 
+import numpy as np
 import torch
 
 
@@ -55,10 +57,20 @@ class TargetNormalizer(ABC):
     __version__: int = 1
 
     @abstractmethod
-    def per_instance_weight(self, area: torch.Tensor) -> torch.Tensor:
+    def per_instance_weight(
+        self,
+        area: torch.Tensor,
+        instance_labels: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """Map a ``(N,)`` tensor of per-instance areas (in pixels) to a
         ``(N,)`` per-instance weight. Each pixel of instance i gets that
-        weight."""
+        weight.
+
+        ``instance_labels`` is an optional ``(N, C)`` tensor of the same
+        labels the rasterizer is about to paint. Most subclasses ignore
+        it; the label-binned-frequency normalizer uses it to look up a
+        per-instance weight indexed by label value.
+        """
         raise NotImplementedError
 
     def cache_fingerprint(self) -> str:
@@ -79,7 +91,11 @@ class TargetNormalizer(ABC):
 class NoNormalization(TargetNormalizer):
     """Every pixel gets weight 1.0; large instances dominate by area."""
 
-    def per_instance_weight(self, area: torch.Tensor) -> torch.Tensor:
+    def per_instance_weight(
+        self,
+        area: torch.Tensor,
+        instance_labels: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         return torch.ones_like(area, dtype=torch.float32)
 
 
@@ -91,7 +107,11 @@ class PerInstanceAreaNormalizer(TargetNormalizer):
         super().__init__()
         self.eps = float(eps)
 
-    def per_instance_weight(self, area: torch.Tensor) -> torch.Tensor:
+    def per_instance_weight(
+        self,
+        area: torch.Tensor,
+        instance_labels: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         return 1.0 / area.clamp(min=self.eps).to(torch.float32)
 
     def _config_dict(self) -> dict:
@@ -107,11 +127,109 @@ class SqrtAreaNormalizer(TargetNormalizer):
         super().__init__()
         self.eps = float(eps)
 
-    def per_instance_weight(self, area: torch.Tensor) -> torch.Tensor:
+    def per_instance_weight(
+        self,
+        area: torch.Tensor,
+        instance_labels: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         return 1.0 / area.clamp(min=self.eps).to(torch.float32).sqrt()
 
     def _config_dict(self) -> dict:
         return {"eps": self.eps}
+
+
+class LabelBinnedFrequencyNormalizer(TargetNormalizer):
+    """Per-instance weight = base weight × inverse-frequency weight from a
+    precomputed histogram of one label channel.
+
+    The frequency table is a numpy archive with two arrays:
+      - ``bin_edges`` (B+1,) float — bin edges of the histogram, sorted.
+      - ``weights``   (B,)   float — per-bin weight (typically ``1/count_b``
+        normalized so the mean weight over training samples is ~1).
+
+    The script ``scripts/compute_label_inverse_freq.py`` produces it.
+
+    Composes multiplicatively with a base normalizer (default
+    :class:`NoNormalization`, so freq-weighting alone applies). Most often
+    paired with :class:`PerInstanceAreaNormalizer` to combine area- and
+    label-rarity weighting.
+
+    The table's binary contents are hashed into the rasterizer cache
+    fingerprint, so regenerating the table invalidates the cache
+    automatically.
+    """
+
+    __version__: int = 1
+
+    def __init__(
+        self,
+        freq_table_path: str,
+        label_channel: int = 0,
+        base: Optional[TargetNormalizer] = None,
+    ):
+        super().__init__()
+        self.freq_table_path = str(freq_table_path)
+        self.label_channel = int(label_channel)
+        self.base = base if base is not None else NoNormalization()
+
+        path = Path(self.freq_table_path)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"LabelBinnedFrequencyNormalizer: freq table not found at "
+                f"{path}. Generate it with "
+                f"scripts/compute_label_inverse_freq.py first."
+            )
+        data = np.load(str(path))
+        if "bin_edges" not in data or "weights" not in data:
+            raise KeyError(
+                f"Freq table at {path} missing required arrays "
+                f"('bin_edges', 'weights'). Keys present: {list(data.keys())}"
+            )
+        self.bin_edges = torch.from_numpy(np.asarray(data["bin_edges"])).to(torch.float32)
+        self.weights = torch.from_numpy(np.asarray(data["weights"])).to(torch.float32)
+        if int(self.bin_edges.numel()) != int(self.weights.numel()) + 1:
+            raise ValueError(
+                f"Freq table shape mismatch at {path}: "
+                f"len(bin_edges)={int(self.bin_edges.numel())} must be "
+                f"len(weights)+1={int(self.weights.numel()) + 1}."
+            )
+        with open(path, "rb") as fh:
+            self._content_hash = hashlib.sha256(fh.read()).hexdigest()[:16]
+
+    def per_instance_weight(
+        self,
+        area: torch.Tensor,
+        instance_labels: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if instance_labels is None:
+            raise ValueError(
+                "LabelBinnedFrequencyNormalizer requires instance_labels to "
+                "be passed through from the rasterizer; got None."
+            )
+        if instance_labels.shape[0] != area.shape[0]:
+            raise ValueError(
+                f"instance_labels rows ({instance_labels.shape[0]}) must match "
+                f"area length ({area.shape[0]})."
+            )
+        y = instance_labels[:, self.label_channel].to(torch.float32).contiguous()
+        # bucketize returns indices in [0, B] where 0 = below first edge and
+        # B = at/above last edge. Clamp to [1, B] then subtract to land in
+        # the per-bin weight indices [0, B-1].
+        n_bins = int(self.weights.numel())
+        idx = torch.bucketize(y, self.bin_edges, right=False).clamp(min=1, max=n_bins) - 1
+        freq_w = self.weights[idx]
+        base_w = self.base.per_instance_weight(area, instance_labels)
+        return freq_w * base_w
+
+    def _config_dict(self) -> dict:
+        return {
+            "freq_table_path": self.freq_table_path,
+            "label_channel": self.label_channel,
+            "content_hash": self._content_hash,
+            "base_class": type(self.base).__name__,
+            "base_version": int(type(self.base).__version__),
+            "base_config": self.base._config_dict(),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +307,9 @@ def _paint_from_owner(
         per_pixel_label = instance_labels[owner_clamped]                  # (H, W, C)
         target = per_pixel_label.permute(2, 0, 1) * valid.to(torch.float32)
 
-        per_instance_weight = normalizer.per_instance_weight(instance_areas)  # (N,)
+        per_instance_weight = normalizer.per_instance_weight(
+            instance_areas, instance_labels
+        )  # (N,)
         per_pixel_weight = per_instance_weight[owner_clamped]              # (H, W)
         pixel_weights = (per_pixel_weight * valid.to(torch.float32)).unsqueeze(0)
 
@@ -318,7 +438,9 @@ def _multi_owner_paint(
     # Each pixel's weight is the sum of normalizer weights of covering
     # instances divided by N_covering (so the magnitude is comparable to
     # the non-averaging policies). Simpler choice: use the mean.
-    inst_norm_weight = normalizer.per_instance_weight(instance_areas)         # (N,)
+    inst_norm_weight = normalizer.per_instance_weight(
+        instance_areas, instance_labels
+    )         # (N,)
     pixel_weight_num = (binary.to(torch.float32) * inst_norm_weight.view(N, 1, 1)).sum(dim=0)
     pixel_weight_den = binary.to(torch.float32).sum(dim=0).clamp(min=1.0)
     pixel_weights = (pixel_weight_num / pixel_weight_den).unsqueeze(0)

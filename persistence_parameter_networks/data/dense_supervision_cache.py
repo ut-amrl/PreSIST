@@ -36,7 +36,7 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Mapping, Optional, Sequence, Tuple
 
 import torch
 
@@ -78,11 +78,19 @@ class DenseSupervisionCache:
         label_transform: Callable,
         *,
         enable: bool = True,
+        target_norm_stats: Optional[Mapping[str, float]] = None,
     ):
         self.rasterizer = rasterizer
         self.label_transform = label_transform
         self.enable = enable and root_dir is not None
         self.root_dir = Path(root_dir) if root_dir is not None else None
+        # Target z-score stats applied to instance labels before
+        # rasterization. None means labels pass through unchanged.
+        # Included in the cache fingerprint so toggling normalization on/off
+        # or changing stats produces a fresh cache stage dir.
+        self.target_norm_stats: Optional[Mapping[str, float]] = (
+            dict(target_norm_stats) if target_norm_stats is not None else None
+        )
 
         self._fingerprint = self._compute_fingerprint()
         self._stage_dir = (
@@ -105,7 +113,11 @@ class DenseSupervisionCache:
     def _compute_fingerprint(self) -> str:
         ras_fp = self.rasterizer.cache_fingerprint()
         lt_fp = _label_transform_fingerprint(self.label_transform)
-        payload = {"rasterizer": ras_fp, "label_transform": lt_fp}
+        payload = {
+            "rasterizer": ras_fp,
+            "label_transform": lt_fp,
+            "target_norm_stats": self.target_norm_stats,
+        }
         return hashlib.sha256(
             json.dumps(payload, sort_keys=True).encode("utf-8")
         ).hexdigest()[:24]
@@ -142,6 +154,7 @@ class DenseSupervisionCache:
                         "__name__",
                         repr(self.label_transform),
                     ),
+                    "target_norm_stats": self.target_norm_stats,
                 }
                 tmp = self._manifest_path.with_suffix(".json.tmp")
                 tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))

@@ -1,0 +1,17 @@
+# Aux-loss variant of the dense Huber recipe. Wraps DenseWeightedMultiLoss
+# (with the Huber knobs from dense_weighted_multi_loss_huber.yaml inlined
+# rather than composed via defaults — Hydra struct-mode trips on composed
+# overrides under override /trainer/loss_function).
+#
+# Per-instance aux loss uses WeightedMultiLoss defaults (MSE, w50=wr=1,
+# wc=0.5). Aux weight 0.1 matches the existing dense_weighted_multi_loss_with_aux.yaml.
+
+_target_: persistence_parameter_networks.losses.dense_losses.DenseWeightedMultiLossWithInstanceAux
+aux_weight: 0.1
+dense_loss:
+  _target_: persistence_parameter_networks.losses.dense_losses.DenseWeightedMultiLoss
+  useHuberForLogVals: true
+  delta_50: 3.0
+  delta_r: 1.0
+  confidence_loss: mse
+  confidence_from_logits: false
